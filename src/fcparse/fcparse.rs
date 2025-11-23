@@ -100,8 +100,8 @@ impl FcParser {
     }
 
     fn consume(&mut self) -> Option<&Token> {
-        let tok = self.tokens.get(self.pos); // <-- FIX: возвращаем текущий
-        self.pos += 1;                       // и только потом двигаем pos
+        let tok = self.tokens.get(self.pos); 
+        self.pos += 1;                      
         tok
     }
 
