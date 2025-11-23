@@ -13,11 +13,25 @@ impl FcParser {
         FcParser { tokens: toks, pos: 0 }
     }
 
+    pub fn parse_everything(&mut self) -> Vec<AstNode> {
+        let mut res: Vec<AstNode> = Vec::new();
+        while self.peek().is_some() {
+            let expr = self.parse_expr(0);
+            res.push(expr);
+        }
+        res
+    }
+
     pub fn parse_expr(&mut self, min_bp: u8) -> AstNode {
         let mut left = self.parse_prefix();
 
         while let Some(tok) = self.peek() {
             let optok = &tok.tok.clone();
+
+            if *optok == Tok::Semicol {
+                self.pos += 1;
+                break;
+            } 
     
             let (lbp, rbp) = match Self::infix_binding_power(optok) {
                 Some(v) => v,
@@ -54,11 +68,25 @@ impl FcParser {
                 expr: Box::new(self.parse_expr(255)),
             },
 
+            Tok::LPar => {
+                let expr = self.parse_expr(0);
+                self.expect(Tok::RPar);
+                expr
+            },
+
             Tok::Plus => self.parse_expr(255),
 
             other => {
                 panic!("{}: FCparse unexpected token `{:?}`", line_n, other);
             }
+        }
+    }
+
+    fn expect(&mut self, want: Tok) {
+        match self.consume() {
+            Some(t) if t.tok == want => {},
+            Some(t) => panic!("{}: expected {:?}, got {:?}", t.line, want, t.tok),
+            None => panic!("expected {:?}, found EOF", want),
         }
     }
 

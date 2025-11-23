@@ -12,7 +12,7 @@ Then just:
 You also may get binary from releases.
 
 # Usage
-Compile it:
+Compile some program:
 - `fencyc input.fcy -o program.vve`
 Run it with [VoxVM](https://github.com/Freemorger/voxvm):
 `voxvm --vve=program.vve`

@@ -1,12 +1,15 @@
 use std::{fs, io};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     Int(i64),
     Plus,
     Minus,
     Star,
     Slash,
+    LPar, // (
+    RPar, // )
+    Semicol, 
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +43,10 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '+' => {res.push(Token::new(Tok::Plus, line)); chars.next();},
             '-' => {res.push(Token::new(Tok::Minus, line)); chars.next();},
             '*' => {res.push(Token::new(Tok::Star, line)); chars.next();},
-            '/' => {res.push(Token::new(Tok::Slash, line)); chars.next();}
+            '/' => {res.push(Token::new(Tok::Slash, line)); chars.next();},
+            '(' => {res.push(Token::new(Tok::LPar, line)); chars.next();},
+            ')' => {res.push(Token::new(Tok::RPar, line)); chars.next();},
+            ';' => {res.push(Token::new(Tok::Semicol, line)); chars.next();},
             ' ' | '\t' => {chars.next();},
             '\n' => {line += 1; chars.next();}
             other => {
