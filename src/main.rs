@@ -1,3 +1,5 @@
+#[cfg(not(debug_assertions))]
+use std::fs;
 use std::{fs::File, io::BufReader, process::Command};
 
 use clap::{Parser, Subcommand};
@@ -64,6 +66,12 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool) -> Resu
     }; 
 
     assemble(&temp_fname, &output_name);
+
+    #[cfg(not(debug_assertions))] // deleting temp asm file 
+                                // if fencyc build is release
+    if let Err(e) = std::fs::remove_file(&temp_fname) {
+        eprintln!("Failed to delete temp asm file {}", temp_fname);
+    };
 
     Ok(())
 }

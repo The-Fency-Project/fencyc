@@ -1,5 +1,4 @@
-- codegen for operations
 - symb table
+- assignment statements 
 - move halt to main end
-- assignment statements
 

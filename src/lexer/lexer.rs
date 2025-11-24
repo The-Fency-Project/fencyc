@@ -9,7 +9,10 @@ pub enum Tok {
     Slash,
     LPar, // (
     RPar, // )
-    Semicol, 
+    Semicol,
+    Keyword(Kword),
+    Identifier(String),
+    Equals, // =
 }
 
 #[derive(Debug, Clone)]
@@ -47,8 +50,13 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '(' => {res.push(Token::new(Tok::LPar, line)); chars.next();},
             ')' => {res.push(Token::new(Tok::RPar, line)); chars.next();},
             ';' => {res.push(Token::new(Tok::Semicol, line)); chars.next();},
+            '=' => {res.push(Token::new(Tok::Equals, line)); chars.next();},
             ' ' | '\t' => {chars.next();},
             '\n' => {line += 1; chars.next();}
+            'l' => {
+                let mut assign = String::new();
+                // TODO: handle assignments here
+            }
             other => {
                 panic!("Unknown token: {}", other);
             }
@@ -57,4 +65,9 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
 
     
     res
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Kword {
+    Let,
 }
