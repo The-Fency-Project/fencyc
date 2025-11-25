@@ -1,6 +1,6 @@
 use std::{fs::File, io::{self, BufRead, BufReader}};
 
-use crate::lexer::lexer::{Tok, Token};
+use crate::{lexer::lexer::{Kword, Tok, Token}, seman::seman::FType};
 
 pub struct FcParser {
     tokens: Vec<Token>,
@@ -76,6 +76,41 @@ impl FcParser {
 
             Tok::Plus => self.parse_expr(255),
 
+            Tok::Keyword(Kword::Let) => {
+                let idt_tok = self.consume()
+                    .expect(&format!("{}: expected identifier", line_n));
+                let idt = match &idt_tok.tok {
+                    Tok::Identifier(name) => name.clone(),
+                    other => {
+                        panic!("{}: Expected identifier, found {:?}", line_n, other);
+                    }
+                };
+
+                self.expect(Tok::Colon);
+                let ftype_tok = self.consume()
+                    .expect(&format!("{}: expected type annotation", line_n)
+);
+                let ftype_name = match &ftype_tok.tok {
+                    Tok::Identifier(nm) => nm,
+                    other => {
+                        panic!("{}: Expected typename, found {:?}", line_n, other);
+                    }
+                };
+                let ftype = match_ftype(&ftype_name)
+                    .expect(
+                        &format!("{}: unknown type", line_n)
+                    );
+                self.expect(Tok::Equals);
+                
+                let expr = self.parse_expr(0);
+
+                AstNode::Assignment { 
+                    name: idt.clone(), 
+                    val: Box::new(expr), 
+                    ft: ftype 
+                }
+            }
+
             other => {
                 panic!("{}: FCparse unexpected token `{:?}`", line_n, other);
             }
@@ -95,6 +130,7 @@ impl FcParser {
         match tok {
             Tok::Plus | Tok::Minus => Some((10, 11)),
             Tok::Star | Tok::Slash => Some((20, 21)),
+            Tok::Keyword(Kword::Let) => Some((5, 6)),
             _ => None,
         }
     }
@@ -113,6 +149,8 @@ impl FcParser {
 #[derive(Debug, Clone)]
 pub enum AstNode {
     Int(i64),
+    Float(f64),
+    Uint(u64),
     StringLiteral(String),
     Identifier(String),
 
@@ -135,6 +173,7 @@ pub enum AstNode {
     Assignment {
         name: String,
         val: Box<AstNode>,
+        ft: FType, 
     },
 }
 
@@ -160,4 +199,15 @@ pub fn match_bop_for_tok(tok: &Tok) -> Option<BinaryOp> {
 pub enum UnaryOp {
     Negate, 
     Not,
+}
+
+pub fn match_ftype(lit: &str) -> Option<FType> {
+    match lit {
+        "uint" => Some(FType::uint),
+        "int" => Some(FType::int),
+        "float" => Some(FType::float),
+        "bool" => Some(FType::bool),
+        other => None,
+        // TODO: add support for objects and str
+    }
 }

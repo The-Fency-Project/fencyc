@@ -50,7 +50,7 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool) -> Resu
         None => input.replace(".fcy", ".vve"),
     };
 
-    let toks = lex::tokenize(&input.clone()); 
+    let toks = lex::tokenize(&input.clone());
 
     let mut parser = fparser::FcParser::new(toks);
     

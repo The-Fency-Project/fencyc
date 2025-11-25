@@ -1,6 +1,6 @@
-use std::{fs::File, io::Write};
+use std::{collections::HashMap};
 
-use crate::fcparse::fcparse as fparse;// AstNode;
+use crate::{fcparse::fcparse as fparse, seman::seman as sem, seman::seman::FSymbol};// AstNode;
 use fparse::AstNode;
 
 #[derive(Debug)]
@@ -46,9 +46,30 @@ impl CodeGen {
         let mut res = GenData::new(Vec::new());
         match node {
             // TODO: implement codegen for expressions through the AST
+            AstNode::Assignment { name, val, ft } => {
+                let rightdat = self.gen_expr(*val);  
+                
+                let leftreg = self.alloc_reg();
+                res.alloced_regs.push(leftreg);
+
+                let mut instr = String::new();
+                instr = format!("movr r{} r{}\n",
+                        leftreg, rightdat.alloced_regs[0]);
+                let symb = FSymbol::new(name, leftreg, ft);
+                
+                res.push_symb(symb);
+                self.sbuf.push_str(&instr);
+                self.free_reg(rightdat.alloced_regs[0]);
+            }   
             AstNode::Int(iv) => {
                 let reg = self.alloc_reg();
                 let instr = format!("iload r{} {}\n", reg, iv);
+                res.alloced_regs.push(reg);
+                self.sbuf.push_str(&instr);
+            },
+            AstNode::Float(fv) => {
+                let reg = self.alloc_reg();
+                let instr = format!("fload r{} {}\n", reg, fv);
                 res.alloced_regs.push(reg);
                 self.sbuf.push_str(&instr);
             },
@@ -133,10 +154,15 @@ impl CodeGen {
 #[derive(Debug)]
 pub struct GenData {
     alloced_regs: Vec<usize>,
+    symbols: HashMap<String, FSymbol>,
 }
 
 impl GenData {
     pub fn new(alloced: Vec<usize>) -> GenData {
-        GenData { alloced_regs: alloced }
+        GenData { alloced_regs: alloced, symbols: HashMap::new() }
+    }
+
+    pub fn push_symb(&mut self, s: FSymbol) {
+        self.symbols.insert(s.name.clone(), s);
     }
 }

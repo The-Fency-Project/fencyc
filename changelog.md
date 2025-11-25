@@ -1,3 +1,2 @@
-v0.0.3
-- better reg alloc
-- codegen for basic arithmetics
+v0.0.4
+- basic assignment statements

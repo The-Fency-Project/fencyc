@@ -1,4 +1,4 @@
-use std::{fs, io};
+use std::{fs, io, iter::Peekable};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
@@ -9,6 +9,7 @@ pub enum Tok {
     Slash,
     LPar, // (
     RPar, // )
+    Colon, // :
     Semicol,
     Keyword(Kword),
     Identifier(String),
@@ -51,14 +52,25 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             ')' => {res.push(Token::new(Tok::RPar, line)); chars.next();},
             ';' => {res.push(Token::new(Tok::Semicol, line)); chars.next();},
             '=' => {res.push(Token::new(Tok::Equals, line)); chars.next();},
+            ':' => {res.push(Token::new(Tok::Colon, line)); chars.next();},
             ' ' | '\t' => {chars.next();},
             '\n' => {line += 1; chars.next();}
-            'l' => {
-                let mut assign = String::new();
-                // TODO: handle assignments here
+            'a'..='z' | 'A'..='Z' => {
+                let mut idn = String::new();
+                while let Some(ic) = chars.peek() {
+                    //println!("{}", ic);
+                    if ic.is_alphanumeric() {
+                        idn.push(*ic);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                };
+                let t = match_symb_tok(&idn);
+                res.push(Token::new(t, line));
             }
             other => {
-                panic!("Unknown token: {}", other);
+                panic!("{}: Unknown token {}", line, other);
             }
         }
     }
@@ -70,4 +82,11 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kword {
     Let,
+}
+
+fn match_symb_tok(word: &str) -> Tok {
+    match word {
+        "let" => Tok::Keyword(Kword::Let),
+        other => Tok::Identifier(word.to_string()),
+    }
 }
