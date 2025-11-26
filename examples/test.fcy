@@ -1,1 +1,3 @@
-let testvar: int = (15 + 5) / 10;
+let a: int = 3 + 4; 
+let b: int = (1 + 3) / 2;
+let c: int = b + a;

@@ -29,7 +29,7 @@ impl FcParser {
             let optok = &tok.tok.clone();
 
             if *optok == Tok::Semicol {
-                self.pos += 1;
+                self.consume();
                 break;
             } 
     
@@ -62,6 +62,8 @@ impl FcParser {
 
         match &token.tok {
             Tok::Int(iv) => AstNode::Int(*iv),
+            Tok::Uint(uv) => AstNode::Uint(*uv),
+            Tok::Float(fv) => AstNode::Float(*fv),
 
             Tok::Minus => AstNode::UnaryOp {
                 op: UnaryOp::Negate,
@@ -75,6 +77,8 @@ impl FcParser {
             },
 
             Tok::Plus => self.parse_expr(255),
+
+            Tok::Identifier(idt) => AstNode::Variable(idt.clone()),
 
             Tok::Keyword(Kword::Let) => {
                 let idt_tok = self.consume()
@@ -130,7 +134,8 @@ impl FcParser {
         match tok {
             Tok::Plus | Tok::Minus => Some((10, 11)),
             Tok::Star | Tok::Slash => Some((20, 21)),
-            Tok::Keyword(Kword::Let) => Some((5, 6)),
+            //Tok::Keyword(Kword::Let) => Some((5, 6)),
+            Tok::Equals => Some((3, 4)),
             _ => None,
         }
     }
@@ -152,6 +157,7 @@ pub enum AstNode {
     Float(f64),
     Uint(u64),
     StringLiteral(String),
+    Variable(String),
     Identifier(String),
 
     BinaryOp {
@@ -183,6 +189,7 @@ pub enum BinaryOp {
     Substract,
     Multiply,
     Divide,
+    Assignment,
 }
 
 pub fn match_bop_for_tok(tok: &Tok) -> Option<BinaryOp> {
@@ -191,6 +198,7 @@ pub fn match_bop_for_tok(tok: &Tok) -> Option<BinaryOp> {
         Tok::Minus => Some(BinaryOp::Substract),
         Tok::Star => Some(BinaryOp::Multiply),
         Tok::Slash => Some(BinaryOp::Divide),
+        Tok::Keyword(Kword::Let) => Some(BinaryOp::Assignment),
         _ => None,
     }
 }

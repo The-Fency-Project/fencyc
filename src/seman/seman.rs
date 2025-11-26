@@ -1,8 +1,8 @@
 #[derive(Debug)]
 pub struct FSymbol {
     pub name: String,
-    cur_reg: usize,
-    ftype: FType, 
+    pub cur_reg: usize,
+    pub ftype: FType, 
 }
 
 impl FSymbol {
@@ -20,4 +20,5 @@ pub enum FType {
     strconst,
     dsptr,
     heapptr,
+    none
 }

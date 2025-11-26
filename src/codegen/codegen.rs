@@ -1,6 +1,6 @@
 use std::{collections::HashMap};
 
-use crate::{fcparse::fcparse as fparse, seman::seman as sem, seman::seman::FSymbol};// AstNode;
+use crate::{fcparse::fcparse as fparse, seman::seman::{self as sem, FSymbol, FType}};// AstNode;
 use fparse::AstNode;
 
 #[derive(Debug)]
@@ -10,6 +10,7 @@ pub struct CodeGen {
     pub sbuf: String,
     alloced_regs: Vec<bool>,
     unused_regs: Vec<usize>, // which are unused for some time (lru)
+    pub symb_table: HashMap<String, FSymbol>
 }
 
 impl CodeGen {
@@ -20,12 +21,14 @@ impl CodeGen {
             sbuf: String::new(),
             alloced_regs: vec![false; 32],
             unused_regs: Vec::new(),
+            symb_table: HashMap::new(),
         }
     }
 
     pub fn gen_everything(&mut self) {
         while let Some(r) = self.ast.get(self.cur_ast) {
-            self.gen_expr(r.clone());
+            let gdat = self.gen_expr(r.clone());
+            self.symb_table.extend(gdat.symbols);
             self.cur_ast += 1;
         }
         self.printintrin(0); // TODO: implement print intrinsic as  
@@ -45,7 +48,6 @@ impl CodeGen {
     fn gen_expr(&mut self, node: AstNode) -> GenData {
         let mut res = GenData::new(Vec::new());
         match node {
-            // TODO: implement codegen for expressions through the AST
             AstNode::Assignment { name, val, ft } => {
                 let rightdat = self.gen_expr(*val);  
                 
@@ -73,6 +75,12 @@ impl CodeGen {
                 res.alloced_regs.push(reg);
                 self.sbuf.push_str(&instr);
             },
+            AstNode::Uint(uv) => {
+                let reg = self.alloc_reg();
+                let instr = format!("uload r{} {}\n", reg, uv);
+                res.alloced_regs.push(reg);
+                self.sbuf.push_str(&instr);
+            }
             AstNode::BinaryOp { op, left, right } => {
                 let leftdat = self.gen_expr(*left);
                 let rightdat = self.gen_expr(*right);
@@ -115,8 +123,13 @@ impl CodeGen {
                 self.sbuf.push_str(&instr);
                 self.free_reg(rightdat.alloced_regs[0]);
             },
+            AstNode::Variable(av) => {
+                let vsymb = self.symb_table.get(&av.clone())
+                    .expect(&format!("No variable {} in scope", av));
+                res.alloced_regs.push(vsymb.cur_reg);
+            }
             other => {
-                panic!("can't generate yet");
+                panic!("can't generate yet for {:?}", other);
             }
         }
         return res;
@@ -142,6 +155,55 @@ impl CodeGen {
         self.alloced_regs[idx] = false;
     }
 
+    fn bop_typed(bop: fparse::BinaryOp, ftype: FType, operands: Vec<usize>, line: usize) -> String {
+        let type_pref: &str = match ftype {
+            FType::float => "f",
+            FType::int => "i",
+            other => "u",
+        };
+        let exop_msg = &format!("{}: expected operand", line);
+
+        match bop {
+            fparse::BinaryOp::Add => {
+                return format!("{}add r{} r{}", 
+                    type_pref, 
+                    operands.get(0).expect(exop_msg),
+                    operands.get(1).expect(exop_msg)
+                );
+            }
+            fparse::BinaryOp::Substract => {
+                return format!("{}sub r{} r{}", 
+                    type_pref, 
+                    operands.get(0).expect(exop_msg),
+                    operands.get(1).expect(exop_msg)
+                );
+            }
+            fparse::BinaryOp::Multiply => {
+                return format!("{}mul r{} r{}", 
+                    type_pref, 
+                    operands.get(0).expect(exop_msg),
+                    operands.get(1).expect(exop_msg)
+                );
+            }
+            fparse::BinaryOp::Divide => {
+                return format!("{}div r{} r{} r{}", 
+                    type_pref, 
+                    operands.get(0).expect(exop_msg),
+                    operands.get(1).expect(exop_msg),
+                    operands.get(2).expect(exop_msg)
+                );
+            }
+            other => {
+                panic!("{} internal error: Matching BOp for {:?} isn't implemented",
+                    line, other);
+            }
+        }
+    }
+
+    fn get_typeconv(ftyp1: FType, ftyp2: FType) -> String {
+        String::new()// TODO
+    }
+
     fn printintrin(&mut self, idx: usize) {
         // intrinsic for tests
         self.sbuf.push_str(&format!("movr r1 r{}\n", idx));
@@ -151,15 +213,18 @@ impl CodeGen {
     }
 }
 
+/// code generation data for each generated expression
 #[derive(Debug)]
 pub struct GenData {
-    alloced_regs: Vec<usize>,
-    symbols: HashMap<String, FSymbol>,
+    pub alloced_regs: Vec<usize>,
+    pub symbols: HashMap<String, FSymbol>,
+    pub expr_type: FType,
 }
 
 impl GenData {
     pub fn new(alloced: Vec<usize>) -> GenData {
-        GenData { alloced_regs: alloced, symbols: HashMap::new() }
+        GenData { alloced_regs: alloced, symbols: HashMap::new(),
+            expr_type: FType::none}
     }
 
     pub fn push_symb(&mut self, s: FSymbol) {

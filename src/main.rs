@@ -51,6 +51,7 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool) -> Resu
     };
 
     let toks = lex::tokenize(&input.clone());
+    //println!("toks {:#?}", toks);
 
     let mut parser = fparser::FcParser::new(toks);
     

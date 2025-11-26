@@ -1,8 +1,12 @@
 use std::{fs, io, iter::Peekable};
 
+use crate::seman::seman::FType;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     Int(i64),
+    Float(f64),
+    Uint(u64),
     Plus,
     Minus,
     Star,
@@ -38,11 +42,32 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
         match ch {
             '0'..='9' => {
                 let mut num_st = String::new();
-                while let Some('0'..='9') = chars.peek() {
-                    num_st.push(chars.next().unwrap());
-                }; 
-                let nval: i64 = num_st.parse().unwrap();
-                res.push(Token::new(Tok::Int(nval), line));
+                let mut ftyp = FType::int;
+                while let Some('0'..='9' | '.' | 'u') = chars.peek() {
+                    let chn = chars.next().unwrap();
+                    if chn == '.' {ftyp = FType::float};
+                    if chn == 'u' {ftyp = FType::uint; continue;}
+                    num_st.push(chn);
+                };
+
+                match ftyp {
+                    FType::int => {
+                        let nval: i64 = num_st.parse().unwrap();
+                        res.push(Token::new(Tok::Int(nval), line));
+                    }
+                    FType::uint => {
+                        let nval: u64 = num_st.parse().unwrap();
+                        res.push(Token::new(Tok::Uint(nval), line));
+                    }
+                    FType::float => {
+                        let nval: f64 = num_st.parse().unwrap();
+                        res.push(Token::new(Tok::Float(nval), line));
+                    }
+                    other => {
+                        // wont get here anyway
+                        panic!("Unexpected type lexing error at {}", line);
+                    }
+                }
             }
             '+' => {res.push(Token::new(Tok::Plus, line)); chars.next();},
             '-' => {res.push(Token::new(Tok::Minus, line)); chars.next();},
@@ -55,7 +80,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             ':' => {res.push(Token::new(Tok::Colon, line)); chars.next();},
             ' ' | '\t' => {chars.next();},
             '\n' => {line += 1; chars.next();}
-            'a'..='z' | 'A'..='Z' => {
+            'a'..='z' | 'A'..='Z' | '_' => {
                 let mut idn = String::new();
                 while let Some(ic) = chars.peek() {
                     //println!("{}", ic);
