@@ -18,6 +18,8 @@ pub enum Tok {
     Keyword(Kword),
     Identifier(String),
     Equals, // =
+    RCurBr, //} 
+    LCurBr, //{
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +80,8 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             ';' => {res.push(Token::new(Tok::Semicol, line)); chars.next();},
             '=' => {res.push(Token::new(Tok::Equals, line)); chars.next();},
             ':' => {res.push(Token::new(Tok::Colon, line)); chars.next();},
+            '}' => {res.push(Token::new(Tok::RCurBr, line)); chars.next();},
+            '{' => {res.push(Token::new(Tok::LCurBr, line)); chars.next();},
             ' ' | '\t' => {chars.next();},
             '\n' => {line += 1; chars.next();}
             'a'..='z' | 'A'..='Z' | '_' => {

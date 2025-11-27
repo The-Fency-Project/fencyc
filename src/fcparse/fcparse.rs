@@ -13,8 +13,8 @@ impl FcParser {
         FcParser { tokens: toks, pos: 0 }
     }
 
-    pub fn parse_everything(&mut self) -> Vec<AstNode> {
-        let mut res: Vec<AstNode> = Vec::new();
+    pub fn parse_everything(&mut self) -> Vec<AstRoot> {
+        let mut res: Vec<AstRoot> = Vec::new();
         while self.peek().is_some() {
             let expr = self.parse_expr(0);
             res.push(expr);
@@ -22,10 +22,12 @@ impl FcParser {
         res
     }
 
-    pub fn parse_expr(&mut self, min_bp: u8) -> AstNode {
+    pub fn parse_expr(&mut self, min_bp: u8) -> AstRoot {
         let mut left = self.parse_prefix();
+        let mut line_n: usize = 0;
 
         while let Some(tok) = self.peek() {
+            line_n = tok.line;
             let optok = &tok.tok.clone();
 
             if *optok == Tok::Semicol {
@@ -49,11 +51,11 @@ impl FcParser {
             left = AstNode::BinaryOp {
                 op: match_bop_for_tok(optok).unwrap(),
                 left: Box::new(left),
-                right: Box::new(right),
+                right: Box::new(right.node),
             };
         }
 
-        left
+        AstRoot::new(left, line_n)
     }
 
     fn parse_prefix(&mut self) -> AstNode {
@@ -65,18 +67,21 @@ impl FcParser {
             Tok::Uint(uv) => AstNode::Uint(*uv),
             Tok::Float(fv) => AstNode::Float(*fv),
 
+            Tok::LCurBr => AstNode::EnterScope, 
+            Tok::RCurBr => AstNode::LeftScope,
+
             Tok::Minus => AstNode::UnaryOp {
                 op: UnaryOp::Negate,
-                expr: Box::new(self.parse_expr(255)),
+                expr: Box::new(self.parse_expr(255).node),
             },
 
             Tok::LPar => {
                 let expr = self.parse_expr(0);
                 self.expect(Tok::RPar);
-                expr
+                expr.node
             },
 
-            Tok::Plus => self.parse_expr(255),
+            Tok::Plus => self.parse_expr(255).node,
 
             Tok::Identifier(idt) => AstNode::Variable(idt.clone()),
 
@@ -110,7 +115,7 @@ impl FcParser {
 
                 AstNode::Assignment { 
                     name: idt.clone(), 
-                    val: Box::new(expr), 
+                    val: Box::new(expr.node), 
                     ft: ftype 
                 }
             }
@@ -159,6 +164,9 @@ pub enum AstNode {
     StringLiteral(String),
     Variable(String),
     Identifier(String),
+
+    EnterScope,
+    LeftScope,
 
     BinaryOp {
         op: BinaryOp,
@@ -217,5 +225,18 @@ pub fn match_ftype(lit: &str) -> Option<FType> {
         "bool" => Some(FType::bool),
         other => None,
         // TODO: add support for objects and str
+    }
+}
+
+
+#[derive(Debug, Clone)]
+pub struct AstRoot {
+    pub node: AstNode,
+    pub line: usize 
+}
+
+impl AstRoot {
+    pub fn new(node: AstNode, line: usize) -> AstRoot {
+        AstRoot { node: node, line: line }
     }
 }

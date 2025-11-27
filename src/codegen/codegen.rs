@@ -1,11 +1,11 @@
 use std::{collections::HashMap};
 
-use crate::{fcparse::fcparse as fparse, seman::seman::{self as sem, FSymbol, FType}};// AstNode;
+use crate::{fcparse::fcparse::{self as fparse, AstRoot}, seman::seman::{self as sem, FSymbol, FType}};// AstNode;
 use fparse::AstNode;
 
 #[derive(Debug)]
 pub struct CodeGen {
-    ast: Vec<AstNode>,
+    ast: Vec<AstRoot>,
     cur_ast: usize,
     pub sbuf: String,
     alloced_regs: Vec<bool>,
@@ -14,7 +14,7 @@ pub struct CodeGen {
 }
 
 impl CodeGen {
-    pub fn new(ast: Vec<AstNode>) -> CodeGen {
+    pub fn new(ast: Vec<AstRoot>) -> CodeGen {
         CodeGen { 
             ast: ast, 
             cur_ast: 0,
@@ -27,7 +27,7 @@ impl CodeGen {
 
     pub fn gen_everything(&mut self) {
         while let Some(r) = self.ast.get(self.cur_ast) {
-            let gdat = self.gen_expr(r.clone());
+            let gdat = self.gen_expr(r.clone().node);
             self.symb_table.extend(gdat.symbols);
             self.cur_ast += 1;
         }
@@ -57,9 +57,11 @@ impl CodeGen {
                 let mut instr = String::new();
                 instr = format!("movr r{} r{}\n",
                         leftreg, rightdat.alloced_regs[0]);
+               
                 let symb = FSymbol::new(name, leftreg, ft);
                 
                 res.push_symb(symb);
+                res.expr_type = ft;
                 self.sbuf.push_str(&instr);
                 self.free_reg(rightdat.alloced_regs[0]);
             }   
@@ -67,18 +69,22 @@ impl CodeGen {
                 let reg = self.alloc_reg();
                 let instr = format!("iload r{} {}\n", reg, iv);
                 res.alloced_regs.push(reg);
+                res.expr_type = FType::int;
                 self.sbuf.push_str(&instr);
             },
             AstNode::Float(fv) => {
                 let reg = self.alloc_reg();
-                let instr = format!("fload r{} {}\n", reg, fv);
+                let instr = format!("fload r{} {:#?}\n", reg, fv); 
+                // :#? so it would always be with point. its important for voxasm
                 res.alloced_regs.push(reg);
+                res.expr_type = FType::float;
                 self.sbuf.push_str(&instr);
             },
             AstNode::Uint(uv) => {
                 let reg = self.alloc_reg();
                 let instr = format!("uload r{} {}\n", reg, uv);
                 res.alloced_regs.push(reg);
+                res.expr_type = FType::uint;
                 self.sbuf.push_str(&instr);
             }
             AstNode::BinaryOp { op, left, right } => {
@@ -86,30 +92,35 @@ impl CodeGen {
                 let rightdat = self.gen_expr(*right);
 
                 let mut instr = String::new();
+                let ftlet = CodeGen::ftletter(leftdat.expr_type); 
                 match op {
                     fparse::BinaryOp::Add => {
-                        instr = format!("iadd r{} r{}\n", 
+                        instr = format!("{}add r{} r{}\n", 
+                            ftlet,
                             leftdat.alloced_regs[0],
                             rightdat.alloced_regs[0],
                         ); 
                         res.alloced_regs.push(leftdat.alloced_regs[0]);
                     } 
                     fparse::BinaryOp::Substract => {
-                        instr = format!("isub r{} r{}\n", 
+                        instr = format!("{}sub r{} r{}\n", 
+                            ftlet,
                             leftdat.alloced_regs[0],
                             rightdat.alloced_regs[0],
                         ); 
                         res.alloced_regs.push(leftdat.alloced_regs[0]);
                     }
                     fparse::BinaryOp::Multiply => {
-                        instr = format!("imul r{} r{}\n", 
+                        instr = format!("{}mul r{} r{}\n",
+                            ftlet,
                             leftdat.alloced_regs[0],
                             rightdat.alloced_regs[0],
                         ); 
                         res.alloced_regs.push(leftdat.alloced_regs[0]);
                     } 
                     fparse::BinaryOp::Divide => {
-                        instr = format!("idiv r{} r{} r{}\n", 
+                        instr = format!("{}div r{} r{} r{}\n", 
+                            ftlet,
                             leftdat.alloced_regs[0],
                             leftdat.alloced_regs[0],
                             rightdat.alloced_regs[0],
@@ -127,7 +138,10 @@ impl CodeGen {
                 let vsymb = self.symb_table.get(&av.clone())
                     .expect(&format!("No variable {} in scope", av));
                 res.alloced_regs.push(vsymb.cur_reg);
+                res.expr_type = vsymb.ftype;
             }
+            AstNode::EnterScope => {}, // TODO: drop variables after lefting scope 
+            AstNode::LeftScope => {},
             other => {
                 panic!("can't generate yet for {:?}", other);
             }
@@ -165,28 +179,28 @@ impl CodeGen {
 
         match bop {
             fparse::BinaryOp::Add => {
-                return format!("{}add r{} r{}", 
+                return format!("{}add r{} r{}\n", 
                     type_pref, 
                     operands.get(0).expect(exop_msg),
                     operands.get(1).expect(exop_msg)
                 );
             }
             fparse::BinaryOp::Substract => {
-                return format!("{}sub r{} r{}", 
+                return format!("{}sub r{} r{}\n", 
                     type_pref, 
                     operands.get(0).expect(exop_msg),
                     operands.get(1).expect(exop_msg)
                 );
             }
             fparse::BinaryOp::Multiply => {
-                return format!("{}mul r{} r{}", 
+                return format!("{}mul r{} r{}\n", 
                     type_pref, 
                     operands.get(0).expect(exop_msg),
                     operands.get(1).expect(exop_msg)
                 );
             }
             fparse::BinaryOp::Divide => {
-                return format!("{}div r{} r{} r{}", 
+                return format!("{}div r{} r{} r{}\n", 
                     type_pref, 
                     operands.get(0).expect(exop_msg),
                     operands.get(1).expect(exop_msg),
@@ -200,8 +214,19 @@ impl CodeGen {
         }
     }
 
-    fn get_typeconv(ftyp1: FType, ftyp2: FType) -> String {
-        String::new()// TODO
+    fn get_typeconv(ftyp_src: FType, ftyp_dst: FType, rd: usize, rs: usize) -> String {
+        let ft1_l = CodeGen::ftletter(ftyp_src);
+        let ft2_l = CodeGen::ftletter(ftyp_dst);
+        format!("{}to{} r{} r{}\n", ft1_l, ft2_l, rd, rs)
+    }
+
+    fn ftletter(ftype: FType) -> &'static str {
+        match ftype {
+            FType::int => "i",
+            FType::float => "f",
+            FType::heapptr => "p",
+            _ => "u",
+        }
     }
 
     fn printintrin(&mut self, idx: usize) {
