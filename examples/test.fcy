@@ -1,6 +1,10 @@
 {
-    let a: float = 10.0;
+    let a: uint = 10u; // comments works!
 }
 {
-    let a: int = 5.0;
+    let a: uint = 5u;
+    // let a: int = 5; // wont work: redeclaration
+    // let b: int = 5.0; // wont work: mismatched types
 }
+// let a: float = 3.0 + 1; // wont work: binaryop add couldnt be applied to different types..
+let a: int = 15 * (3 + 4);

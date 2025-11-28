@@ -74,7 +74,17 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '+' => {res.push(Token::new(Tok::Plus, line)); chars.next();},
             '-' => {res.push(Token::new(Tok::Minus, line)); chars.next();},
             '*' => {res.push(Token::new(Tok::Star, line)); chars.next();},
-            '/' => {res.push(Token::new(Tok::Slash, line)); chars.next();},
+            '/' => {
+                chars.next();
+                if let Some('/') = chars.peek() {
+                    // ignoring comment
+                    while chars.peek() != Some(&'\n') {
+                        chars.next();
+                    }
+                } else {
+                    res.push(Token::new(Tok::Slash, line)); 
+                }
+            },
             '(' => {res.push(Token::new(Tok::LPar, line)); chars.next();},
             ')' => {res.push(Token::new(Tok::RPar, line)); chars.next();},
             ';' => {res.push(Token::new(Tok::Semicol, line)); chars.next();},

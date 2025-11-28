@@ -1,3 +1,4 @@
-v0.0.6
-- float, uint support
-- semantic analyzer WIP
+v0.0.7
+- comments in code
+- seman checks types, redecls
+- symbol table as separate struct

@@ -6,13 +6,13 @@ use crate::fcparse::fcparse::AstNode;
 #[derive(Debug)]
 pub struct FSymbol {
     pub name: String,
-    pub cur_reg: usize,
+    pub cur_reg: VarPosition,
     pub ftype: FType, 
 }
 
 impl FSymbol {
-    pub fn new(n: String, reg: usize, ft: FType) -> FSymbol {
-        FSymbol { name: n, cur_reg: reg, ftype: ft }
+    pub fn new(n: String, pos: VarPosition, ft: FType) -> FSymbol {
+        FSymbol { name: n, cur_reg: pos, ftype: ft }
     }
 }
 
@@ -28,17 +28,72 @@ pub enum FType {
     none
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum VarPosition {
+    Stack(usize), /// idx in stack 
+    Register(usize), /// reg idx 
+    None,
+}
+
+#[derive(Debug)]
+pub struct SymbolTable { 
+    st: Vec<HashMap<String, FSymbol>>,
+    pub cur_scope: usize
+}
+impl SymbolTable {
+    pub fn new() -> SymbolTable {
+        SymbolTable { 
+            st: vec![HashMap::new()], 
+            cur_scope: 0 
+        }
+    }
+
+    pub fn enter_scope(&mut self) {
+        self.cur_scope += 1;
+        self.st.push(HashMap::new());
+    }
+
+    /// Returns vec of regpositions of dropped
+    pub fn exit_scope(&mut self) -> Vec<VarPosition> {
+        self.cur_scope -= 1;
+        let mut res: Vec<VarPosition> = Vec::new();
+        if let Some(poped) = self.st.pop() {
+            for (key, val) in poped.iter() {
+                res.push(val.cur_reg);
+            }
+        };
+        res
+    }
+
+    pub fn newsymb(&mut self, fsymb: FSymbol) {
+        self.st
+                .get_mut(self.cur_scope)
+                .unwrap()
+                .insert(fsymb.name.clone(), fsymb); 
+    }
+
+    pub fn get(&mut self, var_name: String) -> Option<(usize, &FSymbol)> {
+        for (idx, scv) in self.st.iter().enumerate() {
+            if let Some(v) = scv.get(&var_name) {
+                return Some((idx, v.clone()));
+            };
+        } 
+        None
+    }
+
+}
+
 /// Semantic analyzer struct
 #[derive(Debug)]
 pub struct SemAn {
-    symb_table: Vec<HashMap<String, FSymbol>>,
+    symb_table: SymbolTable,
     cur_scope: usize,
 }
 
 impl SemAn {
     pub fn new() -> SemAn {
         SemAn { 
-            symb_table: vec![HashMap::new()],
+            symb_table: SymbolTable::new(),
             cur_scope: 0,
         }
     }
@@ -58,45 +113,47 @@ impl SemAn {
                     &AstRoot::new(*val.clone(), line)
                 );
                 
-                if let Some(_) = self.get_var(name.clone()) {
+                if let Some(_) = self.symb_table.get(name.clone()) {
                     panic!("{}: redeclaration of variable `{}`", line, name);
-                }; 
+                };
 
-                self.newsymb(FSymbol::new(name.to_owned(), 0, *ft));
+                if *ft != rightdat.ftype {
+                    panic!("{}: mismatched types\nExpected type {:?}, got {:?}",
+                        line, ft, rightdat.ftype);
+                }
+
+                self.symb_table.newsymb(FSymbol::new(name.to_owned(), VarPosition::None, *ft));
+                exprdat.ftype = *ft;
             }
-            AstNode::EnterScope => {self.enter_scope();}
-            AstNode::LeftScope => {self.exit_scope();}
+            AstNode::EnterScope => {self.symb_table.enter_scope();}
+            AstNode::LeftScope => {self.symb_table.exit_scope();}
+            AstNode::Int(iv) => {
+                exprdat.ftype = FType::int;
+            }
+            AstNode::Uint(uv) => {
+                exprdat.ftype = FType::uint;
+            }
+            AstNode::Float(fv) => {
+                exprdat.ftype = FType::float;
+            }
+            AstNode::BinaryOp { op, left, right } => {
+                let leftd = self.analyze_expr(
+                    &AstRoot::new(*left.clone(), line));
+                let rightd = self.analyze_expr(
+                    &AstRoot::new(*right.clone(), line));
+
+                if leftd.ftype != rightd.ftype {
+                    panic!("\n{}: Binary op {:?} can't be applied with different types: {:?} and {:?}",
+                        line, op, leftd.ftype, rightd.ftype);
+                }
+                exprdat.ftype = leftd.ftype;
+            }
    
             _ => {}
         }
         exprdat
     }
 
-    fn get_var(&mut self, var_name: String) -> Option<(usize, &FSymbol)> {
-        for (idx, scv) in self.symb_table.iter().enumerate() {
-            if let Some(v) = scv.get(&var_name) {
-                return Some((idx, v.clone()));
-            };
-        } 
-        None
-    }
-
-    fn enter_scope(&mut self) {
-        self.cur_scope += 1;
-        self.symb_table.push(HashMap::new());
-    }
-
-    fn exit_scope(&mut self) {
-        self.cur_scope -= 1;
-        self.symb_table.pop();
-    }
-
-    fn newsymb(&mut self, fsymb: FSymbol) {
-        self.symb_table
-                .get_mut(self.cur_scope)
-                .unwrap()
-                .insert(fsymb.name.clone(), fsymb); 
-    }
 }
 
 #[derive(Debug)]

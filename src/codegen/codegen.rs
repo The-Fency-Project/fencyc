@@ -1,6 +1,6 @@
 use std::{collections::HashMap};
 
-use crate::{fcparse::fcparse::{self as fparse, AstRoot}, seman::seman::{self as sem, FSymbol, FType}};// AstNode;
+use crate::{fcparse::fcparse::{self as fparse, AstRoot}, seman::seman::{self as sem, FSymbol, FType, SymbolTable}};// AstNode;
 use fparse::AstNode;
 
 #[derive(Debug)]
@@ -10,7 +10,8 @@ pub struct CodeGen {
     pub sbuf: String,
     alloced_regs: Vec<bool>,
     unused_regs: Vec<usize>, // which are unused for some time (lru)
-    pub symb_table: HashMap<String, FSymbol>
+    pub symb_table: SymbolTable,
+    stack_end: usize, // latest stack frame idx 
 }
 
 impl CodeGen {
@@ -21,14 +22,14 @@ impl CodeGen {
             sbuf: String::new(),
             alloced_regs: vec![false; 32],
             unused_regs: Vec::new(),
-            symb_table: HashMap::new(),
+            symb_table: SymbolTable::new(),
+            stack_end: 0,
         }
     }
 
     pub fn gen_everything(&mut self) {
         while let Some(r) = self.ast.get(self.cur_ast) {
             let gdat = self.gen_expr(r.clone().node);
-            self.symb_table.extend(gdat.symbols);
             self.cur_ast += 1;
         }
         self.printintrin(0); // TODO: implement print intrinsic as  
@@ -58,9 +59,11 @@ impl CodeGen {
                 instr = format!("movr r{} r{}\n",
                         leftreg, rightdat.alloced_regs[0]);
                
-                let symb = FSymbol::new(name, leftreg, ft);
+                let symb = FSymbol::new(
+                    name, sem::VarPosition::Register(leftreg), ft
+                );
                 
-                res.push_symb(symb);
+                self.symb_table.newsymb(symb);
                 res.expr_type = ft;
                 self.sbuf.push_str(&instr);
                 self.free_reg(rightdat.alloced_regs[0]);
@@ -135,13 +138,60 @@ impl CodeGen {
                 self.free_reg(rightdat.alloced_regs[0]);
             },
             AstNode::Variable(av) => {
-                let vsymb = self.symb_table.get(&av.clone())
-                    .expect(&format!("No variable {} in scope", av));
-                res.alloced_regs.push(vsymb.cur_reg);
+                let vsymb = self.symb_table.get(av.clone())
+                    .expect(&format!("No variable {} in scope", av))
+                    .1.clone();
                 res.expr_type = vsymb.ftype;
+                match vsymb.cur_reg {
+                    sem::VarPosition::None => {
+                        panic!("None value for {}!", vsymb.name);
+                    }
+                    sem::VarPosition::Register(ri) => {
+                        res.alloced_regs.push(ri);
+                    }
+                    sem::VarPosition::Stack(sfi) => {
+                        let mut instr = String::new();
+                        let reg = self.alloc_reg();
+                        if self.stack_end == sfi {
+                            instr = format!("pop r{}\n", reg);
+                        } else {
+                            instr = format!(
+                                "gsf r{} r{}\n",
+                                reg, sfi
+                            );
+                        }
+                        self.sbuf.push_str(&instr);
+                    }
+                }
             }
-            AstNode::EnterScope => {}, // TODO: drop variables after lefting scope 
-            AstNode::LeftScope => {},
+            AstNode::EnterScope => {
+                self.symb_table.enter_scope();
+            }, 
+            AstNode::LeftScope => {
+                let dropped = self.symb_table.exit_scope();
+                for val in dropped.iter() {
+                    match val {
+                        sem::VarPosition::None => {}
+                        sem::VarPosition::Register(ri) => {
+                            self.free_reg(*ri);
+                            let instr = format!("xor r{} r{}\n",
+                                ri, ri);
+                            self.sbuf.push_str(&instr);
+                        }
+                        sem::VarPosition::Stack(sfi) => {
+                            let reg_idx = self.alloc_reg();
+                            let reg_zero = self.alloc_reg();
+                            let instr = format!(
+                                "uload r{} {}\n
+                                 uload r{} {}\n 
+                                 usf r{} r{}",
+                                reg_idx, sfi, reg_zero, 0, reg_idx, reg_zero 
+                            );
+                            self.sbuf.push_str(&instr);
+                        }
+                    }
+                }
+            },
             other => {
                 panic!("can't generate yet for {:?}", other);
             }

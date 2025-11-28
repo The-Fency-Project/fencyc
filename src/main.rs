@@ -54,7 +54,7 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool) -> Resu
 
     let mut parser = fparser::FcParser::new(toks);
     let ast: Vec<AstRoot> = parser.parse_everything();
-    
+
     let mut seman = Seman::SemAn::new();
     seman.analyze(&ast);
 
