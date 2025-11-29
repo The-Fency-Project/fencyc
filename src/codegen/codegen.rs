@@ -1,16 +1,32 @@
 use std::{collections::HashMap};
 
-use crate::{fcparse::fcparse::{self as fparse, AstRoot}, seman::seman::{self as sem, FSymbol, FType, SymbolTable}};// AstNode;
+use crate::{fcparse::fcparse::{self as fparse, AstRoot}, seman::seman::{self as sem, FSymbol, FType, SymbolTable, VarPosition}};// AstNode;
 use fparse::AstNode;
+
+#[derive(Debug, Clone)]
+pub enum ValDat {
+    Symbol(FSymbTabData),
+    ImmVal(Numerical), // immediate value 
+    None,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Numerical {
+    uint(u64),
+    int(i64),
+    float(f64),
+    heapptr(u64),
+}
 
 #[derive(Debug)]
 pub struct CodeGen {
     ast: Vec<AstRoot>,
     cur_ast: usize,
     pub sbuf: String,
-    alloced_regs: Vec<bool>,
+    alloced_regs: Vec<ValDat>,
     unused_regs: Vec<usize>, // which are unused for some time (lru)
     pub symb_table: SymbolTable,
+    predicted_stack: Vec<ValDat>,
     stack_end: usize, // latest stack frame idx 
 }
 
@@ -20,10 +36,11 @@ impl CodeGen {
             ast: ast, 
             cur_ast: 0,
             sbuf: String::new(),
-            alloced_regs: vec![false; 32],
+            alloced_regs: vec![ValDat::None; 32],
             unused_regs: Vec::new(),
             symb_table: SymbolTable::new(),
             stack_end: 0,
+            predicted_stack: Vec::new(),
         }
     }
 
@@ -52,31 +69,37 @@ impl CodeGen {
             AstNode::Assignment { name, val, ft } => {
                 let rightdat = self.gen_expr(*val);  
                 
-                let leftreg = self.alloc_reg();
+                let mut symb = FSymbol::new(
+                    name.clone(), sem::VarPosition::Register(0), ft
+                );
+                let leftreg = self.alloc_reg(
+                    ValDat::Symbol(FSymbTabData::new(
+                        self.symb_table.cur_scope, 
+                        name.clone()    
+                    ))
+                );
+                symb.cur_reg = VarPosition::Register(leftreg);
+
                 res.alloced_regs.push(leftreg);
 
                 let mut instr = String::new();
                 instr = format!("movr r{} r{}\n",
                         leftreg, rightdat.alloced_regs[0]);
                
-                let symb = FSymbol::new(
-                    name, sem::VarPosition::Register(leftreg), ft
-                );
-                
                 self.symb_table.newsymb(symb);
                 res.expr_type = ft;
                 self.sbuf.push_str(&instr);
-                self.free_reg(rightdat.alloced_regs[0]);
+                self.free_reg_not_var(rightdat.alloced_regs[0]);
             }   
             AstNode::Int(iv) => {
-                let reg = self.alloc_reg();
+                let reg = self.alloc_reg(ValDat::ImmVal(Numerical::int(iv)));
                 let instr = format!("iload r{} {}\n", reg, iv);
                 res.alloced_regs.push(reg);
                 res.expr_type = FType::int;
                 self.sbuf.push_str(&instr);
             },
             AstNode::Float(fv) => {
-                let reg = self.alloc_reg();
+                let reg = self.alloc_reg(ValDat::ImmVal(Numerical::float(fv)));
                 let instr = format!("fload r{} {:#?}\n", reg, fv); 
                 // :#? so it would always be with point. its important for voxasm
                 res.alloced_regs.push(reg);
@@ -84,7 +107,7 @@ impl CodeGen {
                 self.sbuf.push_str(&instr);
             },
             AstNode::Uint(uv) => {
-                let reg = self.alloc_reg();
+                let reg = self.alloc_reg(ValDat::ImmVal(Numerical::uint(uv)));
                 let instr = format!("uload r{} {}\n", reg, uv);
                 res.alloced_regs.push(reg);
                 res.expr_type = FType::uint;
@@ -135,12 +158,12 @@ impl CodeGen {
                     }
                 }
                 self.sbuf.push_str(&instr);
-                self.free_reg(rightdat.alloced_regs[0]);
+                self.free_reg_not_var(rightdat.alloced_regs[0]);
             },
             AstNode::Variable(av) => {
-                let vsymb = self.symb_table.get(av.clone())
-                    .expect(&format!("No variable {} in scope", av))
-                    .1.clone();
+                let (scope, vsymb) = self.symb_table.get(av.clone())
+                    .expect(&format!("No variable {} in scope", av));
+                let var_name = vsymb.name.clone();
                 res.expr_type = vsymb.ftype;
                 match vsymb.cur_reg {
                     sem::VarPosition::None => {
@@ -151,13 +174,21 @@ impl CodeGen {
                     }
                     sem::VarPosition::Stack(sfi) => {
                         let mut instr = String::new();
-                        let reg = self.alloc_reg();
+                        let reg = self.alloc_reg(
+                            ValDat::Symbol(FSymbTabData::new(
+                                scope, var_name
+                            ))
+                        );
                         if self.stack_end == sfi {
                             instr = format!("pop r{}\n", reg);
+                            self.predicted_stack.pop();
                         } else {
+                            let reg_zero = self.alloc_reg(ValDat::ImmVal(Numerical::uint(0)));
                             instr = format!(
-                                "gsf r{} r{}\n",
-                                reg, sfi
+                                "gsf r{} r{}\n
+                                 uload r{} 0\n
+                                 usf r{} r{}\n",
+                                reg, sfi, reg_zero, reg, reg_zero,
                             );
                         }
                         self.sbuf.push_str(&instr);
@@ -174,13 +205,17 @@ impl CodeGen {
                         sem::VarPosition::None => {}
                         sem::VarPosition::Register(ri) => {
                             self.free_reg(*ri);
-                            let instr = format!("xor r{} r{}\n",
-                                ri, ri);
+                            let instr = format!("uload r{} 0\n",
+                                ri);
                             self.sbuf.push_str(&instr);
                         }
                         sem::VarPosition::Stack(sfi) => {
-                            let reg_idx = self.alloc_reg();
-                            let reg_zero = self.alloc_reg();
+                            let reg_idx = self.alloc_reg(
+                                ValDat::ImmVal(Numerical::uint(*sfi as u64))
+                            );
+                            let reg_zero = self.alloc_reg(
+                                ValDat::ImmVal(Numerical::uint(0))
+                            );
                             let instr = format!(
                                 "uload r{} {}\n
                                  uload r{} {}\n 
@@ -199,24 +234,60 @@ impl CodeGen {
         return res;
     }
 
-    fn alloc_reg(&mut self) -> usize {
-        // TODO: current algorithm could be problematic. Need upgrades.
+    fn alloc_reg(&mut self, val: ValDat) -> usize {
         for idx in 0..self.alloced_regs.len() {
-            if self.alloced_regs[idx] == false {
+            if let Some(ValDat::None) = self.alloced_regs.get(idx) {
                 self.unused_regs.push(idx);
-                self.alloced_regs[idx] = true;
+                self.alloced_regs[idx] = val;
                 return idx;
             }
         }
         let oldest = self.unused_regs.remove(0);
-        self.sbuf.push_str(&format!("push r{}\n", oldest));
+        let mut symbname: Option<(usize, String)> = None;
 
+        if let Some(dat) = self.alloced_regs.get_mut(oldest) {
+            self.predicted_stack.push(dat.clone());
+            match dat {
+                ValDat::None => {}
+                ValDat::Symbol(s) => {
+                    symbname = Some((s.scope, s.name.clone()));
+                }
+                other => {} 
+            }
+        }
+        
+        if let Some((scope, name)) = symbname {
+            if let Some(val) = self.symb_table.get_mut_in_scope(&name, scope) {
+                val.cur_reg = VarPosition::Stack(
+                    self.predicted_stack.len().saturating_sub(1)
+                );
+            };
+        };
+        
+        self.sbuf.push_str(&format!("push r{}\n", oldest));
+        self.alloced_regs[oldest] = val;
         self.unused_regs.push(oldest);
         return oldest;
     }
 
+    fn free_reg_not_var(&mut self, idx: usize) {
+        if let Some(ValDat::Symbol(_)) = &self.alloced_regs.get(idx) {
+            return; 
+        }
+        self.alloced_regs[idx] = ValDat::None;
+
+    }
+
     fn free_reg(&mut self, idx: usize) {
-        self.alloced_regs[idx] = false;
+        if let Some(ValDat::Symbol(s)) = &self.alloced_regs.get(idx) {
+            if let Some(val) = self.symb_table.get_mut_in_scope(&s.name, s.scope) {
+                if let VarPosition::Register(_) = val.cur_reg {
+                    println!("set to none");
+                    val.cur_reg = VarPosition::None;
+                }
+            };
+        }
+        self.alloced_regs[idx] = ValDat::None;
     }
 
     fn bop_typed(bop: fparse::BinaryOp, ftype: FType, operands: Vec<usize>, line: usize) -> String {
@@ -304,5 +375,17 @@ impl GenData {
 
     pub fn push_symb(&mut self, s: FSymbol) {
         self.symbols.insert(s.name.clone(), s);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FSymbTabData {
+    pub scope: usize,
+    pub name: String,
+}
+
+impl FSymbTabData {
+    pub fn new(scope: usize, name: String) -> FSymbTabData {
+        FSymbTabData { scope: scope, name: name }
     }
 }

@@ -1,4 +1,4 @@
-v0.0.7
-- comments in code
-- seman checks types, redecls
-- symbol table as separate struct
+v0.0.8
+- floats fix
+- codegen now traces stack
+- seman checks variables

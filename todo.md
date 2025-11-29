@@ -1,3 +1,3 @@
 - move halt to main end
-- change reg alloc
-- make codegen see vars in regs
+- codegen works weird with low reg count and several variables, e.g. 2 reg count.
+- if statements

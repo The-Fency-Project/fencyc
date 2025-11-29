@@ -81,6 +81,10 @@ impl SymbolTable {
         None
     }
 
+    pub fn get_mut_in_scope(&mut self, name: &str, scope: usize) -> Option<&mut FSymbol> {
+        self.st.get_mut(scope)?.get_mut(name)
+    }
+
 }
 
 /// Semantic analyzer struct
@@ -143,10 +147,19 @@ impl SemAn {
                     &AstRoot::new(*right.clone(), line));
 
                 if leftd.ftype != rightd.ftype {
-                    panic!("\n{}: Binary op {:?} can't be applied with different types: {:?} and {:?}",
+                    panic!("\n{}: Binary op {:?} can't be applied with different types: {:?} and {:?}\n",
                         line, op, leftd.ftype, rightd.ftype);
                 }
                 exprdat.ftype = leftd.ftype;
+            }
+            AstNode::Variable(var) => {
+                exprdat.ftype = match self.symb_table.get(var.clone()) {
+                    Some(v) => v.1.ftype,
+                    None => {
+                        panic!("\n{}: Usage of undeclared variable {}\n",
+                            line, var);
+                    }
+                }
             }
    
             _ => {}
