@@ -1,0 +1,60 @@
+name: Nightly Build and Release
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_release:
+    runs-on: ubuntu-latest
+    # Grant permissions for creating releases and pushing tags
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install nightly Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        override: true
+        components: rustfmt, clippy
+
+    - name: Build nightly
+      run: cargo build --verbose
+    
+    # --- Release Steps ---
+
+    - name: Get current date for release name
+      id: date
+      run: echo "NOW=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+    - name: Set dynamic release name and tag
+      run: |
+        echo "RELEASE_NAME=Nightly ${{ steps.date.outputs.NOW }} build" >> $GITHUB_ENV
+        echo "TAG_NAME=nightly-${{ steps.date.outputs.NOW }}" >> $GITHUB_ENV
+
+    - name: Create Git tag
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Actions Bot"
+        git tag -a "${{ env.TAG_NAME }}" -m "${{ env.RELEASE_NAME }}"
+        git push origin "${{ env.TAG_NAME }}"
+
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        release_name: ${{ env.RELEASE_NAME }}
+        body: |
+          Automated nightly build for ${{ steps.date.outputs.NOW }}.
+          This is a pre-release and may be unstable.
+        draft: false
+        prerelease: true
