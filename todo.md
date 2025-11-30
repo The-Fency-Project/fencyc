@@ -1,3 +1,5 @@
 - move halt to main end
-- codegen works weird with low reg count and several variables, e.g. 2 reg count.
-- if statements
+- type convs 
+- if statements codegen
+- assignment of new values for vars
+- seman for if statements

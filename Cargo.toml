@@ -1,6 +1,6 @@
 [package]
 name = "fencyc"
-version = "0.0.7"
+version = "0.0.9"
 edition = "2024"
 
 [dependencies]

@@ -1,4 +1,5 @@
-v0.0.8
-- floats fix
-- codegen now traces stack
-- seman checks variables
+v0.0.9
+- small codegen fix
+- bitwise and, or, xor support
+- boolean values
+- if statements WIP

@@ -140,6 +140,9 @@ impl SemAn {
             AstNode::Float(fv) => {
                 exprdat.ftype = FType::float;
             }
+            AstNode::boolVal(bv) => {
+                exprdat.ftype = FType::bool;
+            }
             AstNode::BinaryOp { op, left, right } => {
                 let leftd = self.analyze_expr(
                     &AstRoot::new(*left.clone(), line));

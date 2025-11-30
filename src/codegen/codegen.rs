@@ -16,6 +16,7 @@ pub enum Numerical {
     int(i64),
     float(f64),
     heapptr(u64),
+    boolean(bool),
 }
 
 #[derive(Debug)]
@@ -49,7 +50,7 @@ impl CodeGen {
             let gdat = self.gen_expr(r.clone().node);
             self.cur_ast += 1;
         }
-        self.printintrin(0); // TODO: implement print intrinsic as  
+        self.printintrin(0); // TODO: implement print intrinsic as   
                             // keyword and remove this
         self.sbuf.push_str("halt\n"); // TODO: move it to main() end 
     }
@@ -113,12 +114,24 @@ impl CodeGen {
                 res.expr_type = FType::uint;
                 self.sbuf.push_str(&instr);
             }
+            AstNode::boolVal(bv) => {
+                let reg = self.alloc_reg(ValDat::ImmVal(Numerical::boolean(bv)));
+                let instr = format!("uload r{} {}\n", reg, bv as u64);
+                res.alloced_regs.push(reg);
+                res.expr_type = FType::bool;
+                self.sbuf.push_str(&instr);
+ 
+            }
             AstNode::BinaryOp { op, left, right } => {
                 let leftdat = self.gen_expr(*left);
                 let rightdat = self.gen_expr(*right);
 
                 let mut instr = String::new();
-                let ftlet = CodeGen::ftletter(leftdat.expr_type); 
+                let ftlet = CodeGen::ftletter(leftdat.expr_type);
+                let need_save = leftdat.alloced_regs[0] == rightdat.alloced_regs[0];
+                if need_save {
+                    self.sbuf.push_str(&format!("push r{}\n", leftdat.alloced_regs[0]));
+                }
                 match op {
                     fparse::BinaryOp::Add => {
                         instr = format!("{}add r{} r{}\n", 
@@ -153,10 +166,29 @@ impl CodeGen {
                         ); 
                         res.alloced_regs.push(leftdat.alloced_regs[0]); 
                     }
+                    fparse::BinaryOp::BitwiseAnd => {
+                        instr = format!("and r{} r{}\n",
+                            leftdat.alloced_regs[0], rightdat.alloced_regs[0]);
+                        res.alloced_regs.push(leftdat.alloced_regs[0]);
+                    }
+                    fparse::BinaryOp::BitwiseOr => {
+                        instr = format!("or r{} r{}\n",
+                            leftdat.alloced_regs[0], rightdat.alloced_regs[0]);
+                        res.alloced_regs.push(leftdat.alloced_regs[0]);
+                    }
+                    fparse::BinaryOp::BitwiseXor => {
+                        instr = format!("xor r{} r{}\n",
+                            leftdat.alloced_regs[0], rightdat.alloced_regs[0]);
+                        res.alloced_regs.push(leftdat.alloced_regs[0]);
+                    }
                     other => {
                         panic!("Unknown binary operation type: {:?}", other);
                     }
                 }
+                if need_save {
+                    self.sbuf.push_str(&format!("pop r{}\n", leftdat.alloced_regs[0]));
+                }
+
                 self.sbuf.push_str(&instr);
                 self.free_reg_not_var(rightdat.alloced_regs[0]);
             },

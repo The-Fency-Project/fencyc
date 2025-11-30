@@ -20,6 +20,9 @@ pub enum Tok {
     Equals, // =
     RCurBr, //} 
     LCurBr, //{
+    Ampersand, 
+    Caret, // ^
+    VerBar, // |
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +95,9 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             ':' => {res.push(Token::new(Tok::Colon, line)); chars.next();},
             '}' => {res.push(Token::new(Tok::RCurBr, line)); chars.next();},
             '{' => {res.push(Token::new(Tok::LCurBr, line)); chars.next();},
+            '&' => {res.push(Token::new(Tok::Ampersand, line)); chars.next();},
+            '|' => {res.push(Token::new(Tok::VerBar, line)); chars.next();},
+            '^' => {res.push(Token::new(Tok::Caret, line)); chars.next();},
             ' ' | '\t' => {chars.next();},
             '\n' => {line += 1; chars.next();}
             'a'..='z' | 'A'..='Z' | '_' => {
@@ -121,11 +127,19 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kword {
     Let,
+    True,
+    False,
+    If,
+    Else,
 }
 
 fn match_symb_tok(word: &str) -> Tok {
     match word {
         "let" => Tok::Keyword(Kword::Let),
+        "true" => Tok::Keyword(Kword::True),
+        "false" => Tok::Keyword(Kword::False),
+        "if" => Tok::Keyword(Kword::If),
+        "else" => Tok::Keyword(Kword::Else),
         other => Tok::Identifier(word.to_string()),
     }
 }

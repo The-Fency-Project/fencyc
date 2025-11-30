@@ -7,7 +7,7 @@ pub struct FcParser {
     pos: usize,
 }
 
-
+/// Parser based on Pratt parsing algorithm
 impl FcParser {
     pub fn new(toks: Vec<Token>) -> FcParser {
         FcParser { tokens: toks, pos: 0 }
@@ -19,6 +19,22 @@ impl FcParser {
             let expr = self.parse_expr(0);
             res.push(expr);
         }
+        res
+    }
+
+    fn parse_block(&mut self) -> Vec<AstRoot> {
+        self.expect(Tok::LCurBr);
+        let mut res: Vec<AstRoot> = Vec::new();
+        
+        while let Some(tok) = self.peek() {
+            if tok.tok == Tok::RCurBr {
+                self.consume();
+                break;
+            }
+            let astr = self.parse_expr(0);
+            res.push(astr);
+        }
+
         res
     }
 
@@ -47,9 +63,14 @@ impl FcParser {
             let _ = self.consume(); 
 
             let right = self.parse_expr(rbp);
+       
+            let nexttok: Option<&Tok> = match self.peek() {
+                None => None,
+                Some(v) => Some(&v.tok),
+            };
 
             left = AstNode::BinaryOp {
-                op: match_bop_for_tok(optok).unwrap(),
+                op: match_bop_for_tok(optok, nexttok).unwrap(),
                 left: Box::new(left),
                 right: Box::new(right.node),
             };
@@ -66,6 +87,9 @@ impl FcParser {
             Tok::Int(iv) => AstNode::Int(*iv),
             Tok::Uint(uv) => AstNode::Uint(*uv),
             Tok::Float(fv) => AstNode::Float(*fv),
+
+            Tok::Keyword(Kword::True) => AstNode::boolVal(true),
+            Tok::Keyword(Kword::False) => AstNode::boolVal(false),
 
             Tok::LCurBr => AstNode::EnterScope, 
             Tok::RCurBr => AstNode::LeftScope,
@@ -84,6 +108,8 @@ impl FcParser {
             Tok::Plus => self.parse_expr(255).node,
 
             Tok::Identifier(idt) => AstNode::Variable(idt.clone()),
+
+            Tok::Keyword(Kword::If) => self.parse_if(),
 
             Tok::Keyword(Kword::Let) => {
                 let idt_tok = self.consume()
@@ -141,6 +167,9 @@ impl FcParser {
             Tok::Star | Tok::Slash => Some((20, 21)),
             //Tok::Keyword(Kword::Let) => Some((5, 6)),
             Tok::Equals => Some((3, 4)),
+            Tok::VerBar => Some((8, 9)),
+            Tok::Caret => Some((10, 11)),
+            Tok::Ampersand => Some((12, 13)),
             _ => None,
         }
     }
@@ -151,8 +180,36 @@ impl FcParser {
         tok
     }
 
+    fn expect_consume(&mut self, want: Tok) -> Option<&Token> {
+        self.expect(want);
+        self.consume()
+    }
+
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.pos)
+    }
+
+    fn parse_if(&mut self) -> AstNode {
+        let condition = self.parse_expr(0); 
+
+        let iftrue = self.parse_block();
+        let iffalse: Option<Vec<AstRoot>> = match self.peek() {
+            None => None,
+            Some(token) => {
+                if token.tok == Tok::Keyword(Kword::Else) {
+                    self.consume();
+                    Some(self.parse_block())
+                } else {
+                    None
+                }
+            }
+        };        
+
+        AstNode::IfStatement { 
+            cond: Box::new(condition), 
+            if_true: iftrue, 
+            if_false: iffalse 
+        }
     }
 }
 
@@ -161,6 +218,7 @@ pub enum AstNode {
     Int(i64),
     Float(f64),
     Uint(u64),
+    boolVal(bool),
     StringLiteral(String),
     Variable(String),
     Identifier(String),
@@ -189,6 +247,12 @@ pub enum AstNode {
         val: Box<AstNode>,
         ft: FType, 
     },
+
+    IfStatement {
+        cond: Box<AstRoot>,
+        if_true: Vec<AstRoot>,
+        if_false: Option<Vec<AstRoot>>
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -198,15 +262,21 @@ pub enum BinaryOp {
     Multiply,
     Divide,
     Assignment,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
 }
 
-pub fn match_bop_for_tok(tok: &Tok) -> Option<BinaryOp> {
+pub fn match_bop_for_tok(tok: &Tok, next_tok: Option<&Tok>) -> Option<BinaryOp> {
     match tok {
         Tok::Plus => Some(BinaryOp::Add),
         Tok::Minus => Some(BinaryOp::Substract),
         Tok::Star => Some(BinaryOp::Multiply),
         Tok::Slash => Some(BinaryOp::Divide),
         Tok::Keyword(Kword::Let) => Some(BinaryOp::Assignment),
+        Tok::Ampersand => Some(BinaryOp::BitwiseAnd),
+        Tok::VerBar => Some(BinaryOp::BitwiseOr),
+        Tok::Caret => Some(BinaryOp::BitwiseXor),
         _ => None,
     }
 }
