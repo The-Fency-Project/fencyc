@@ -1,9 +1,7 @@
-// let a: uint = 5u & 3u; // 1 
-// let b: uint = 5u | 2u;  // 7
-// let c: uint = 5u ^ 5u; // 0
 let flag: bool = true & false; // 0
-if flag { // wont generate yet, but will parse
-    let a: uint = 1u; 
-} else {
-    let a: uint = 1u;
-}
+flag = true;
+// if flag { // wont generate yet, but will parse
+//    let a: uint = 1u; 
+//} else {
+//    let a: uint = 1u;
+// }

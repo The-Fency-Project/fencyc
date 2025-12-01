@@ -72,7 +72,7 @@ impl SymbolTable {
                 .insert(fsymb.name.clone(), fsymb); 
     }
 
-    pub fn get(&mut self, var_name: String) -> Option<(usize, &FSymbol)> {
+    pub fn get(&self, var_name: String) -> Option<(usize, &FSymbol)> {
         for (idx, scv) in self.st.iter().enumerate() {
             if let Some(v) = scv.get(&var_name) {
                 return Some((idx, v.clone()));

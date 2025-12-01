@@ -1,5 +1,5 @@
 - move halt to main end
 - type convs 
 - if statements codegen
-- assignment of new values for vars
 - seman for if statements
+- seman for reas

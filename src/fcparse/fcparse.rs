@@ -80,7 +80,7 @@ impl FcParser {
     }
 
     fn parse_prefix(&mut self) -> AstNode {
-        let token: &Token = self.consume().expect("unexpected EOF");
+        let token: &Token = &self.consume().expect("unexpected EOF").clone();
         let line_n: usize = token.line;
 
         match &token.tok {
@@ -107,7 +107,19 @@ impl FcParser {
 
             Tok::Plus => self.parse_expr(255).node,
 
-            Tok::Identifier(idt) => AstNode::Variable(idt.clone()),
+            Tok::Identifier(idt) => {
+                let idt_cl = idt.clone();
+                if let Some(nexttok) = self.peek() {
+                    if nexttok.tok == Tok::Equals {
+                        self.consume();
+                        return AstNode::Reassignment { 
+                            name: idt_cl, 
+                            newval: Box::new(self.parse_expr(0))
+                        }
+                    }
+                }
+                AstNode::Variable(idt.clone())
+            },
 
             Tok::Keyword(Kword::If) => self.parse_if(),
 
@@ -248,11 +260,16 @@ pub enum AstNode {
         ft: FType, 
     },
 
+    Reassignment {
+        name: String,
+        newval: Box<AstRoot>
+    },
+
     IfStatement {
         cond: Box<AstRoot>,
         if_true: Vec<AstRoot>,
         if_false: Option<Vec<AstRoot>>
-    }
+    },
 }
 
 #[derive(Debug, Clone)]

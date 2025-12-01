@@ -1,5 +1,3 @@
-v0.0.9
-- small codegen fix
-- bitwise and, or, xor support
-- boolean values
+v0.0.10
+- reassignment of variables
 - if statements WIP

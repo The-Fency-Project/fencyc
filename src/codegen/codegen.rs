@@ -259,6 +259,35 @@ impl CodeGen {
                     }
                 }
             },
+            AstNode::Reassignment { name, newval } => {
+                let var_name = name.clone();
+                
+                let rhdat = self.gen_expr(newval.node);
+                
+                let varreg = {
+                    let entry = self.symb_table.get(var_name).unwrap();
+                    let scope = entry.0;
+                    match entry.1.cur_reg {
+                        VarPosition::Register(ri) => ri,
+                        VarPosition::None => panic!("None var value!"),
+                        VarPosition::Stack(sfi) => {
+                            self.extract_reg(sfi, 
+                                ValDat::Symbol(
+                                    FSymbTabData::new(scope, name)
+                                )
+                            )
+                        }
+                    }
+                };
+                
+                let instr = format!("movr r{} r{}\n", varreg, rhdat.alloced_regs[0]);
+                self.sbuf.push_str(&instr);
+                self.free_reg_not_var(rhdat.alloced_regs[0]);
+            }
+            /// TODO: generate if statements
+            //AstNode::IfStatement { cond, if_true, if_false } => {
+            //
+            //}
             other => {
                 panic!("can't generate yet for {:?}", other);
             }
@@ -320,6 +349,23 @@ impl CodeGen {
             };
         }
         self.alloced_regs[idx] = ValDat::None;
+    }
+
+    fn extract_reg(&mut self, sfi: usize, val: ValDat) -> usize {
+        let dstreg = self.alloc_reg(val);
+        if sfi == self.predicted_stack.len().saturating_sub(1) {
+            let instr = format!("pop r{}\n", dstreg);
+            self.sbuf.push_str(&instr);
+        } else {
+            let idx_reg = self.alloc_reg(ValDat::ImmVal(Numerical::uint(sfi as u64)));
+            let instr = format!(
+                "uload r{} {}\n
+                gsf r{} r{}\n",
+                idx_reg, sfi, dstreg, idx_reg
+            );
+            self.sbuf.push_str(&instr);
+        }
+        dstreg
     }
 
     fn bop_typed(bop: fparse::BinaryOp, ftype: FType, operands: Vec<usize>, line: usize) -> String {
