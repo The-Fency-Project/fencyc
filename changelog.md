@@ -1,3 +1,2 @@
-v0.0.10
-- reassignment of variables
-- if statements WIP
+v0.1.0
+- if statements fully works!

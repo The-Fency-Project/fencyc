@@ -164,6 +164,31 @@ impl SemAn {
                     }
                 }
             }
+            AstNode::Reassignment { name, newval } => {
+                let symb_type = {
+                    let entry = match self.symb_table.get(name.clone()) {
+                        Some(en) => en,
+                        None => {
+                            panic!("\n{}: Assignment to undeclared variable {}\n",
+                                line, name);
+                        }
+                    };
+                    entry.1.ftype
+                };
+                let newval_data = self.analyze_expr(&newval);
+                if symb_type != newval_data.ftype {
+                    panic!("\n{}: Incompatible types\n
+                        {} has type {:?}, but the right hand statement is {:?}\n",
+                    line, name, symb_type, newval_data.ftype);
+                }
+            }
+            AstNode::IfStatement { cond, if_true, if_false } => {
+                let cond_an = self.analyze_expr(cond);
+                if cond_an.ftype != FType::bool {
+                    println!("\n{}: Warning: condition is not boolean value; detected {:?}",
+                        line, cond_an.ftype);
+                }
+            }
    
             _ => {}
         }

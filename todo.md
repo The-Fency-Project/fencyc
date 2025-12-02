@@ -1,5 +1,6 @@
 - move halt to main end
 - type convs 
-- if statements codegen
-- seman for if statements
-- seman for reas
+- updating var pos after reassignment
+- elseif
+- whiles
+- printintrin

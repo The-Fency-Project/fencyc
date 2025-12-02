@@ -28,7 +28,8 @@ pub struct CodeGen {
     unused_regs: Vec<usize>, // which are unused for some time (lru)
     pub symb_table: SymbolTable,
     predicted_stack: Vec<ValDat>,
-    stack_end: usize, // latest stack frame idx 
+    stack_end: usize, // latest stack frame idx
+    labels: HashMap<String, usize> // usize for sbuf idx 
 }
 
 impl CodeGen {
@@ -42,6 +43,7 @@ impl CodeGen {
             symb_table: SymbolTable::new(),
             stack_end: 0,
             predicted_stack: Vec::new(),
+            labels: HashMap::new()
         }
     }
 
@@ -231,33 +233,7 @@ impl CodeGen {
                 self.symb_table.enter_scope();
             }, 
             AstNode::LeftScope => {
-                let dropped = self.symb_table.exit_scope();
-                for val in dropped.iter() {
-                    match val {
-                        sem::VarPosition::None => {}
-                        sem::VarPosition::Register(ri) => {
-                            self.free_reg(*ri);
-                            let instr = format!("uload r{} 0\n",
-                                ri);
-                            self.sbuf.push_str(&instr);
-                        }
-                        sem::VarPosition::Stack(sfi) => {
-                            let reg_idx = self.alloc_reg(
-                                ValDat::ImmVal(Numerical::uint(*sfi as u64))
-                            );
-                            let reg_zero = self.alloc_reg(
-                                ValDat::ImmVal(Numerical::uint(0))
-                            );
-                            let instr = format!(
-                                "uload r{} {}\n
-                                 uload r{} {}\n 
-                                 usf r{} r{}",
-                                reg_idx, sfi, reg_zero, 0, reg_idx, reg_zero 
-                            );
-                            self.sbuf.push_str(&instr);
-                        }
-                    }
-                }
+                self.leave_scope_clean(); 
             },
             AstNode::Reassignment { name, newval } => {
                 let var_name = name.clone();
@@ -284,15 +260,73 @@ impl CodeGen {
                 self.sbuf.push_str(&instr);
                 self.free_reg_not_var(rhdat.alloced_regs[0]);
             }
-            /// TODO: generate if statements
-            //AstNode::IfStatement { cond, if_true, if_false } => {
-            //
-            //}
+            AstNode::IfStatement { cond, if_true, if_false } => {
+                // TODO: Add exit label
+                let cond_dat = self.gen_expr(cond.node);
+                let reg = cond_dat.alloced_regs[0];
+                let test_instr = format!("test r{} r{}\n", reg, reg);
+                self.sbuf.push_str(&test_instr);
+
+                let jumpf_instr = format!("jz @label_{}\n", self.labels.len());
+                self.sbuf.push_str(&jumpf_instr);
+
+                let false_labelname = self.alloc_label();
+                let exit_labelname = self.alloc_label();
+                
+                let mut iftrue_exprs: Vec<GenData> = Vec::new();
+                self.symb_table.enter_scope();
+                for expr in if_true {
+                    iftrue_exprs.push(self.gen_expr(expr.node));
+                }
+                self.leave_scope_clean();
+                let jumpe_instr = format!("jmp @{}\n", &exit_labelname);
+                self.sbuf.push_str(&jumpe_instr);
+
+                self.push_label(&false_labelname);
+                self.symb_table.enter_scope();
+                if let Some(ve) = if_false {
+                    for expr in ve {
+                        self.gen_expr(expr.node);
+                    }
+                }
+                self.leave_scope_clean();
+                self.push_label(&exit_labelname); 
+            }
             other => {
                 panic!("can't generate yet for {:?}", other);
             }
         }
         return res;
+    }
+
+    fn leave_scope_clean(&mut self) {
+        let dropped = self.symb_table.exit_scope();
+        for val in dropped.iter() {
+            match val {
+                sem::VarPosition::None => {}
+                sem::VarPosition::Register(ri) => {
+                    self.free_reg(*ri);
+                    let instr = format!("uload r{} 0\n",
+                        ri);
+                    self.sbuf.push_str(&instr);
+                }
+                sem::VarPosition::Stack(sfi) => {
+                    let reg_idx = self.alloc_reg(
+                        ValDat::ImmVal(Numerical::uint(*sfi as u64))
+                    );
+                    let reg_zero = self.alloc_reg(
+                        ValDat::ImmVal(Numerical::uint(0))
+                    );
+                    let instr = format!(
+                        "uload r{} {}\n
+                         uload r{} {}\n 
+                         usf r{} r{}",
+                        reg_idx, sfi, reg_zero, 0, reg_idx, reg_zero 
+                    );
+                    self.sbuf.push_str(&instr);
+                }
+            }
+        }
     }
 
     fn alloc_reg(&mut self, val: ValDat) -> usize {
@@ -426,6 +460,34 @@ impl CodeGen {
             FType::heapptr => "p",
             _ => "u",
         }
+    }
+
+    fn new_label(&mut self) -> String {
+        let name = format!("label_{}", self.labels.len());
+        self.labels.insert(name.clone(), self.sbuf.len());
+        let instr = format!("label {}\n", &name);
+        self.sbuf.push_str(&instr);
+        name
+    }
+
+    /// presaves idx but wont push into sbuf
+    fn alloc_label(&mut self) -> String {
+        let name = format!("label_{}", self.labels.len());
+        self.labels.insert(name.clone(), self.sbuf.len());
+        name
+    }
+
+    /// pushes previously allocated label 
+    fn push_label(&mut self, name: &str) {
+        match self.labels.get_mut(name) {
+            Some(v) => {
+                *v = self.sbuf.len();
+            }
+            None => {
+                panic!("Can't get label {}!", name);
+            }
+        }
+        self.sbuf.push_str(&format!("label {}\n", name));
     }
 
     fn printintrin(&mut self, idx: usize) {

@@ -23,6 +23,7 @@ pub enum Tok {
     Ampersand, 
     Caret, // ^
     VerBar, // |
+    DollarSign,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +99,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '&' => {res.push(Token::new(Tok::Ampersand, line)); chars.next();},
             '|' => {res.push(Token::new(Tok::VerBar, line)); chars.next();},
             '^' => {res.push(Token::new(Tok::Caret, line)); chars.next();},
+            '$' => {res.push(Token::new(Tok::DollarSign, line)); chars.next();},
             ' ' | '\t' => {chars.next();},
             '\n' => {line += 1; chars.next();}
             'a'..='z' | 'A'..='Z' | '_' => {

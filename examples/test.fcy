@@ -1,7 +1,7 @@
-let flag: bool = true & false; // 0
-flag = true;
-// if flag { // wont generate yet, but will parse
-//    let a: uint = 1u; 
-//} else {
-//    let a: uint = 1u;
-// }
+let flag: bool = false;
+let a: float = 4.5;
+if 2 { 
+    a = a * 2.0;
+} else {
+    a = a / a;
+}
