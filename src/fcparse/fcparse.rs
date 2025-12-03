@@ -116,6 +116,26 @@ impl FcParser {
                             name: idt_cl, 
                             newval: Box::new(self.parse_expr(0))
                         }
+                    } else if nexttok.tok == Tok::DollarSign {
+                        self.consume();
+                        let type_token = self.consume().unwrap_or_else(|| {
+                            panic!("\n{}: expected typename for {}", line_n, idt);
+                        });
+                        let type_idt = match &type_token.tok {
+                            Tok::Identifier(i) => i,
+                            other => {
+                                panic!("\n{}: expected typename, found {:?}", line_n, other);
+                            }
+                        };
+
+                        let ftype = match_ftype(&type_idt).unwrap_or_else(|| {
+                            panic!("\n{}: {} is invalid type", line_n, type_idt);
+                        });
+    
+                        return AstNode::VariableCast {
+                            name: idt.to_owned(), 
+                            target_type: ftype, 
+                        }
                     }
                 }
                 AstNode::Variable(idt.clone())
@@ -177,7 +197,6 @@ impl FcParser {
         match tok {
             Tok::Plus | Tok::Minus => Some((10, 11)),
             Tok::Star | Tok::Slash => Some((20, 21)),
-            //Tok::Keyword(Kword::Let) => Some((5, 6)),
             Tok::Equals => Some((3, 4)),
             Tok::VerBar => Some((8, 9)),
             Tok::Caret => Some((10, 11)),
@@ -263,6 +282,11 @@ pub enum AstNode {
     Reassignment {
         name: String,
         newval: Box<AstRoot>
+    },
+
+    VariableCast {
+        name: String,
+        target_type: FType
     },
 
     IfStatement {

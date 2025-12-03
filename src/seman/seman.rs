@@ -75,9 +75,18 @@ impl SymbolTable {
     pub fn get(&self, var_name: String) -> Option<(usize, &FSymbol)> {
         for (idx, scv) in self.st.iter().enumerate() {
             if let Some(v) = scv.get(&var_name) {
-                return Some((idx, v.clone()));
+                return Some((idx, v));
             };
         } 
+        None
+    }
+
+    pub fn get_mut(&mut self, var_name: String) -> Option<(usize, &mut FSymbol)> {
+        for (idx, scv) in self.st.iter_mut().enumerate() {
+            if let Some(v) = scv.get_mut(&var_name) {
+                return Some((idx, v));
+            };
+        }
         None
     }
 
@@ -92,13 +101,16 @@ impl SymbolTable {
 pub struct SemAn {
     symb_table: SymbolTable,
     cur_scope: usize,
+    permissive: bool,
 }
 
 impl SemAn {
-    pub fn new() -> SemAn {
+    /// Inits semantic analyzer struct. Permissive flag for less type checks
+    pub fn new(permissive: bool) -> SemAn {
         SemAn { 
             symb_table: SymbolTable::new(),
             cur_scope: 0,
+            permissive: permissive,
         }
     }
 
@@ -185,14 +197,44 @@ impl SemAn {
             AstNode::IfStatement { cond, if_true, if_false } => {
                 let cond_an = self.analyze_expr(cond);
                 if cond_an.ftype != FType::bool {
-                    println!("\n{}: Warning: condition is not boolean value; detected {:?}",
+                    let msg = format!("\n{}: condition is not boolean value; detected {:?}",
                         line, cond_an.ftype);
+                    self.permissive_error(&msg);
                 }
+                
+                for astr in if_true.iter() {
+                    self.analyze_expr(astr);
+                }
+                if let Some(iff_roots) = if_false {
+                    for root in iff_roots.iter() {
+                        self.analyze_expr(root);
+                    }
+                }
+            }
+            AstNode::VariableCast { name, target_type } => {
+                // TODO: add some meaningful type checks here
+                if self.symb_table.get(name.clone()).is_none() {
+                    panic!("\n{}: usage of undeclared variable {}", line, name);
+                };
+
+                exprdat.ftype = *target_type;
             }
    
             _ => {}
         }
         exprdat
+    }
+
+    /// Prints error if permissive mode enabled, otherwise panics
+    fn permissive_error(&mut self, err: &str) {
+        if self.permissive {
+            println!("Warning: {}", err);
+        } else {
+            panic!("{}\nNote: run fencyc with `-fpermissive` 
+                flag if you wish getting less type checks panics",
+                err
+            );
+        }
     }
 
 }

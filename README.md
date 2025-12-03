@@ -16,6 +16,8 @@ Compile some program:
 - `fencyc input.fcy -o program.vve`
 Run it with [VoxVM](https://github.com/Freemorger/voxvm):
 `voxvm --vve=program.vve`
+Flags:
+`-fpermissive`: enables permissive mode, which leads to less type system errors, but still warns.
 
 # Docs
 Soon.

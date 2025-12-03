@@ -106,7 +106,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                 let mut idn = String::new();
                 while let Some(ic) = chars.peek() {
                     //println!("{}", ic);
-                    if ic.is_alphanumeric() {
+                    if ic.is_alphanumeric() || *ic == '_' {
                         idn.push(*ic);
                         chars.next();
                     } else {

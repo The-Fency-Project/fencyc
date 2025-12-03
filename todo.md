@@ -1,6 +1,4 @@
 - move halt to main end
-- type convs 
-- updating var pos after reassignment
 - elseif
 - whiles
 - printintrin

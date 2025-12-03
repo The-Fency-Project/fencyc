@@ -27,6 +27,9 @@ enum Commands {
 
         #[arg(short, long)]
         output: Option<String>,
+
+        #[arg(long = "fpermissive")]
+        fpermissive: bool,
     },
 }
 
@@ -34,8 +37,8 @@ fn main() {
     let cli = CliArgs::parse();
     
     match cli.command {
-        Some(Commands::Input { file, output } ) => {
-            start_compiling(file, output, cli.verbose);
+        Some(Commands::Input { file, output, fpermissive } ) => {
+            start_compiling(file, output, cli.verbose, fpermissive);
             return;
         }
         None => {
@@ -44,7 +47,7 @@ fn main() {
     }
 }
 
-fn start_compiling(input: String, output: Option<String>, verbose: bool) -> Result<(), ()> {
+fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermissive: bool) -> Result<(), ()> {
     let output_name = match output {
         Some(v) => v,
         None => input.replace(".fcy", ".vve"),
@@ -55,7 +58,7 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool) -> Resu
     let mut parser = fparser::FcParser::new(toks);
     let ast: Vec<AstRoot> = parser.parse_everything();
 
-    let mut seman = Seman::SemAn::new();
+    let mut seman = Seman::SemAn::new(fpermissive);
     seman.analyze(&ast);
 
     let mut gene = cgen::CodeGen::new(ast);

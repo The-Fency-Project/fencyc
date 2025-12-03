@@ -17,6 +17,7 @@ pub enum Numerical {
     float(f64),
     heapptr(u64),
     boolean(bool),
+    None
 }
 
 #[derive(Debug)]
@@ -195,39 +196,7 @@ impl CodeGen {
                 self.free_reg_not_var(rightdat.alloced_regs[0]);
             },
             AstNode::Variable(av) => {
-                let (scope, vsymb) = self.symb_table.get(av.clone())
-                    .expect(&format!("No variable {} in scope", av));
-                let var_name = vsymb.name.clone();
-                res.expr_type = vsymb.ftype;
-                match vsymb.cur_reg {
-                    sem::VarPosition::None => {
-                        panic!("None value for {}!", vsymb.name);
-                    }
-                    sem::VarPosition::Register(ri) => {
-                        res.alloced_regs.push(ri);
-                    }
-                    sem::VarPosition::Stack(sfi) => {
-                        let mut instr = String::new();
-                        let reg = self.alloc_reg(
-                            ValDat::Symbol(FSymbTabData::new(
-                                scope, var_name
-                            ))
-                        );
-                        if self.stack_end == sfi {
-                            instr = format!("pop r{}\n", reg);
-                            self.predicted_stack.pop();
-                        } else {
-                            let reg_zero = self.alloc_reg(ValDat::ImmVal(Numerical::uint(0)));
-                            instr = format!(
-                                "gsf r{} r{}\n
-                                 uload r{} 0\n
-                                 usf r{} r{}\n",
-                                reg, sfi, reg_zero, reg, reg_zero,
-                            );
-                        }
-                        self.sbuf.push_str(&instr);
-                    }
-                }
+                self.load_variable(av, &mut res);
             }
             AstNode::EnterScope => {
                 self.symb_table.enter_scope();
@@ -241,7 +210,7 @@ impl CodeGen {
                 let rhdat = self.gen_expr(newval.node);
                 
                 let varreg = {
-                    let entry = self.symb_table.get(var_name).unwrap();
+                    let entry = self.symb_table.get(var_name.clone()).unwrap();
                     let scope = entry.0;
                     match entry.1.cur_reg {
                         VarPosition::Register(ri) => ri,
@@ -258,10 +227,14 @@ impl CodeGen {
                 
                 let instr = format!("movr r{} r{}\n", varreg, rhdat.alloced_regs[0]);
                 self.sbuf.push_str(&instr);
+
+                if let Some(entry) = self.symb_table.get_mut(var_name) {
+                    entry.1.cur_reg = VarPosition::Register(varreg);
+                }
+
                 self.free_reg_not_var(rhdat.alloced_regs[0]);
             }
             AstNode::IfStatement { cond, if_true, if_false } => {
-                // TODO: Add exit label
                 let cond_dat = self.gen_expr(cond.node);
                 let reg = cond_dat.alloced_regs[0];
                 let test_instr = format!("test r{} r{}\n", reg, reg);
@@ -292,11 +265,91 @@ impl CodeGen {
                 self.leave_scope_clean();
                 self.push_label(&exit_labelname); 
             }
+            AstNode::VariableCast { name, target_type } => {
+                let dst_reg = self.alloc_reg(ValDat::ImmVal(Numerical::None));
+
+                let vartype: FType = match self.symb_table.get(name.clone()) {
+                    Some(v) => v.1.ftype,
+                    None => {panic!("undeclared {}", name);}
+                };
+                if vartype == target_type {
+                    return res;
+                }
+
+                let reg_var = self.load_variable(name, &mut res);
+
+                let ftlet_src = CodeGen::ftletter(vartype);
+                let ftlet_dst = CodeGen::ftletter(target_type);
+                if ftlet_src == ftlet_dst { // additional check bc ftletters can collide
+                    if target_type == FType::bool {
+                        let lnot_instr = format!("lnot r{} r{}\n", dst_reg, reg_var);
+                        let notd_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
+
+                        // in other words: !!var = var (but logically)
+                        self.sbuf.push_str(&lnot_instr);
+                        self.sbuf.push_str(&notd_instr);
+                    }
+                    return res;
+                }
+
+                let instr = format!("{}to{} r{} r{}\n",
+                    ftlet_src, ftlet_dst, dst_reg, reg_var);
+                self.sbuf.push_str(&instr);
+
+                if target_type == FType::bool {
+                        let lnot_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
+                        let notd_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
+
+                        // again but for other cases
+                        self.sbuf.push_str(&lnot_instr);
+                        self.sbuf.push_str(&notd_instr);
+                }
+            }
             other => {
                 panic!("can't generate yet for {:?}", other);
             }
         }
         return res;
+    }
+
+    /// loads variable in place and returns register idx
+    fn load_variable(&mut self, name: String, gend: &mut GenData)
+        -> usize {
+        let (scope, vsymb) = self.symb_table.get(name.clone())
+                    .expect(&format!("No variable {} in scope", name));
+        let var_name = vsymb.name.clone();
+        gend.expr_type = vsymb.ftype;
+        match vsymb.cur_reg {
+            sem::VarPosition::None => {
+                panic!("None value for {}!", vsymb.name);
+            }
+            sem::VarPosition::Register(ri) => {
+                gend.alloced_regs.push(ri);
+                ri
+            }
+            sem::VarPosition::Stack(sfi) => {
+                let mut instr = String::new();
+                let reg = self.alloc_reg(
+                    ValDat::Symbol(FSymbTabData::new(
+                        scope, var_name
+                    ))
+                );
+                if self.stack_end == sfi {
+                    instr = format!("pop r{}\n", reg);
+                    self.predicted_stack.pop();
+                } else {
+                    let reg_zero = self.alloc_reg(ValDat::ImmVal(Numerical::uint(0)));
+                    instr = format!(
+                        "gsf r{} r{}\n
+                         uload r{} 0\n
+                         usf r{} r{}\n",
+                        reg, sfi, reg_zero, reg, reg_zero,
+                    );
+                }
+                self.sbuf.push_str(&instr);
+                reg
+            }
+        }
     }
 
     fn leave_scope_clean(&mut self) {
