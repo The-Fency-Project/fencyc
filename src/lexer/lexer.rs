@@ -24,6 +24,9 @@ pub enum Tok {
     Caret, // ^
     VerBar, // |
     DollarSign,
+    Tilde,
+    Exclam, // !
+    Intrin(Intrinsic),
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +103,8 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '|' => {res.push(Token::new(Tok::VerBar, line)); chars.next();},
             '^' => {res.push(Token::new(Tok::Caret, line)); chars.next();},
             '$' => {res.push(Token::new(Tok::DollarSign, line)); chars.next();},
+            '~' => {res.push(Token::new(Tok::Tilde, line)); chars.next();},
+            '!' => {res.push(Token::new(Tok::Exclam, line)); chars.next();},
             ' ' | '\t' => {chars.next();},
             '\n' => {line += 1; chars.next();}
             'a'..='z' | 'A'..='Z' | '_' => {
@@ -135,6 +140,11 @@ pub enum Kword {
     Else,
 }
 
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum Intrinsic {
+    Print
+}
+
 fn match_symb_tok(word: &str) -> Tok {
     match word {
         "let" => Tok::Keyword(Kword::Let),
@@ -142,6 +152,8 @@ fn match_symb_tok(word: &str) -> Tok {
         "false" => Tok::Keyword(Kword::False),
         "if" => Tok::Keyword(Kword::If),
         "else" => Tok::Keyword(Kword::Else),
-        other => Tok::Identifier(word.to_string()),
+        "printintrin" => Tok::Intrin(Intrinsic::Print),
+        other => Tok::Identifier(other.to_string()),
     }
 }
+

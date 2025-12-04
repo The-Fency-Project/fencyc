@@ -1,9 +1,9 @@
-let a: float = 4.5;
-a = a + 1.0;
-let b: int = a$int;
-let cond_num: int = 2;
-if cond_num$bool { 
-    a = a * 2.0;
+let a: uint = 4u;
+printintrin (a$int + 5) / 3;
+
+let flag: bool = false ^ true; // true 
+if false {
+    printintrin true;
 } else {
-    a = a / a;
+    printintrin false;
 }

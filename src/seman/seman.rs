@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use std::fmt::Binary;
 
-use crate::fcparse::fcparse::{self as fparse, AstRoot};
+use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, UnaryOp};
 use crate::fcparse::fcparse::AstNode;
 
 #[derive(Debug)]
@@ -129,7 +130,7 @@ impl SemAn {
                     &AstRoot::new(*val.clone(), line)
                 );
                 
-                if let Some(_) = self.symb_table.get(name.clone()) {
+                if self.symb_table.get(name.clone()).is_some() {
                     panic!("{}: redeclaration of variable `{}`", line, name);
                 };
 
@@ -162,10 +163,28 @@ impl SemAn {
                     &AstRoot::new(*right.clone(), line));
 
                 if leftd.ftype != rightd.ftype {
-                    panic!("\n{}: Binary op {:?} can't be applied with different types: {:?} and {:?}\n",
+                    panic!("\n{}: Binary op {:?} can't be applied with different types: {:?} and {:?}\n\
+                        help: consider explicitly converting types, e.g. var$int\n",
                         line, op, leftd.ftype, rightd.ftype);
                 }
+                if (leftd.ftype == FType::bool) && 
+                    (*op == BinaryOp::Add || *op == BinaryOp::Substract || 
+                    *op == BinaryOp::Multiply || *op == BinaryOp::Divide) {
+                    panic!("\n{}: Binary op {:?} can't be applied to type bool\n\
+                        help: consider converting in into uint, e.g. var$uint\n",
+                    line, op);
+                }
+
                 exprdat.ftype = leftd.ftype;
+            }
+            AstNode::UnaryOp { op, expr } => {
+                let rdat = self.analyze_expr(&AstRoot::new(*expr.clone(), line));
+                exprdat.ftype = rdat.ftype;
+
+                if (*op == UnaryOp::Negate) && 
+                    !((exprdat.ftype == FType::float) || (exprdat.ftype == FType::int)) {
+                    panic!("\n{}: UnaryOp Negate could only be applied to types float and int\n", line);
+                }
             }
             AstNode::Variable(var) => {
                 exprdat.ftype = match self.symb_table.get(var.clone()) {
@@ -190,14 +209,16 @@ impl SemAn {
                 let newval_data = self.analyze_expr(&newval);
                 if symb_type != newval_data.ftype {
                     panic!("\n{}: Incompatible types\n
-                        {} has type {:?}, but the right hand statement is {:?}\n",
+                        {} has type {:?}, but the right hand statement is {:?}\n
+                        help: consider explicitly converting types, e.g. var$int\n",
                     line, name, symb_type, newval_data.ftype);
                 }
             }
             AstNode::IfStatement { cond, if_true, if_false } => {
                 let cond_an = self.analyze_expr(cond);
                 if cond_an.ftype != FType::bool {
-                    let msg = format!("\n{}: condition is not boolean value; detected {:?}",
+                    let msg = format!("\n{}: condition is not boolean value; detected {:?}\n 
+                        help: try explicit convertion: condition$bool",
                         line, cond_an.ftype);
                     self.permissive_error(&msg);
                 }
@@ -231,7 +252,7 @@ impl SemAn {
             println!("Warning: {}", err);
         } else {
             panic!("{}\nNote: run fencyc with `-fpermissive` 
-                flag if you wish getting less type checks panics",
+                flag if you wish getting less type checks panics\n",
                 err
             );
         }

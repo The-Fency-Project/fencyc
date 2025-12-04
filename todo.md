@@ -1,4 +1,7 @@
 - move halt to main end
+- compare operators
 - elseif
 - whiles
-- printintrin
+- refactors
+- custom compilation error printing functions?
+- not and logical not codegen, seman

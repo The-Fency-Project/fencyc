@@ -1,6 +1,6 @@
 use std::{collections::HashMap};
 
-use crate::{fcparse::fcparse::{self as fparse, AstRoot}, seman::seman::{self as sem, FSymbol, FType, SymbolTable, VarPosition}};// AstNode;
+use crate::{fcparse::fcparse::{self as fparse, AstRoot}, lexer::lexer::Intrinsic, seman::seman::{self as sem, FSymbol, FType, SymbolTable, VarPosition}};// AstNode;
 use fparse::AstNode;
 
 #[derive(Debug, Clone)]
@@ -53,8 +53,6 @@ impl CodeGen {
             let gdat = self.gen_expr(r.clone().node);
             self.cur_ast += 1;
         }
-        self.printintrin(0); // TODO: implement print intrinsic as   
-                            // keyword and remove this
         self.sbuf.push_str("halt\n"); // TODO: move it to main() end 
     }
 
@@ -267,6 +265,7 @@ impl CodeGen {
             }
             AstNode::VariableCast { name, target_type } => {
                 let dst_reg = self.alloc_reg(ValDat::ImmVal(Numerical::None));
+                res.alloced_regs.push(dst_reg);
 
                 let vartype: FType = match self.symb_table.get(name.clone()) {
                     Some(v) => v.1.ftype,
@@ -304,6 +303,25 @@ impl CodeGen {
                         self.sbuf.push_str(&lnot_instr);
                         self.sbuf.push_str(&notd_instr);
                 }
+            }
+            AstNode::Intrinsic { intr, val } => {
+                let rdat = self.gen_expr(*val);
+                self.gen_intrinsic(intr, rdat.alloced_regs[0]);
+            }
+            AstNode::UnaryOp { op, expr } => {
+                let rdat = self.gen_expr(*expr);
+
+                let instr = match op {
+                    fparse::UnaryOp::Negate => {
+                        let ftletter = CodeGen::ftletter(rdat.expr_type);
+                        format!("{}neg r{} r{}\n", ftletter, rdat.alloced_regs[0], rdat.alloced_regs[0])
+                    }
+                    fparse::UnaryOp::Not => {
+                        format!("not r{} r{}\n", rdat.alloced_regs[0], rdat.alloced_regs[0])
+                    }
+                };
+                self.sbuf.push_str(&instr);
+                res.alloced_regs.push(rdat.alloced_regs[0]);
             }
             other => {
                 panic!("can't generate yet for {:?}", other);
@@ -455,51 +473,7 @@ impl CodeGen {
         dstreg
     }
 
-    fn bop_typed(bop: fparse::BinaryOp, ftype: FType, operands: Vec<usize>, line: usize) -> String {
-        let type_pref: &str = match ftype {
-            FType::float => "f",
-            FType::int => "i",
-            other => "u",
-        };
-        let exop_msg = &format!("{}: expected operand", line);
-
-        match bop {
-            fparse::BinaryOp::Add => {
-                return format!("{}add r{} r{}\n", 
-                    type_pref, 
-                    operands.get(0).expect(exop_msg),
-                    operands.get(1).expect(exop_msg)
-                );
-            }
-            fparse::BinaryOp::Substract => {
-                return format!("{}sub r{} r{}\n", 
-                    type_pref, 
-                    operands.get(0).expect(exop_msg),
-                    operands.get(1).expect(exop_msg)
-                );
-            }
-            fparse::BinaryOp::Multiply => {
-                return format!("{}mul r{} r{}\n", 
-                    type_pref, 
-                    operands.get(0).expect(exop_msg),
-                    operands.get(1).expect(exop_msg)
-                );
-            }
-            fparse::BinaryOp::Divide => {
-                return format!("{}div r{} r{} r{}\n", 
-                    type_pref, 
-                    operands.get(0).expect(exop_msg),
-                    operands.get(1).expect(exop_msg),
-                    operands.get(2).expect(exop_msg)
-                );
-            }
-            other => {
-                panic!("{} internal error: Matching BOp for {:?} isn't implemented",
-                    line, other);
-            }
-        }
-    }
-
+    
     fn get_typeconv(ftyp_src: FType, ftyp_dst: FType, rd: usize, rs: usize) -> String {
         let ft1_l = CodeGen::ftletter(ftyp_src);
         let ft2_l = CodeGen::ftletter(ftyp_dst);
@@ -543,12 +517,23 @@ impl CodeGen {
         self.sbuf.push_str(&format!("label {}\n", name));
     }
 
-    fn printintrin(&mut self, idx: usize) {
-        // intrinsic for tests
-        self.sbuf.push_str(&format!("movr r1 r{}\n", idx));
-        self.sbuf.push_str(&format!("uload r2 2\n")); // int!
-        self.sbuf.push_str(&format!("xor r3 r3\n"));
-        self.sbuf.push_str(&format!("ncall 1 r0\n"));
+    fn gen_intrinsic(&mut self, intrin: Intrinsic, reg_idx: usize) {
+        match intrin {
+            Intrinsic::Print => {
+                let instrs = format!("push r1\n\
+                                    push r2\n\
+                                    push r3\n\
+                                    movr r1 r{}\n\
+                                    uload r2 2\n\
+                                    xor r3 r3\n\
+                                    ncall 1 r0\n\
+                                    pop r3\n\
+                                    pop r2\n\
+                                    pop r1\n",
+                reg_idx);
+                self.sbuf.push_str(&instrs);
+            }
+        }
     }
 }
 

@@ -1,6 +1,5 @@
-v0.1.1
-- type convertions (e.g. `somevar$int`)
-- fix for reassignment 
-- `-fpermissive` flag for less type checks
-- added semantic analysis for conditional statements branches
-- fix for underscores
+v0.1.2
+- some helpful info in seman errors
+- print intrinsic (`printintrin val`)
+- even more seman checks
+- codegen for `Not` and `Negate`

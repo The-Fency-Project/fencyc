@@ -1,6 +1,6 @@
 use std::{fs::File, io::{self, BufRead, BufReader}};
 
-use crate::{lexer::lexer::{Kword, Tok, Token}, seman::seman::FType};
+use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::FType};
 
 pub struct FcParser {
     tokens: Vec<Token>,
@@ -178,6 +178,12 @@ impl FcParser {
                 }
             }
 
+            Tok::Intrin(intr) => {
+                let val = self.parse_expr(0);
+
+                AstNode::Intrinsic { intr: *intr, val: Box::new(val.node) }
+            }
+
             other => {
                 panic!("{}: FCparse unexpected token `{:?}`", line_n, other);
             }
@@ -273,6 +279,11 @@ pub enum AstNode {
         args: Vec<AstNode>,
     },
 
+    Intrinsic {
+        intr: Intrinsic,
+        val: Box<AstNode>,
+    },
+
     Assignment {
         name: String,
         val: Box<AstNode>,
@@ -296,7 +307,7 @@ pub enum AstNode {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub enum BinaryOp {
     Add, 
     Substract,
@@ -322,7 +333,7 @@ pub fn match_bop_for_tok(tok: &Tok, next_tok: Option<&Tok>) -> Option<BinaryOp> 
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub enum UnaryOp {
     Negate, 
     Not,
@@ -351,3 +362,4 @@ impl AstRoot {
         AstRoot { node: node, line: line }
     }
 }
+
