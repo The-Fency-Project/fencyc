@@ -1,9 +1,4 @@
-let a: uint = 4u;
-printintrin (a$int + 5) / 3;
-
-let flag: bool = false ^ true; // true 
-if false {
-    printintrin true;
-} else {
-    printintrin false;
+let a: int = 4;
+if a$bool {
+    printintrin ~(a << 1u);
 }

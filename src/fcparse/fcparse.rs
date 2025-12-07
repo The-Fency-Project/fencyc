@@ -5,12 +5,13 @@ use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::FType};
 pub struct FcParser {
     tokens: Vec<Token>,
     pos: usize,
+    line: usize, // not for all cases
 }
 
 /// Parser based on Pratt parsing algorithm
 impl FcParser {
     pub fn new(toks: Vec<Token>) -> FcParser {
-        FcParser { tokens: toks, pos: 0 }
+        FcParser { tokens: toks, pos: 0, line: 0 }
     }
 
     pub fn parse_everything(&mut self) -> Vec<AstRoot> {
@@ -40,7 +41,7 @@ impl FcParser {
 
     pub fn parse_expr(&mut self, min_bp: u8) -> AstRoot {
         let mut left = self.parse_prefix();
-        let mut line_n: usize = 0;
+        let mut line_n: usize = self.line;
 
         while let Some(tok) = self.peek() {
             line_n = tok.line;
@@ -64,17 +65,17 @@ impl FcParser {
 
             let right = self.parse_expr(rbp);
        
-            let nexttok: Option<&Tok> = match self.peek() {
+            let nexttok: Option<Tok> = match self.peek() {
                 None => None,
-                Some(v) => Some(&v.tok),
+                Some(v) => Some(v.tok.clone()),
             };
 
             left = AstNode::BinaryOp {
-                op: match_bop_for_tok(optok, nexttok).unwrap(),
+                op: self.match_bop_for_tok(optok, nexttok.as_ref()).unwrap(),
                 left: Box::new(left),
                 right: Box::new(right.node),
             };
-        }
+        } 
 
         AstRoot::new(left, line_n)
     }
@@ -82,6 +83,7 @@ impl FcParser {
     fn parse_prefix(&mut self) -> AstNode {
         let token: &Token = &self.consume().expect("unexpected EOF").clone();
         let line_n: usize = token.line;
+        self.line = line_n;
 
         match &token.tok {
             Tok::Int(iv) => AstNode::Int(*iv),
@@ -99,6 +101,11 @@ impl FcParser {
                 expr: Box::new(self.parse_expr(255).node),
             },
 
+            Tok::Tilde => AstNode::UnaryOp { 
+                op: UnaryOp::Not, 
+                expr: Box::new(self.parse_expr(255).node) 
+            },
+
             Tok::LPar => {
                 let expr = self.parse_expr(0);
                 self.expect(Tok::RPar);
@@ -107,11 +114,16 @@ impl FcParser {
 
             Tok::Plus => self.parse_expr(255).node,
 
+            Tok::Exclam => AstNode::UnaryOp { 
+                op: UnaryOp::LogicalNot, 
+                expr: Box::new(self.parse_expr(255).node) 
+            },
+
             Tok::Identifier(idt) => {
                 let idt_cl = idt.clone();
                 if let Some(nexttok) = self.peek() {
                     if nexttok.tok == Tok::Equals {
-                        self.consume();
+                self.consume();
                         return AstNode::Reassignment { 
                             name: idt_cl, 
                             newval: Box::new(self.parse_expr(0))
@@ -201,6 +213,8 @@ impl FcParser {
     /// Pratt binding powers: (left_bp, right_bp)
     fn infix_binding_power(tok: &Tok) -> Option<(u8, u8)> {
         match tok {
+            Tok::DLAngBr => Some((8, 9)),
+            Tok::DRAngBr => Some((8, 9)),
             Tok::Plus | Tok::Minus => Some((10, 11)),
             Tok::Star | Tok::Slash => Some((20, 21)),
             Tok::Equals => Some((3, 4)),
@@ -248,6 +262,30 @@ impl FcParser {
             if_false: iffalse 
         }
     }
+
+    pub fn match_bop_for_tok(&mut self, tok: &Tok, next_tok: Option<&Tok>) -> Option<BinaryOp> {
+        match tok {
+            Tok::Plus => Some(BinaryOp::Add),
+            Tok::Minus => Some(BinaryOp::Substract),
+            Tok::Star => Some(BinaryOp::Multiply),
+            Tok::Slash => Some(BinaryOp::Divide),
+            Tok::Keyword(Kword::Let) => Some(BinaryOp::Assignment),
+            Tok::Ampersand => Some(BinaryOp::BitwiseAnd),
+            Tok::VerBar => Some(BinaryOp::BitwiseOr),
+            Tok::Caret => Some(BinaryOp::BitwiseXor),
+            Tok::DLAngBr => {
+                return Some(BinaryOp::BitShiftLeft);
+            }
+            Tok::DRAngBr => {
+                return Some(BinaryOp::BitShiftRight);
+            }
+            _ => {
+                None
+            },
+        }
+    }
+
+
 }
 
 #[derive(Debug, Clone)]
@@ -317,26 +355,15 @@ pub enum BinaryOp {
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
-}
-
-pub fn match_bop_for_tok(tok: &Tok, next_tok: Option<&Tok>) -> Option<BinaryOp> {
-    match tok {
-        Tok::Plus => Some(BinaryOp::Add),
-        Tok::Minus => Some(BinaryOp::Substract),
-        Tok::Star => Some(BinaryOp::Multiply),
-        Tok::Slash => Some(BinaryOp::Divide),
-        Tok::Keyword(Kword::Let) => Some(BinaryOp::Assignment),
-        Tok::Ampersand => Some(BinaryOp::BitwiseAnd),
-        Tok::VerBar => Some(BinaryOp::BitwiseOr),
-        Tok::Caret => Some(BinaryOp::BitwiseXor),
-        _ => None,
-    }
+    BitShiftRight,
+    BitShiftLeft,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum UnaryOp {
     Negate, 
     Not,
+    LogicalNot,
 }
 
 pub fn match_ftype(lit: &str) -> Option<FType> {

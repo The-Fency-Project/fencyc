@@ -27,6 +27,10 @@ pub enum Tok {
     Tilde,
     Exclam, // !
     Intrin(Intrinsic),
+    LAngBr, // <
+    RAngBr, // >
+    DLAngBr, // <<
+    DRAngBr, // >> 
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +109,25 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '$' => {res.push(Token::new(Tok::DollarSign, line)); chars.next();},
             '~' => {res.push(Token::new(Tok::Tilde, line)); chars.next();},
             '!' => {res.push(Token::new(Tok::Exclam, line)); chars.next();},
+            '<' => {
+                if Some('<') == chars.peek().copied() {
+                        chars.next();
+                        res.push(Token::new(Tok::DLAngBr, line));
+                        chars.next();
+                } else {
+                      res.push(Token::new(Tok::LAngBr, line)); chars.next();
+                };
+
+            },
+            '>' => {
+                if Some('>') == chars.peek().copied() {
+                        chars.next();
+                        res.push(Token::new(Tok::DRAngBr, line));
+                        chars.next();
+                } else {
+                      res.push(Token::new(Tok::RAngBr, line)); chars.next();
+                };
+            },
             ' ' | '\t' => {chars.next();},
             '\n' => {line += 1; chars.next();}
             'a'..='z' | 'A'..='Z' | '_' => {

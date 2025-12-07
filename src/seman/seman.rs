@@ -3,6 +3,8 @@ use std::fmt::Binary;
 
 use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, UnaryOp};
 use crate::fcparse::fcparse::AstNode;
+use crate::logger::logger::{ErrKind, LogLevel, Logger};
+use crate::logger::logger as log;
 
 #[derive(Debug)]
 pub struct FSymbol {
@@ -115,28 +117,27 @@ impl SemAn {
         }
     }
 
-    pub fn analyze(&mut self, ast: &Vec<AstRoot>) {
+    pub fn analyze(&mut self, ast: &Vec<AstRoot>, logger: &mut Logger) {
         for root in ast {
-            self.analyze_expr(root); 
+            self.analyze_expr(root, logger); 
         }
     }
 
-    fn analyze_expr(&mut self, node: &AstRoot) -> ExprDat {
+    fn analyze_expr(&mut self, node: &AstRoot, logger: &mut Logger) -> ExprDat {
         let mut exprdat = ExprDat::new(FType::none);
         let line = node.line;
         match &node.node {
             AstNode::Assignment { name, val, ft } => {
                 let rightdat = self.analyze_expr(
-                    &AstRoot::new(*val.clone(), line)
+                    &AstRoot::new(*val.clone(), line), logger
                 );
                 
                 if self.symb_table.get(name.clone()).is_some() {
-                    panic!("{}: redeclaration of variable `{}`", line, name);
+                    logger.emit(LogLevel::Error(ErrKind::Redeclaration(name.to_owned())), line);
                 };
 
                 if *ft != rightdat.ftype {
-                    panic!("{}: mismatched types\nExpected type {:?}, got {:?}",
-                        line, ft, rightdat.ftype);
+                    logger.emit(LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)), line);
                 }
 
                 self.symb_table.newsymb(FSymbol::new(name.to_owned(), VarPosition::None, *ft));
@@ -158,40 +159,59 @@ impl SemAn {
             }
             AstNode::BinaryOp { op, left, right } => {
                 let leftd = self.analyze_expr(
-                    &AstRoot::new(*left.clone(), line));
+                    &AstRoot::new(*left.clone(), line), logger);
                 let rightd = self.analyze_expr(
-                    &AstRoot::new(*right.clone(), line));
+                    &AstRoot::new(*right.clone(), line), logger);
 
-                if leftd.ftype != rightd.ftype {
-                    panic!("\n{}: Binary op {:?} can't be applied with different types: {:?} and {:?}\n\
-                        help: consider explicitly converting types, e.g. var$int\n",
-                        line, op, leftd.ftype, rightd.ftype);
+                let is_shift_op = (*op == BinaryOp::BitShiftLeft) || (*op == BinaryOp::BitShiftRight);
+                
+                if is_shift_op {
+                    // For shift operations, right operand must be uint or pointer
+                    let is_valid_shift_right_type = matches!(
+                        rightd.ftype,
+                        FType::uint | FType::heapptr
+                    );
+                    
+                    if !is_valid_shift_right_type {
+                        logger.emit(
+                            LogLevel::Error(ErrKind::BitShiftRHSType(*op, rightd.ftype)),
+                            line
+                        );
+                    }
+                    // Note: left operand type doesn't need to match right operand for shifts
+                } else {
+                    // For non-shift operations, types must match
+                    if leftd.ftype != rightd.ftype {
+                        logger.emit(
+                            LogLevel::Error(ErrKind::BinOpDifTypes(*op, leftd.ftype, rightd.ftype)),
+                            line
+                        );
+                    }
                 }
+
                 if (leftd.ftype == FType::bool) && 
                     (*op == BinaryOp::Add || *op == BinaryOp::Substract || 
                     *op == BinaryOp::Multiply || *op == BinaryOp::Divide) {
-                    panic!("\n{}: Binary op {:?} can't be applied to type bool\n\
-                        help: consider converting in into uint, e.g. var$uint\n",
-                    line, op);
+                        logger.emit(LogLevel::Error(ErrKind::BoolBounds(*op)), line);
                 }
 
                 exprdat.ftype = leftd.ftype;
             }
             AstNode::UnaryOp { op, expr } => {
-                let rdat = self.analyze_expr(&AstRoot::new(*expr.clone(), line));
+                let rdat = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
                 exprdat.ftype = rdat.ftype;
 
                 if (*op == UnaryOp::Negate) && 
                     !((exprdat.ftype == FType::float) || (exprdat.ftype == FType::int)) {
-                    panic!("\n{}: UnaryOp Negate could only be applied to types float and int\n", line);
+                        logger.emit(LogLevel::Error(ErrKind::NegateBounds(exprdat.ftype)), line);
                 }
             }
             AstNode::Variable(var) => {
                 exprdat.ftype = match self.symb_table.get(var.clone()) {
                     Some(v) => v.1.ftype,
                     None => {
-                        panic!("\n{}: Usage of undeclared variable {}\n",
-                            line, var);
+                        logger.emit(LogLevel::Error(ErrKind::UndeclaredVar(var.to_owned())), line);
+                        FType::none
                     }
                 }
             }
@@ -200,45 +220,44 @@ impl SemAn {
                     let entry = match self.symb_table.get(name.clone()) {
                         Some(en) => en,
                         None => {
-                            panic!("\n{}: Assignment to undeclared variable {}\n",
-                                line, name);
+                            logger.emit(LogLevel::Error(ErrKind::UndeclaredVar(name.clone())), line);
+                            (0, &FSymbol::new(name.to_owned(), VarPosition::None, FType::none))
                         }
                     };
                     entry.1.ftype
                 };
-                let newval_data = self.analyze_expr(&newval);
+                let newval_data = self.analyze_expr(&newval, logger);
                 if symb_type != newval_data.ftype {
-                    panic!("\n{}: Incompatible types\n
-                        {} has type {:?}, but the right hand statement is {:?}\n
-                        help: consider explicitly converting types, e.g. var$int\n",
-                    line, name, symb_type, newval_data.ftype);
+                    logger.emit(LogLevel::Error(ErrKind::IncompatTypes(symb_type, newval_data.ftype)), line);
                 }
             }
             AstNode::IfStatement { cond, if_true, if_false } => {
-                let cond_an = self.analyze_expr(cond);
+                let cond_an = self.analyze_expr(cond, logger);
                 if cond_an.ftype != FType::bool {
-                    let msg = format!("\n{}: condition is not boolean value; detected {:?}\n 
-                        help: try explicit convertion: condition$bool",
-                        line, cond_an.ftype);
-                    self.permissive_error(&msg);
+                    let lerr = LogLevel::Error(ErrKind::IfStmtNotBool);
+                    let lwarn = LogLevel::Warning(log::WarnKind::IfStmtNotBool);
+                    self.permissive_error(line, logger, lerr, lwarn);
                 }
                 
                 for astr in if_true.iter() {
-                    self.analyze_expr(astr);
+                    self.analyze_expr(astr, logger);
                 }
                 if let Some(iff_roots) = if_false {
                     for root in iff_roots.iter() {
-                        self.analyze_expr(root);
+                        self.analyze_expr(root, logger);
                     }
                 }
             }
             AstNode::VariableCast { name, target_type } => {
                 // TODO: add some meaningful type checks here
                 if self.symb_table.get(name.clone()).is_none() {
-                    panic!("\n{}: usage of undeclared variable {}", line, name);
+                    logger.emit(LogLevel::Error(ErrKind::UndeclaredVar(name.to_owned())), line);
                 };
 
                 exprdat.ftype = *target_type;
+            }
+            AstNode::Intrinsic { intr, val } => {
+                let _ = self.analyze_expr(&AstRoot::new(*val.clone(), line), logger);
             }
    
             _ => {}
@@ -246,15 +265,12 @@ impl SemAn {
         exprdat
     }
 
-    /// Prints error if permissive mode enabled, otherwise panics
-    fn permissive_error(&mut self, err: &str) {
+    /// Prints warning if permissive mode enabled, otherwise error
+    fn permissive_error(&mut self, line: usize, logger: &mut Logger, lerr: LogLevel, lwarn: LogLevel) {
         if self.permissive {
-            println!("Warning: {}", err);
+            logger.emit(lwarn, line);
         } else {
-            panic!("{}\nNote: run fencyc with `-fpermissive` 
-                flag if you wish getting less type checks panics\n",
-                err
-            );
+            logger.emit(lerr, line);
         }
     }
 

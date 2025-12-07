@@ -3,5 +3,4 @@
 - elseif
 - whiles
 - refactors
-- custom compilation error printing functions?
-- not and logical not codegen, seman
+- not and logical not seman

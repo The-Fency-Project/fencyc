@@ -1,6 +1,6 @@
 #[cfg(not(debug_assertions))]
 use std::fs;
-use std::{fs::File, io::BufReader, process::Command, time::Instant};
+use std::{fs::File, io::BufReader, process::{exit, Command}, time::Instant};
 
 use clap::{Parser, Subcommand};
 
@@ -8,7 +8,8 @@ mod fcparse {pub mod fcparse;}
 mod codegen {pub mod codegen;}
 mod lexer {pub mod lexer;}
 mod seman {pub mod seman;}
-use crate::{codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstNode, AstRoot}, lexer::lexer as lex, seman::seman as Seman, seman::seman as sem};
+mod logger {pub mod logger;}
+use crate::{codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstNode, AstRoot}, lexer::lexer as lex, logger::logger::{self as log, Logger}, seman::seman as Seman, seman::seman as sem};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -53,13 +54,21 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermis
         None => input.replace(".fcy", ".vve"),
     };
 
+    let mut logger: log::Logger = Logger::new();
+    logger.start_timer();
+
     let toks = lex::tokenize(&input.clone());
 
     let mut parser = fparser::FcParser::new(toks);
     let ast: Vec<AstRoot> = parser.parse_everything();
 
     let mut seman = Seman::SemAn::new(fpermissive);
-    seman.analyze(&ast);
+    seman.analyze(&ast, &mut logger);
+
+    if logger.should_interrupt() {
+        logger.finalize();
+        exit(1);
+    }
 
     let mut gene = cgen::CodeGen::new(ast);
     gene.gen_everything();
@@ -77,6 +86,8 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermis
     if let Err(e) = std::fs::remove_file(&temp_fname) {
         eprintln!("Failed to delete temp asm file {}", temp_fname);
     };
+
+    logger.finalize();
 
     Ok(())
 }

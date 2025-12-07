@@ -182,6 +182,26 @@ impl CodeGen {
                             leftdat.alloced_regs[0], rightdat.alloced_regs[0]);
                         res.alloced_regs.push(leftdat.alloced_regs[0]);
                     }
+                    fparse::BinaryOp::BitShiftLeft => {
+                        let res_reg = self.alloc_reg(ValDat::ImmVal(Numerical::None));
+                        res.alloced_regs.push(res_reg);
+                        let leftreg = leftdat.alloced_regs[0];
+                        let rightreg = rightdat.alloced_regs[0];
+
+                        instr = format!("movr r{} r{}\n\
+                                        shl r{} r{}\n",
+                        res_reg, leftreg, res_reg, rightreg);
+                    }
+                    fparse::BinaryOp::BitShiftRight => {
+                        let res_reg = self.alloc_reg(ValDat::ImmVal(Numerical::None));
+                        res.alloced_regs.push(res_reg);
+                        let leftreg = leftdat.alloced_regs[0];
+                        let rightreg = rightdat.alloced_regs[0];
+
+                        instr = format!("movr r{} r{}\n\
+                                        shr r{} r{}\n",
+                        res_reg, leftreg, res_reg, rightreg);
+                    }
                     other => {
                         panic!("Unknown binary operation type: {:?}", other);
                     }
@@ -311,13 +331,18 @@ impl CodeGen {
             AstNode::UnaryOp { op, expr } => {
                 let rdat = self.gen_expr(*expr);
 
+                let dst_reg = rdat.alloced_regs[0];
+
                 let instr = match op {
                     fparse::UnaryOp::Negate => {
                         let ftletter = CodeGen::ftletter(rdat.expr_type);
-                        format!("{}neg r{} r{}\n", ftletter, rdat.alloced_regs[0], rdat.alloced_regs[0])
+                        format!("{}neg r{} r{}\n", ftletter, dst_reg, dst_reg)
                     }
                     fparse::UnaryOp::Not => {
-                        format!("not r{} r{}\n", rdat.alloced_regs[0], rdat.alloced_regs[0])
+                        format!("not r{} r{}\n", dst_reg, dst_reg)
+                    }
+                    fparse::UnaryOp::LogicalNot => {
+                        format!("lnot r{} r{}\n", dst_reg, dst_reg)
                     }
                 };
                 self.sbuf.push_str(&instr);
@@ -342,8 +367,11 @@ impl CodeGen {
                 panic!("None value for {}!", vsymb.name);
             }
             sem::VarPosition::Register(ri) => {
-                gend.alloced_regs.push(ri);
-                ri
+                self.sbuf.push_str(&format!("push r{}\n", ri)); // for safety
+                let dst_reg = self.alloc_reg(ValDat::ImmVal(Numerical::None));
+                gend.alloced_regs.push(dst_reg);
+                self.sbuf.push_str(&format!("pop r{}\n", dst_reg));
+                dst_reg
             }
             sem::VarPosition::Stack(sfi) => {
                 let mut instr = String::new();
