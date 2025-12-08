@@ -1,6 +1,6 @@
-use std::{collections::HashMap};
+use std::{collections::HashMap, fmt::format};
 
-use crate::{fcparse::fcparse::{self as fparse, AstRoot}, lexer::lexer::Intrinsic, seman::seman::{self as sem, FSymbol, FType, SymbolTable, VarPosition}};// AstNode;
+use crate::{fcparse::fcparse::{self as fparse, AstRoot, CmpOp}, lexer::lexer::Intrinsic, seman::seman::{self as sem, FSymbol, FType, SemAn, SymbolTable, VarPosition}};// AstNode;
 use fparse::AstNode;
 
 #[derive(Debug, Clone)]
@@ -202,6 +202,29 @@ impl CodeGen {
                                         shr r{} r{}\n",
                         res_reg, leftreg, res_reg, rightreg);
                     }
+                    fparse::BinaryOp::Compare(cmp_op) => {
+                        let leftreg = leftdat.alloced_regs[0];
+                        let rightreg = rightdat.alloced_regs[0];
+                        self.sbuf.push_str(&format!("{}cmp r{} r{}\n", 
+                            ftlet, leftreg, rightreg));
+                        
+                        let label_true = self.alloc_label();
+                        let jmpinstr = CodeGen::match_jmp_op(cmp_op, &label_true);
+                        self.sbuf.push_str(&jmpinstr);
+
+                        let exit_lbl = self.alloc_label();
+                        self.sbuf.push_str(&format!("uload r{} 0\n\
+                                        jmp @{}\n", 
+                            leftreg, exit_lbl));
+
+                        self.push_label(&label_true);
+                        self.sbuf.push_str(&format!("uload r{} 1\n", 
+                            leftreg));
+                        self.push_label(&exit_lbl);
+
+                        self.free_reg_not_var(rightreg);
+                        res.alloced_regs.push(leftreg);
+                    }
                     other => {
                         panic!("Unknown binary operation type: {:?}", other);
                     }
@@ -216,12 +239,13 @@ impl CodeGen {
             AstNode::Variable(av) => {
                 self.load_variable(av, &mut res);
             }
-            AstNode::EnterScope => {
+            AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
-            }, 
-            AstNode::LeftScope => {
-                self.leave_scope_clean(); 
-            },
+                for expr in exprs {
+                    self.gen_expr(expr.node);
+                }
+                self.leave_scope_clean();
+            }
             AstNode::Reassignment { name, newval } => {
                 let var_name = name.clone();
                 
@@ -264,21 +288,15 @@ impl CodeGen {
                 let false_labelname = self.alloc_label();
                 let exit_labelname = self.alloc_label();
                 
-                let mut iftrue_exprs: Vec<GenData> = Vec::new();
-                self.symb_table.enter_scope();
-                for expr in if_true {
-                    iftrue_exprs.push(self.gen_expr(expr.node));
-                }
-                self.leave_scope_clean();
+                let mut iftrue_expr: GenData = self.gen_expr(if_true.node);
+
                 let jumpe_instr = format!("jmp @{}\n", &exit_labelname);
                 self.sbuf.push_str(&jumpe_instr);
 
                 self.push_label(&false_labelname);
                 self.symb_table.enter_scope();
                 if let Some(ve) = if_false {
-                    for expr in ve {
-                        self.gen_expr(expr.node);
-                    }
+                    self.gen_expr(ve.node);
                 }
                 self.leave_scope_clean();
                 self.push_label(&exit_labelname); 
@@ -395,6 +413,17 @@ impl CodeGen {
                 self.sbuf.push_str(&instr);
                 reg
             }
+        }
+    }
+
+    pub fn match_jmp_op(cmp_op: CmpOp, label_name: &str) -> String {
+        match cmp_op {
+            CmpOp::Eq => format!("jz @{}\n", label_name),
+            CmpOp::Ge => format!("jge @{}\n", label_name),
+            CmpOp::G => format!("jg @{}\n", label_name),
+            CmpOp::Le => format!("jle @{}\n", label_name),
+            CmpOp::L => format!("jl @{}\n", label_name),
+            CmpOp::Ne => format!("jnz @{}\n", label_name),
         }
     }
 
@@ -553,7 +582,7 @@ impl CodeGen {
                                     push r3\n\
                                     movr r1 r{}\n\
                                     uload r2 2\n\
-                                    xor r3 r3\n\
+        xor r3 r3\n\
                                     ncall 1 r0\n\
                                     pop r3\n\
                                     pop r2\n\
@@ -571,12 +600,17 @@ pub struct GenData {
     pub alloced_regs: Vec<usize>,
     pub symbols: HashMap<String, FSymbol>,
     pub expr_type: FType,
+    pub cmp_op: Option<CmpOp>,
 }
 
 impl GenData {
     pub fn new(alloced: Vec<usize>) -> GenData {
-        GenData { alloced_regs: alloced, symbols: HashMap::new(),
-            expr_type: FType::none}
+        GenData { 
+            alloced_regs: alloced, 
+            symbols: HashMap::new(),
+            expr_type: FType::none,
+            cmp_op: None,
+        }
     }
 
     pub fn push_symb(&mut self, s: FSymbol) {

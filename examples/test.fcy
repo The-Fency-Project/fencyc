@@ -1,4 +1,6 @@
-let a: int = 4;
-if a$bool {
-    printintrin ~(a << 1u);
-}
+let a: int = 1;
+if a != 1.0 {
+    printintrin 1;
+} else {
+    printintrin 2;
+    }

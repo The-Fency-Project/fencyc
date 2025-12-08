@@ -75,7 +75,7 @@ impl FcParser {
                 left: Box::new(left),
                 right: Box::new(right.node),
             };
-        } 
+    } 
 
         AstRoot::new(left, line_n)
     }
@@ -93,8 +93,18 @@ impl FcParser {
             Tok::Keyword(Kword::True) => AstNode::boolVal(true),
             Tok::Keyword(Kword::False) => AstNode::boolVal(false),
 
-            Tok::LCurBr => AstNode::EnterScope, 
-            Tok::RCurBr => AstNode::LeftScope,
+            Tok::LCurBr => {
+                let mut exprs: Vec<AstRoot> = Vec::new();
+                while let Some(t) = self.peek() {
+                    if t.tok == Tok::RCurBr {
+                        self.consume();
+                        break;
+                    }
+                    exprs.push(self.parse_expr(0));
+                }
+
+                AstNode::CodeBlock { exprs: exprs }
+            }
 
             Tok::Minus => AstNode::UnaryOp {
                 op: UnaryOp::Negate,
@@ -123,7 +133,6 @@ impl FcParser {
                 let idt_cl = idt.clone();
                 if let Some(nexttok) = self.peek() {
                     if nexttok.tok == Tok::Equals {
-                self.consume();
                         return AstNode::Reassignment { 
                             name: idt_cl, 
                             newval: Box::new(self.parse_expr(0))
@@ -201,7 +210,6 @@ impl FcParser {
             }
         }
     }
-
     fn expect(&mut self, want: Tok) {
         match self.consume() {
             Some(t) if t.tok == want => {},
@@ -221,6 +229,9 @@ impl FcParser {
             Tok::VerBar => Some((8, 9)),
             Tok::Caret => Some((10, 11)),
             Tok::Ampersand => Some((12, 13)),
+
+            Tok::DoubleEq | Tok::RABEq | Tok::LABEq | Tok::ExclEq 
+            | Tok::LAngBr | Tok::RAngBr => Some((8, 9)),
             _ => None,
         }
     }
@@ -243,13 +254,13 @@ impl FcParser {
     fn parse_if(&mut self) -> AstNode {
         let condition = self.parse_expr(0); 
 
-        let iftrue = self.parse_block();
-        let iffalse: Option<Vec<AstRoot>> = match self.peek() {
+        let iftrue = Box::new(self.parse_expr(0));
+        let iffalse: Option<Box<AstRoot>> = match self.peek() {
             None => None,
             Some(token) => {
                 if token.tok == Tok::Keyword(Kword::Else) {
                     self.consume();
-                    Some(self.parse_block())
+                    Some(Box::new(self.parse_expr(0)))
                 } else {
                     None
                 }
@@ -278,9 +289,29 @@ impl FcParser {
             }
             Tok::DRAngBr => {
                 return Some(BinaryOp::BitShiftRight);
+            },
+
+            Tok::DoubleEq => {
+                return Some(BinaryOp::Compare(CmpOp::Eq));
+            },
+            Tok::RABEq => {
+                Some(BinaryOp::Compare(CmpOp::Ge))
             }
+            Tok::RAngBr => {
+                Some(BinaryOp::Compare(CmpOp::G))
+            }
+            Tok::LAngBr => {
+                Some(BinaryOp::Compare(CmpOp::L))
+            }
+            Tok::ExclEq => {
+                Some(BinaryOp::Compare(CmpOp::Ne))
+            }
+            Tok::LABEq => {
+                Some(BinaryOp::Compare(CmpOp::Le))
+            }
+
             _ => {
-                None
+                return None;
             },
         }
     }
@@ -298,8 +329,9 @@ pub enum AstNode {
     Variable(String),
     Identifier(String),
 
-    EnterScope,
-    LeftScope,
+    CodeBlock {
+        exprs: Vec<AstRoot>,
+    },
 
     BinaryOp {
         op: BinaryOp,
@@ -340,8 +372,8 @@ pub enum AstNode {
 
     IfStatement {
         cond: Box<AstRoot>,
-        if_true: Vec<AstRoot>,
-        if_false: Option<Vec<AstRoot>>
+        if_true: Box<AstRoot>,
+        if_false: Option<Box<AstRoot>>
     },
 }
 
@@ -357,6 +389,7 @@ pub enum BinaryOp {
     BitwiseXor,
     BitShiftRight,
     BitShiftLeft,
+    Compare(CmpOp),
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -364,6 +397,16 @@ pub enum UnaryOp {
     Negate, 
     Not,
     LogicalNot,
+}
+
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum CmpOp {
+    Eq, // ==
+    Ge, // >=
+    G, // >
+    L, // <
+    Le, // <=
+    Ne, // !=
 }
 
 pub fn match_ftype(lit: &str) -> Option<FType> {

@@ -37,8 +37,8 @@ impl Logger {
     /// prints error count message
     pub fn finalize(&self) {
         if self.errc > 0 {
-            println!("\nCompilation finished {} with {} errors and {} warnings, took {:.2}s.",
-                "abnormally".red(), self.errc, self.warnc, self.time.elapsed().as_secs_f64());
+            println!("\nCompilation {} with {} errors and {} warnings, took {:.2}s.",
+                "failed".red(), self.errc, self.warnc, self.time.elapsed().as_secs_f64());
         } else if self.warnc > 0 {
             println!("\n{} with {} {}, took {:.2}s", "Compilation succeed".green(), self.warnc, 
                 "warnings".yellow(), self.time.elapsed().as_secs_f64());
@@ -87,11 +87,11 @@ impl Logger {
                             {}: consider explicitly converting types, e.g. var${:?} (where applicable)",
                         ft1, ft2, help, ft1)
                     }
-                    ErrKind::IfStmtNotBool => {
-                        format!("Condition is not bool;\n\
+                    ErrKind::IfStmtNotBool(ft1) => {
+                        format!("Condition is not bool, found {:?};\n\
                             {}: consider explicitly converting, e.g. var$bool\n\
                             {}: try using `--fpermissive` flag to avoid type pedantism",
-                        help, help)
+                        ft1, help, help)
                     }
                     ErrKind::BitShiftRHSType(op, ft) => {
                         format!("Binary op {:?} requires right hand statement type to be uint or ptr, \
@@ -130,7 +130,7 @@ pub enum ErrKind {
     NegateBounds(FType), // got type
     UndeclaredVar(String),
     IncompatTypes(FType, FType), // lhs, rhs
-    IfStmtNotBool,
+    IfStmtNotBool(FType), // got type
     BitShiftRHSType(BinaryOp, FType),
 }
 

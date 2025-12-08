@@ -143,8 +143,6 @@ impl SemAn {
                 self.symb_table.newsymb(FSymbol::new(name.to_owned(), VarPosition::None, *ft));
                 exprdat.ftype = *ft;
             }
-            AstNode::EnterScope => {self.symb_table.enter_scope();}
-            AstNode::LeftScope => {self.symb_table.exit_scope();}
             AstNode::Int(iv) => {
                 exprdat.ftype = FType::int;
             }
@@ -189,13 +187,20 @@ impl SemAn {
                     }
                 }
 
+                
+
                 if (leftd.ftype == FType::bool) && 
                     (*op == BinaryOp::Add || *op == BinaryOp::Substract || 
                     *op == BinaryOp::Multiply || *op == BinaryOp::Divide) {
                         logger.emit(LogLevel::Error(ErrKind::BoolBounds(*op)), line);
                 }
 
-                exprdat.ftype = leftd.ftype;
+                let is_cmp_op = SemAn::is_cmp_op(op);
+                if is_cmp_op {
+                    exprdat.ftype = FType::bool;
+                } else {
+                    exprdat.ftype = leftd.ftype;
+                }
             }
             AstNode::UnaryOp { op, expr } => {
                 let rdat = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
@@ -234,18 +239,14 @@ impl SemAn {
             AstNode::IfStatement { cond, if_true, if_false } => {
                 let cond_an = self.analyze_expr(cond, logger);
                 if cond_an.ftype != FType::bool {
-                    let lerr = LogLevel::Error(ErrKind::IfStmtNotBool);
+                    let lerr = LogLevel::Error(ErrKind::IfStmtNotBool(cond_an.ftype));
                     let lwarn = LogLevel::Warning(log::WarnKind::IfStmtNotBool);
                     self.permissive_error(line, logger, lerr, lwarn);
                 }
                 
-                for astr in if_true.iter() {
-                    self.analyze_expr(astr, logger);
-                }
-                if let Some(iff_roots) = if_false {
-                    for root in iff_roots.iter() {
-                        self.analyze_expr(root, logger);
-                    }
+                self.analyze_expr(*&if_true, logger);
+                if let Some(iff_root) = if_false {
+                    self.analyze_expr(iff_root, logger);
                 }
             }
             AstNode::VariableCast { name, target_type } => {
@@ -258,6 +259,13 @@ impl SemAn {
             }
             AstNode::Intrinsic { intr, val } => {
                 let _ = self.analyze_expr(&AstRoot::new(*val.clone(), line), logger);
+            }
+            AstNode::CodeBlock { exprs } => {
+                self.symb_table.enter_scope();
+                for expr in exprs {
+                    self.analyze_expr(expr, logger);
+                }
+                self.symb_table.exit_scope();
             }
    
             _ => {}
@@ -272,6 +280,10 @@ impl SemAn {
         } else {
             logger.emit(lerr, line);
         }
+    }
+
+    pub fn is_cmp_op(op: &BinaryOp) -> bool {
+        matches!(*op, BinaryOp::Compare(_))
     }
 
 }

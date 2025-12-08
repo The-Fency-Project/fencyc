@@ -31,6 +31,10 @@ pub enum Tok {
     RAngBr, // >
     DLAngBr, // <<
     DRAngBr, // >> 
+    DoubleEq,
+    RABEq, // >= (right ang brace and eq)
+    ExclEq, // != 
+    LABEq, // <=
 }
 
 #[derive(Debug, Clone)]
@@ -99,7 +103,15 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '(' => {res.push(Token::new(Tok::LPar, line)); chars.next();},
             ')' => {res.push(Token::new(Tok::RPar, line)); chars.next();},
             ';' => {res.push(Token::new(Tok::Semicol, line)); chars.next();},
-            '=' => {res.push(Token::new(Tok::Equals, line)); chars.next();},
+            '=' => {
+                chars.next();
+                if let Some('=') = chars.peek() {
+                    res.push(Token::new(Tok::DoubleEq, line));
+                    chars.next();
+                } else {
+                    res.push(Token::new(Tok::Equals, line)); 
+                }
+            },
             ':' => {res.push(Token::new(Tok::Colon, line)); chars.next();},
             '}' => {res.push(Token::new(Tok::RCurBr, line)); chars.next();},
             '{' => {res.push(Token::new(Tok::LCurBr, line)); chars.next();},
@@ -108,24 +120,38 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '^' => {res.push(Token::new(Tok::Caret, line)); chars.next();},
             '$' => {res.push(Token::new(Tok::DollarSign, line)); chars.next();},
             '~' => {res.push(Token::new(Tok::Tilde, line)); chars.next();},
-            '!' => {res.push(Token::new(Tok::Exclam, line)); chars.next();},
-            '<' => {
-                if Some('<') == chars.peek().copied() {
-                        chars.next();
-                        res.push(Token::new(Tok::DLAngBr, line));
-                        chars.next();
+            '!' => {
+                chars.next();
+                if Some('=') == chars.peek().copied() {
+                    res.push(Token::new(Tok::ExclEq, line));
+                    chars.next();
                 } else {
-                      res.push(Token::new(Tok::LAngBr, line)); chars.next();
+                    res.push(Token::new(Tok::Exclam, line)); 
+                }
+            },
+            '<' => {
+                chars.next();
+                if Some('<') == chars.peek().copied() {
+                    res.push(Token::new(Tok::DLAngBr, line));
+                    chars.next();
+                } else if Some('=') == chars.peek().copied() {
+                    res.push(Token::new(Tok::LABEq, line));
+                    chars.next();
+                } else {
+                      res.push(Token::new(Tok::LAngBr, line));
                 };
 
             },
             '>' => {
+                chars.next();
                 if Some('>') == chars.peek().copied() {
-                        chars.next();
                         res.push(Token::new(Tok::DRAngBr, line));
                         chars.next();
+                } else if Some('=') == chars.peek().copied() {
+                        res.push(Token::new(Tok::RABEq, line));
+                        chars.next();
                 } else {
-                      res.push(Token::new(Tok::RAngBr, line)); chars.next();
+                      res.push(Token::new(Tok::RAngBr, line));
                 };
             },
             ' ' | '\t' => {chars.next();},

@@ -1,6 +1,3 @@
 - move halt to main end
-- compare operators
-- elseif
-- whiles
 - refactors
-- not and logical not seman
+- whiles
