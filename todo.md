@@ -1,3 +1,4 @@
 - move halt to main end
 - refactors
-- whiles
+- iterators for `for`
+- functions

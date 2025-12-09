@@ -30,7 +30,8 @@ pub struct CodeGen {
     pub symb_table: SymbolTable,
     predicted_stack: Vec<ValDat>,
     stack_end: usize, // latest stack frame idx
-    labels: HashMap<String, usize> // usize for sbuf idx 
+    labels: HashMap<String, usize>, // usize for sbuf idx
+    loop_exits: Vec<String>,
 }
 
 impl CodeGen {
@@ -44,7 +45,8 @@ impl CodeGen {
             symb_table: SymbolTable::new(),
             stack_end: 0,
             predicted_stack: Vec::new(),
-            labels: HashMap::new()
+            labels: HashMap::new(),
+            loop_exits: Vec::new(),
         }
     }
 
@@ -365,6 +367,56 @@ impl CodeGen {
                 };
                 self.sbuf.push_str(&instr);
                 res.alloced_regs.push(rdat.alloced_regs[0]);
+            }
+            AstNode::WhileLoop { cond, body } => {
+                let loop_lab = self.new_label();
+                let exit_lab = self.alloc_label();
+                self.loop_exits.push(exit_lab.clone());
+
+                let cond_gen = self.gen_expr(cond.node);
+                let cond_reg = cond_gen.alloced_regs[0];
+
+                self.sbuf.push_str(&format!("test r{} r{}\n", cond_reg, cond_reg));
+                self.sbuf.push_str(&format!("jz @{}\n", &exit_lab));
+
+                self.gen_expr(body.node);
+
+                self.sbuf.push_str(&format!("jmp @{}\n", loop_lab));
+                self.push_label(&exit_lab);
+
+                if let Some(exit_lab) = self.loop_exits.last() {
+                    self.loop_exits.pop();
+                };
+            }
+            AstNode::ForLoop { itervar, iter_upd, iter_cond, body } => {
+                self.symb_table.enter_scope();
+                let itergen = self.gen_expr(itervar.node);
+                
+                let loop_lab = self.new_label();
+                let exit_lab = self.alloc_label();
+                self.loop_exits.push(exit_lab.clone());
+
+                let itercond_gen = self.gen_expr(iter_cond.node);
+                self.sbuf.push_str(&format!("jz @{}\n", exit_lab));
+
+                let body_gen = self.gen_expr(body.node);
+
+                let iterupd_gen = self.gen_expr(iter_upd.node);
+                self.sbuf.push_str(&format!("jmp @{}\n", loop_lab));
+                self.push_label(&exit_lab);
+
+                if let Some(exit_lab) = self.loop_exits.last() {
+                    self.loop_exits.pop();
+                };
+                self.symb_table.exit_scope();
+            }
+            AstNode::BreakLoop => {
+                let loop_label = match self.loop_exits.last() { // break from nearest loop
+                    Some(v) => v,
+                    None => panic!("Internal error: can't get loop exit label")
+                };
+
+                self.sbuf.push_str(&format!("jmp @{}\n", loop_label));
             }
             other => {
                 panic!("can't generate yet for {:?}", other);

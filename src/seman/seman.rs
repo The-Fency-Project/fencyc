@@ -3,7 +3,7 @@ use std::fmt::Binary;
 
 use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, UnaryOp};
 use crate::fcparse::fcparse::AstNode;
-use crate::logger::logger::{ErrKind, LogLevel, Logger};
+use crate::logger::logger::{ErrKind, LogLevel, Logger, WarnKind};
 use crate::logger::logger as log;
 
 #[derive(Debug)]
@@ -105,6 +105,7 @@ pub struct SemAn {
     symb_table: SymbolTable,
     cur_scope: usize,
     permissive: bool,
+    parsing_loop: Vec<usize>, // fold level 
 }
 
 impl SemAn {
@@ -114,6 +115,7 @@ impl SemAn {
             symb_table: SymbolTable::new(),
             cur_scope: 0,
             permissive: permissive,
+            parsing_loop: Vec::new(),
         }
     }
 
@@ -186,8 +188,6 @@ impl SemAn {
                         );
                     }
                 }
-
-                
 
                 if (leftd.ftype == FType::bool) && 
                     (*op == BinaryOp::Add || *op == BinaryOp::Substract || 
@@ -266,6 +266,38 @@ impl SemAn {
                     self.analyze_expr(expr, logger);
                 }
                 self.symb_table.exit_scope();
+            }
+            AstNode::WhileLoop { cond, body } => {
+                self.parsing_loop.push(self.parsing_loop.len());
+
+                let cond_dat = self.analyze_expr(&cond, logger);
+                if cond_dat.ftype != FType::bool {
+                    self.permissive_error(line, logger, 
+                        LogLevel::Error(ErrKind::WhileLoopNotBool(cond_dat.ftype)), 
+                        LogLevel::Warning(WarnKind::WhileLoopNotBool)
+                    );
+                }
+
+                self.analyze_expr(&body, logger);
+
+                self.parsing_loop.pop();
+            }
+            AstNode::ForLoop { itervar, iter_upd, iter_cond, body } => {
+                self.parsing_loop.push(self.parsing_loop.len());
+                self.symb_table.enter_scope();
+
+                self.analyze_expr(&itervar, logger);
+                self.analyze_expr(&iter_upd, logger);
+                self.analyze_expr(&iter_cond, logger);
+                self.analyze_expr(&body, logger);
+
+                self.symb_table.exit_scope();
+                self.parsing_loop.pop();
+            }
+            AstNode::BreakLoop => {
+                if self.parsing_loop.len() == 0 {
+                    logger.emit(LogLevel::Error(ErrKind::BreakNotLoop), line);
+                }
             }
    
             _ => {}

@@ -1,4 +1,5 @@
-v0.1.4:
-- better log
-- compare operators
-- update to voxvm v8.02
+v0.2.0:
+- while loops
+- reas fix
+- for loops
+- `break` keyword

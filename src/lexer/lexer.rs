@@ -35,6 +35,8 @@ pub enum Tok {
     RABEq, // >= (right ang brace and eq)
     ExclEq, // != 
     LABEq, // <=
+    DoubleDot, // ..
+    Dot, 
 }
 
 #[derive(Debug, Clone)]
@@ -170,6 +172,15 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                 let t = match_symb_tok(&idn);
                 res.push(Token::new(t, line));
             }
+            '.' => {
+                chars.next();
+                if Some('.') == chars.peek().copied() {
+                    res.push(Token::new(Tok::DoubleDot, line));
+                    chars.next();
+                } else {
+                    res.push(Token::new(Tok::Dot, line));
+                }
+            }
             other => {
                 panic!("{}: Unknown token {}", line, other);
             }
@@ -187,6 +198,10 @@ pub enum Kword {
     False,
     If,
     Else,
+    While,
+    For,
+    In,
+    Break,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -202,6 +217,10 @@ fn match_symb_tok(word: &str) -> Tok {
         "if" => Tok::Keyword(Kword::If),
         "else" => Tok::Keyword(Kword::Else),
         "printintrin" => Tok::Intrin(Intrinsic::Print),
+        "while" => Tok::Keyword(Kword::While),
+        "for" => Tok::Keyword(Kword::For),
+        "in" => Tok::Keyword(Kword::In),
+        "break" => Tok::Keyword(Kword::Break),
         other => Tok::Identifier(other.to_string()),
     }
 }

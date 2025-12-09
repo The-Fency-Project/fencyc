@@ -1,6 +1,15 @@
-let a: int = 1;
-if a != 1 {
-    printintrin 1;
-} else {
-    printintrin 2;
+for let a: int = 0 in a = a + 1; a < 10 {
+        printintrin a;
     }
+
+// break tests
+let n: int = 0;
+while true {
+    while true {
+        printintrin n;
+        break;
+        }
+    printintrin 11;
+    break;
+    }
+

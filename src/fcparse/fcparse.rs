@@ -133,6 +133,7 @@ impl FcParser {
                 let idt_cl = idt.clone();
                 if let Some(nexttok) = self.peek() {
                     if nexttok.tok == Tok::Equals {
+                        self.consume();
                         return AstNode::Reassignment { 
                             name: idt_cl, 
                             newval: Box::new(self.parse_expr(0))
@@ -205,6 +206,18 @@ impl FcParser {
                 AstNode::Intrinsic { intr: *intr, val: Box::new(val.node) }
             }
 
+            Tok::Keyword(Kword::While) => {
+                self.parse_whileloop()
+            }
+
+            Tok::Keyword(Kword::For) => {
+                self.parse_forloop()
+            }
+
+            Tok::Keyword(Kword::Break) => {
+                AstNode::BreakLoop
+            }
+
             other => {
                 panic!("{}: FCparse unexpected token `{:?}`", line_n, other);
             }
@@ -242,11 +255,6 @@ impl FcParser {
         tok
     }
 
-    fn expect_consume(&mut self, want: Tok) -> Option<&Token> {
-        self.expect(want);
-        self.consume()
-    }
-
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.pos)
     }
@@ -273,6 +281,8 @@ impl FcParser {
             if_false: iffalse 
         }
     }
+
+    
 
     pub fn match_bop_for_tok(&mut self, tok: &Tok, next_tok: Option<&Tok>) -> Option<BinaryOp> {
         match tok {
@@ -316,7 +326,34 @@ impl FcParser {
         }
     }
 
+    fn parse_whileloop(&mut self) -> AstNode {
+        let condition = self.parse_expr(0);
 
+        let body = self.parse_expr(0);
+
+        AstNode::WhileLoop { 
+            cond: Box::new(condition), 
+            body: Box::new(body) 
+        }
+    }
+
+    fn parse_forloop(&mut self) -> AstNode {
+        let itervar = self.parse_expr(0);
+
+        self.expect(Tok::Keyword(Kword::In)); 
+
+        let iter_upd = self.parse_expr(0);
+        let iter_cond = self.parse_expr(0);
+
+        let body = self.parse_expr(0);
+
+        AstNode::ForLoop { 
+            itervar: Box::new(itervar), 
+            iter_upd: Box::new(iter_upd), 
+            iter_cond: Box::new(iter_cond),
+            body: Box::new(body) 
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -374,6 +411,20 @@ pub enum AstNode {
         cond: Box<AstRoot>,
         if_true: Box<AstRoot>,
         if_false: Option<Box<AstRoot>>
+    },
+
+    BreakLoop,
+
+    WhileLoop {
+        cond: Box<AstRoot>,
+        body: Box<AstRoot>,
+    },
+
+    ForLoop {
+        itervar: Box<AstRoot>,
+        iter_upd: Box<AstRoot>, // e.g. a = a + 1 
+        iter_cond: Box<AstRoot>, // e.g. a < 10
+        body: Box<AstRoot>,
     },
 }
 

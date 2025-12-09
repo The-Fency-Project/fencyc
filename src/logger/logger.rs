@@ -100,6 +100,17 @@ impl Logger {
                             op, ft, help
                     )
                     }
+                    ErrKind::WhileLoopNotBool(ft) => {
+                       format!("Loop condition is not bool, found {:?};\n\
+                            {}: consider explicitly converting, e.g. var$bool or var == 1\n\
+                           {}: run fencyc with `--fpermissive` flag to avoid compiler's type pedantism",
+                        ft, help, help)
+                    }
+                    ErrKind::BreakNotLoop => {
+                        format!("`break` keyword used outside loop\n\
+                            {}: this keyword is intented to break loop iteration", // tryna be user friendly
+                        help)
+                    }
                 }
             }
             LogLevel::Warning(wk) => {
@@ -107,6 +118,11 @@ impl Logger {
                     WarnKind::IfStmtNotBool => {
                         format!("Condition is not bool;\n\
                             {}: consider explicitly converting, e.g. var$bool\n",
+                        help)
+                    }
+                    WarnKind::WhileLoopNotBool => {
+                        format!("Loop condition is not bool;\n\
+                            {}: consider explicitly converting, e.g. var$bool or var == 1\n",
                         help)
                     }
                 }
@@ -132,9 +148,12 @@ pub enum ErrKind {
     IncompatTypes(FType, FType), // lhs, rhs
     IfStmtNotBool(FType), // got type
     BitShiftRHSType(BinaryOp, FType),
+    WhileLoopNotBool(FType), // got
+    BreakNotLoop,
 }
 
 #[derive(Debug)]
 pub enum WarnKind {
     IfStmtNotBool,
+    WhileLoopNotBool,
 }
