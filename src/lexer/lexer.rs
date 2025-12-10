@@ -1,4 +1,4 @@
-use std::{fs, io, iter::Peekable};
+use std::{char, fs, io, iter::Peekable};
 
 use crate::seman::seman::FType;
 
@@ -36,7 +36,8 @@ pub enum Tok {
     ExclEq, // != 
     LABEq, // <=
     DoubleDot, // ..
-    Dot, 
+    Dot,
+    Combined(Box<Tok>, Box<Tok>),
 }
 
 #[derive(Debug, Clone)]
@@ -88,9 +89,25 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                     }
                 }
             }
-            '+' => {res.push(Token::new(Tok::Plus, line)); chars.next();},
-            '-' => {res.push(Token::new(Tok::Minus, line)); chars.next();},
-            '*' => {res.push(Token::new(Tok::Star, line)); chars.next();},
+            '+' | '-' | '*' | '^' | '&' | '|' => {
+                chars.next();
+                let combined = try_combine(&ch, chars.peek().copied(), line);
+                if let Some(comb) = combined {
+                    res.push(comb);
+                    chars.next();
+                } else {
+                    let tok = match ch {
+                        '+' => Tok::Plus,
+                        '-' => Tok::Minus,
+                        '*' => Tok::Star,
+                        '^' => Tok::Caret,
+                        '&' => Tok::Ampersand,
+                        '|' => Tok::VerBar,
+                        other => panic!("{}: internal tok match error", line)
+                    };
+                    res.push(Token::new(tok, line));
+                }
+            },
             '/' => {
                 chars.next();
                 if let Some('/') = chars.peek() {
@@ -99,7 +116,13 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                         chars.next();
                     }
                 } else {
-                    res.push(Token::new(Tok::Slash, line)); 
+                    let combine = try_combine(&ch, chars.peek().copied(), line);
+                    if let Some(comb) = combine {
+                        res.push(comb);
+                        chars.next();
+                    } else {
+                        res.push(Token::new(Tok::Slash, line)); 
+                    }
                 }
             },
             '(' => {res.push(Token::new(Tok::LPar, line)); chars.next();},
@@ -117,9 +140,6 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             ':' => {res.push(Token::new(Tok::Colon, line)); chars.next();},
             '}' => {res.push(Token::new(Tok::RCurBr, line)); chars.next();},
             '{' => {res.push(Token::new(Tok::LCurBr, line)); chars.next();},
-            '&' => {res.push(Token::new(Tok::Ampersand, line)); chars.next();},
-            '|' => {res.push(Token::new(Tok::VerBar, line)); chars.next();},
-            '^' => {res.push(Token::new(Tok::Caret, line)); chars.next();},
             '$' => {res.push(Token::new(Tok::DollarSign, line)); chars.next();},
             '~' => {res.push(Token::new(Tok::Tilde, line)); chars.next();},
             '!' => {
@@ -189,6 +209,20 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
 
     
     res
+}
+
+pub fn try_combine(ch: &char, nextch: Option<char>, line: usize) -> Option<Token> {
+    match (*ch, nextch) {
+        ('+', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::Plus), Box::new(Tok::Equals)), line)),
+        ('-', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::Minus), Box::new(Tok::Equals)), line)),
+        ('*', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::Star), Box::new(Tok::Equals)), line)),
+        ('/', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::Slash), Box::new(Tok::Equals)), line)),
+        ('^', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::Caret), Box::new(Tok::Equals)), line)),
+        ('&', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::Ampersand), Box::new(Tok::Equals)), line)),
+        ('|', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::VerBar), Box::new(Tok::Equals)), line)),
+
+        other => None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

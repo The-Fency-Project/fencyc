@@ -634,7 +634,7 @@ impl CodeGen {
                                     push r3\n\
                                     movr r1 r{}\n\
                                     uload r2 2\n\
-        xor r3 r3\n\
+                                    uload r3 0\n\
                                     ncall 1 r0\n\
                                     pop r3\n\
                                     pop r2\n\

@@ -1,15 +1,7 @@
-for let a: int = 0 in a = a + 1; a < 10 {
-        printintrin a;
-    }
+let a: int = 2;
+a *= (3 + 2);
+printintrin a; // 10
 
-// break tests
-let n: int = 0;
-while true {
-    while true {
-        printintrin n;
-        break;
-        }
-    printintrin 11;
-    break;
-    }
-
+let b: float = 15.0;
+b /= 5.0; // 3.0
+printintrin b + (b / 3.0); // 4.0

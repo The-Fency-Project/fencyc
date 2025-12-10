@@ -23,22 +23,6 @@ impl FcParser {
         res
     }
 
-    fn parse_block(&mut self) -> Vec<AstRoot> {
-        self.expect(Tok::LCurBr);
-        let mut res: Vec<AstRoot> = Vec::new();
-        
-        while let Some(tok) = self.peek() {
-            if tok.tok == Tok::RCurBr {
-                self.consume();
-                break;
-            }
-            let astr = self.parse_expr(0);
-            res.push(astr);
-        }
-
-        res
-    }
-
     pub fn parse_expr(&mut self, min_bp: u8) -> AstRoot {
         let mut left = self.parse_prefix();
         let mut line_n: usize = self.line;
@@ -218,6 +202,41 @@ impl FcParser {
                 AstNode::BreakLoop
             }
 
+            Tok::Combined(tok1, tok2) => {
+                let line = self.line;
+                match (*tok1.clone(), *tok2.clone()) {
+                    (_, Tok::Equals) => {
+                        let var_name = match &self.peek_prev_nth(2).tok {
+                            Tok::Identifier(idt) => idt.clone(),
+                            other => panic!("{}: compound assignment left hand has to be identifier, not {:?}",
+                                line, other)
+                        };
+
+                        let bp = FcParser::infix_binding_power(tok1).unwrap_or_else(|| {
+                            panic!("Internal error at {}: no bp", self.line)
+                        });
+
+                        let sec = self.parse_expr(bp.1);
+                        let bop = self.match_bop_for_tok(&tok1, None).unwrap_or_else(|| {
+                            panic!("{}: cant get binary op for operand {:?}", line, tok1)
+                        });
+                        let new_val_node = AstNode::BinaryOp { 
+                            op: bop, 
+                            left: Box::new(AstNode::Variable(var_name.clone())), 
+                            right: Box::new(sec.node) 
+                        };
+
+                        AstNode::Reassignment { 
+                            name: var_name, 
+                            newval: Box::new(AstRoot::new(new_val_node, line))
+                        } 
+                    },
+                    _ => {
+                        panic!("{}: unknown op Compound({:?},{:?})", line, tok1, tok2)
+                    }
+                }
+            }
+
             other => {
                 panic!("{}: FCparse unexpected token `{:?}`", line_n, other);
             }
@@ -229,6 +248,10 @@ impl FcParser {
             Some(t) => panic!("{}: expected {:?}, got {:?}", t.line, want, t.tok),
             None => panic!("expected {:?}, found EOF", want),
         }
+    }
+
+    fn peek_prev_nth(&self, minus_n: usize) -> &Token {
+        self.tokens.get(self.pos.saturating_sub(minus_n)).unwrap()
     }
 
     /// Pratt binding powers: (left_bp, right_bp)
@@ -342,8 +365,8 @@ impl FcParser {
 
         self.expect(Tok::Keyword(Kword::In)); 
 
-        let iter_upd = self.parse_expr(0);
         let iter_cond = self.parse_expr(0);
+        let iter_upd = self.parse_expr(0);
 
         let body = self.parse_expr(0);
 
@@ -374,6 +397,11 @@ pub enum AstNode {
         op: BinaryOp,
         left: Box<AstNode>,
         right: Box<AstNode>,
+    },
+
+    Compound {
+        first: Box<AstNode>,
+        sec: Box<AstNode>,
     },
 
     UnaryOp {

@@ -1,5 +1,3 @@
-v0.2.0:
-- while loops
-- reas fix
-- for loops
-- `break` keyword
+v0.2.2:
+- compound ops (`+=`, `-=`, etc)
+- examples ofr variables and loops in `examples/`
