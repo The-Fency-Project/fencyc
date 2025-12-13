@@ -1,4 +1,4 @@
-use std::{fs::File, io::{self, BufRead, BufReader}};
+use std::{collections::HashMap, fs::File, io::{self, BufRead, BufReader}};
 
 use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::FType};
 
@@ -14,13 +14,27 @@ impl FcParser {
         FcParser { tokens: toks, pos: 0, line: 0 }
     }
 
-    pub fn parse_everything(&mut self) -> Vec<AstRoot> {
-        let mut res: Vec<AstRoot> = Vec::new();
+    /// Returns AST (0) and Function table (1) with no function bodies
+    pub fn parse_everything(&mut self) -> (Vec<AstRoot>, HashMap<String, AstNode>) {
+        let mut ast: Vec<AstRoot> = Vec::new();
+        let mut funcs: HashMap<String, AstNode> = HashMap::new();
+
         while self.peek().is_some() {
             let expr = self.parse_expr(0);
-            res.push(expr);
+
+            if let AstNode::Function { name, args, ret_type, body } = &expr.node {
+                funcs.insert(name.clone(), AstNode::Function { 
+                    name: name.clone(), 
+                    args: args.clone(),
+                    ret_type: ret_type.clone(), 
+                    body: Box::new(AstNode::none) 
+                });
+            }
+
+            ast.push(expr);
         }
-        res
+
+        (ast, funcs)
     }
 
     pub fn parse_expr(&mut self, min_bp: u8) -> AstRoot {
@@ -34,7 +48,7 @@ impl FcParser {
             if *optok == Tok::Semicol {
                 self.consume();
                 break;
-            } 
+            }
     
             let (lbp, rbp) = match Self::infix_binding_power(optok) {
                 Some(v) => v,
@@ -158,21 +172,20 @@ impl FcParser {
                         panic!("{}: Expected identifier, found {:?}", line_n, other);
                     }
                 };
-
-                self.expect(Tok::Colon);
-                let ftype_tok = self.consume()
-                    .expect(&format!("{}: expected type annotation", line_n)
-);
-                let ftype_name = match &ftype_tok.tok {
-                    Tok::Identifier(nm) => nm,
-                    other => {
-                        panic!("{}: Expected typename, found {:?}", line_n, other);
+                
+                let mut ftype = FType::none;
+                if let Some(t) = self.peek() {
+                    if t.tok == Tok::Colon {
+                        self.consume();
+                        ftype = match self.parse_ftype_assignm() {
+                            FType::none => panic!("{}: typename is incorrect", self.line),
+                            other => other
+                        };
+                    } else if t.tok == Tok::Equals { 
+                    } else {
+                        panic!("{}: expected type annotation or equals after identifier, found {:?}", self.line, t.tok);
                     }
-                };
-                let ftype = match_ftype(&ftype_name)
-                    .expect(
-                        &format!("{}: unknown type", line_n)
-                    );
+                }
                 self.expect(Tok::Equals);
                 
                 let expr = self.parse_expr(0);
@@ -200,6 +213,14 @@ impl FcParser {
 
             Tok::Keyword(Kword::Break) => {
                 AstNode::BreakLoop
+            }
+
+            Tok::Keyword(Kword::Continue) => {
+                AstNode::ContinueLoop
+            }
+
+            Tok::Keyword(Kword::Func) => {
+                self.parse_func()
             }
 
             Tok::Combined(tok1, tok2) => {
@@ -242,9 +263,30 @@ impl FcParser {
             }
         }
     }
-    fn expect(&mut self, want: Tok) {
+
+    fn parse_ftype_assignm(&mut self) -> FType {
+        let mut ftype = FType::none;
+
+        let ftype_tok = match self.consume() {
+            Some(v) => v,
+            None => {return ftype;}
+        };
+        let ftype_name = match &ftype_tok.tok {
+            Tok::Identifier(nm) => nm,
+            _ => {
+                    return ftype;
+                }
+            };
+        if let Some(ft) = match_ftype(&ftype_name) {
+            ftype = ft;
+        };
+
+        ftype
+    }
+
+    fn expect(&mut self, want: Tok) -> &Token {
         match self.consume() {
-            Some(t) if t.tok == want => {},
+            Some(t) if t.tok == want => {t},
             Some(t) => panic!("{}: expected {:?}, got {:?}", t.line, want, t.tok),
             None => panic!("expected {:?}, found EOF", want),
         }
@@ -260,7 +302,7 @@ impl FcParser {
             Tok::DLAngBr => Some((8, 9)),
             Tok::DRAngBr => Some((8, 9)),
             Tok::Plus | Tok::Minus => Some((10, 11)),
-            Tok::Star | Tok::Slash => Some((20, 21)),
+            Tok::Star | Tok::Slash | Tok::Percent => Some((20, 21)),
             Tok::Equals => Some((3, 4)),
             Tok::VerBar => Some((8, 9)),
             Tok::Caret => Some((10, 11)),
@@ -313,6 +355,8 @@ impl FcParser {
             Tok::Minus => Some(BinaryOp::Substract),
             Tok::Star => Some(BinaryOp::Multiply),
             Tok::Slash => Some(BinaryOp::Divide),
+            Tok::Percent => Some(BinaryOp::Remainder),
+
             Tok::Keyword(Kword::Let) => Some(BinaryOp::Assignment),
             Tok::Ampersand => Some(BinaryOp::BitwiseAnd),
             Tok::VerBar => Some(BinaryOp::BitwiseOr),
@@ -377,10 +421,65 @@ impl FcParser {
             body: Box::new(body) 
         }
     }
+
+    fn parse_func(&mut self) -> AstNode {
+        let name = self.expect_idt().unwrap_or_else(|| {
+            panic!("{}: expected function name identifier", self.line)
+        }); 
+
+        let args = self.parse_func_args();
+
+        let body = self.parse_expr(0);
+
+        AstNode::Function { 
+            name: name, 
+            args: args, 
+            ret_type: FType::none, 
+            body: Box::new(body.node)
+        }
+    }
+
+    fn parse_func_args(&mut self) -> Vec<FuncArg> {
+        let mut res: Vec<FuncArg> = Vec::new();
+        
+        self.expect(Tok::LPar);
+
+        while let Some(token) = self.peek() {
+            if token.tok == Tok::RPar {
+                self.consume();
+                break;
+            }
+
+            if res.len() > 0 {
+                self.expect(Tok::Comma);
+            }
+
+            let arg_name = self.expect_idt().unwrap_or_else(|| {panic!("{}: expected arg name", self.line)});
+            self.expect(Tok::Colon);
+            let arg_typename = self.expect_idt().unwrap_or_else(|| {panic!("{}: expected typename for arg", self.line)});
+            let ft = match_ftype(&arg_typename).unwrap_or_else(|| {panic!("{}: unknown type {}", self.line, arg_typename)});
+
+            res.push(FuncArg::new(arg_name, ft));
+        };
+
+        res
+    }
+
+    fn expect_idt(&mut self) -> Option<String> {
+        match self.consume() {
+            Some(t) => match &t.tok {
+                Tok::Identifier(idt) => Some(idt.clone()),
+                _ => None, //panic!("{}: expected function name identifier, found {:?}", self.line, t)
+            },
+            None => None //panic!("{}: expected function name identifier, found None", self.line)
+        }   
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum AstNode {
+    none, 
+
     Int(i64),
     Float(f64),
     Uint(u64),
@@ -399,18 +498,20 @@ pub enum AstNode {
         right: Box<AstNode>,
     },
 
-    Compound {
-        first: Box<AstNode>,
-        sec: Box<AstNode>,
-    },
-
     UnaryOp {
         op: UnaryOp,
         expr: Box<AstNode>,
     },
 
+    Function {
+        name: String,
+        args: Vec<FuncArg>,
+        ret_type: FType,
+        body: Box<AstNode>,
+    },
+
     Call {
-        func: Box<AstNode>,
+        func_name: String,
         args: Vec<AstNode>,
     },
 
@@ -442,6 +543,7 @@ pub enum AstNode {
     },
 
     BreakLoop,
+    ContinueLoop,
 
     WhileLoop {
         cond: Box<AstRoot>,
@@ -462,6 +564,7 @@ pub enum BinaryOp {
     Substract,
     Multiply,
     Divide,
+    Remainder,
     Assignment,
     BitwiseAnd,
     BitwiseOr,
@@ -512,3 +615,17 @@ impl AstRoot {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct FuncArg {
+    name: String,
+    ftype: FType
+}
+
+impl FuncArg {
+    pub fn new(n: String, ft: FType) -> FuncArg {
+        FuncArg { 
+            name: n, 
+            ftype: ft 
+        }
+    }
+}

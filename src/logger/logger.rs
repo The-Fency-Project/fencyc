@@ -111,6 +111,23 @@ impl Logger {
                             {}: this keyword is intented to break loop iteration", // tryna be user friendly
                         help)
                     }
+                    ErrKind::ContinueNotLoop => {
+                        format!("`continue` keyword used outside loop\n\
+                            {}: this keyword intented to continue loop onto next iteration",
+                        help)
+                    }
+                    ErrKind::NoMain => {
+                        format!("No function main was declared\n\
+                                Program should have `main()` function\n\
+                            {}: declare main and write some code in it: `func main() ...`",
+                        help)
+                    }
+                    ErrKind::NoneTypeAssign(name, rft) => {
+                        format!("Variable {} has no annotated type\n\
+                            {}: right hand statement has type {:?}, try annotating, e.g.:\n\
+                            let {}: {:?} = ...;",
+                        &name, help, rft, &name, rft)
+                    }
                 }
             }
             LogLevel::Warning(wk) => {
@@ -150,6 +167,9 @@ pub enum ErrKind {
     BitShiftRHSType(BinaryOp, FType),
     WhileLoopNotBool(FType), // got
     BreakNotLoop,
+    ContinueNotLoop,
+    NoMain,
+    NoneTypeAssign(String, FType), // name, help (rhs type)
 }
 
 #[derive(Debug)]

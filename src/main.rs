@@ -60,9 +60,11 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermis
     let toks = lex::tokenize(&input.clone());
 
     let mut parser = fparser::FcParser::new(toks);
-    let ast: Vec<AstRoot> = parser.parse_everything();
+    let parsing_res = parser.parse_everything();
+    let ast = parsing_res.0;
+    let func_tab = parsing_res.1;
 
-    let mut seman = Seman::SemAn::new(fpermissive);
+    let mut seman = Seman::SemAn::new(fpermissive, func_tab);
     seman.analyze(&ast, &mut logger);
 
     if logger.should_interrupt() {

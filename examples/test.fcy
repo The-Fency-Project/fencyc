@@ -1,7 +1,10 @@
-let a: int = 2;
-a *= (3 + 2);
-printintrin a; // 10
-
-let b: float = 15.0;
-b /= 5.0; // 3.0
-printintrin b + (b / 3.0); // 4.0
+func main() {
+    // test continues
+    for let a: int = 0 in a < 10; a = a + 1 { // += operator currently won't 
+                                    // work inside for loop declaration
+        if a % 3 == 0 {
+            continue;
+        } 
+        printintrin a; 
+    }
+}

@@ -106,20 +106,26 @@ pub struct SemAn {
     cur_scope: usize,
     permissive: bool,
     parsing_loop: Vec<usize>, // fold level 
+    func_table: HashMap<String, AstNode>,
 }
 
 impl SemAn {
     /// Inits semantic analyzer struct. Permissive flag for less type checks
-    pub fn new(permissive: bool) -> SemAn {
+    pub fn new(permissive: bool, functab: HashMap<String, AstNode>) -> SemAn {
         SemAn { 
             symb_table: SymbolTable::new(),
             cur_scope: 0,
             permissive: permissive,
             parsing_loop: Vec::new(),
+            func_table: functab
         }
     }
 
     pub fn analyze(&mut self, ast: &Vec<AstRoot>, logger: &mut Logger) {
+        if self.func_table.get("main").is_none() {
+            logger.emit(LogLevel::Error(ErrKind::NoMain), 0);
+        }
+
         for root in ast {
             self.analyze_expr(root, logger); 
         }
@@ -137,7 +143,10 @@ impl SemAn {
                 if self.symb_table.get(name.clone()).is_some() {
                     logger.emit(LogLevel::Error(ErrKind::Redeclaration(name.to_owned())), line);
                 };
-
+                
+                if *ft == FType::none {
+                    logger.emit(LogLevel::Error(ErrKind::NoneTypeAssign(name.clone(), rightdat.ftype)), line);
+                }
                 if *ft != rightdat.ftype {
                     logger.emit(LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)), line);
                 }
@@ -298,6 +307,14 @@ impl SemAn {
                 if self.parsing_loop.len() == 0 {
                     logger.emit(LogLevel::Error(ErrKind::BreakNotLoop), line);
                 }
+            }
+            AstNode::ContinueLoop => {
+                if self.parsing_loop.len() == 0 {
+                    logger.emit(LogLevel::Error(ErrKind::ContinueNotLoop), line);
+                }
+            }
+            AstNode::Function { name, args, ret_type, body } => {
+                self.analyze_expr(&AstRoot::new(*body.clone(), line), logger);
             }
    
             _ => {}

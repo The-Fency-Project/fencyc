@@ -37,6 +37,8 @@ pub enum Tok {
     LABEq, // <=
     DoubleDot, // ..
     Dot,
+    Comma,
+    Percent, // %
     Combined(Box<Tok>, Box<Tok>),
 }
 
@@ -125,6 +127,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                     }
                 }
             },
+            ',' => {res.push(Token::new(Tok::Comma, line)); chars.next();},
             '(' => {res.push(Token::new(Tok::LPar, line)); chars.next();},
             ')' => {res.push(Token::new(Tok::RPar, line)); chars.next();},
             ';' => {res.push(Token::new(Tok::Semicol, line)); chars.next();},
@@ -137,6 +140,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                     res.push(Token::new(Tok::Equals, line)); 
                 }
             },
+            '%' => {res.push(Token::new(Tok::Percent, line)); chars.next();},
             ':' => {res.push(Token::new(Tok::Colon, line)); chars.next();},
             '}' => {res.push(Token::new(Tok::RCurBr, line)); chars.next();},
             '{' => {res.push(Token::new(Tok::LCurBr, line)); chars.next();},
@@ -236,6 +240,8 @@ pub enum Kword {
     For,
     In,
     Break,
+    Continue,
+    Func,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -255,6 +261,8 @@ fn match_symb_tok(word: &str) -> Tok {
         "for" => Tok::Keyword(Kword::For),
         "in" => Tok::Keyword(Kword::In),
         "break" => Tok::Keyword(Kword::Break),
+        "func" => Tok::Keyword(Kword::Func),
+        "continue" => Tok::Keyword(Kword::Continue),
         other => Tok::Identifier(other.to_string()),
     }
 }

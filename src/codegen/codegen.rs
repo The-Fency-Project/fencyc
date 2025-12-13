@@ -32,6 +32,7 @@ pub struct CodeGen {
     stack_end: usize, // latest stack frame idx
     labels: HashMap<String, usize>, // usize for sbuf idx
     loop_exits: Vec<String>,
+    loop_conts: Vec<String>,
 }
 
 impl CodeGen {
@@ -47,15 +48,20 @@ impl CodeGen {
             predicted_stack: Vec::new(),
             labels: HashMap::new(),
             loop_exits: Vec::new(),
+            loop_conts: Vec::new(),
         }
     }
 
     pub fn gen_everything(&mut self) {
+        self.sbuf.push_str("section text\n\
+                            .start\n\
+                            call @main\n\
+                            halt\n",
+                    );
         while let Some(r) = self.ast.get(self.cur_ast) {
             let gdat = self.gen_expr(r.clone().node);
             self.cur_ast += 1;
         }
-        self.sbuf.push_str("halt\n"); // TODO: move it to main() end 
     }
 
     pub fn write_file(&mut self, fname: &str) -> Result<(), std::io::Error> {
@@ -169,6 +175,15 @@ impl CodeGen {
                         ); 
                         res.alloced_regs.push(leftdat.alloced_regs[0]); 
                     }
+                    fparse::BinaryOp::Remainder => {
+                        instr = format!("{}rem r{} r{} r{}\n",
+                            ftlet, 
+                            leftdat.alloced_regs[0],
+                            leftdat.alloced_regs[0],
+                            rightdat.alloced_regs[0]
+                        );
+                        res.alloced_regs.push(leftdat.alloced_regs[0]);
+                    },
                     fparse::BinaryOp::BitwiseAnd => {
                         instr = format!("and r{} r{}\n",
                             leftdat.alloced_regs[0], rightdat.alloced_regs[0]);
@@ -369,7 +384,10 @@ impl CodeGen {
                 res.alloced_regs.push(rdat.alloced_regs[0]);
             }
             AstNode::WhileLoop { cond, body } => {
+                self.symb_table.enter_scope();
+                
                 let loop_lab = self.new_label();
+                self.loop_conts.push(loop_lab.clone());
                 let exit_lab = self.alloc_label();
                 self.loop_exits.push(exit_lab.clone());
 
@@ -384,9 +402,14 @@ impl CodeGen {
                 self.sbuf.push_str(&format!("jmp @{}\n", loop_lab));
                 self.push_label(&exit_lab);
 
-                if let Some(exit_lab) = self.loop_exits.last() {
+                if let Some(_) = self.loop_exits.last() {
                     self.loop_exits.pop();
                 };
+                if let Some(_) = self.loop_conts.last() {
+                    self.loop_conts.pop();
+                };
+
+                self.symb_table.exit_scope();
             }
             AstNode::ForLoop { itervar, iter_upd, iter_cond, body } => {
                 self.symb_table.enter_scope();
@@ -396,18 +419,26 @@ impl CodeGen {
                 let exit_lab = self.alloc_label();
                 self.loop_exits.push(exit_lab.clone());
 
+                let upd_lbl = self.alloc_label();
+                self.loop_conts.push(upd_lbl.clone());
+
                 let itercond_gen = self.gen_expr(iter_cond.node);
                 self.sbuf.push_str(&format!("jz @{}\n", exit_lab));
 
                 let body_gen = self.gen_expr(body.node);
 
+                self.push_label(&upd_lbl);
                 let iterupd_gen = self.gen_expr(iter_upd.node);
                 self.sbuf.push_str(&format!("jmp @{}\n", loop_lab));
                 self.push_label(&exit_lab);
 
-                if let Some(exit_lab) = self.loop_exits.last() {
+                if let Some(_) = self.loop_exits.last() {
                     self.loop_exits.pop();
                 };
+                if let Some(_) = self.loop_conts.last() {
+                    self.loop_conts.pop();
+                };
+
                 self.symb_table.exit_scope();
             }
             AstNode::BreakLoop => {
@@ -417,6 +448,21 @@ impl CodeGen {
                 };
 
                 self.sbuf.push_str(&format!("jmp @{}\n", loop_label));
+            }
+            AstNode::ContinueLoop => {
+                let loop_label = match self.loop_conts.last() {
+                    Some(v) => v,
+                    None => panic!("Internal error: can't get loop continue label")
+                };
+
+                self.sbuf.push_str(&format!("jmp @{}\n", loop_label));
+            }
+            AstNode::Function { name, args, ret_type, body } => {
+                self.sbuf.push_str(&format!("func {}\n", name));
+
+                self.gen_expr(*body);
+
+                self.sbuf.push_str(&format!("ret\n"));
             }
             other => {
                 panic!("can't generate yet for {:?}", other);
