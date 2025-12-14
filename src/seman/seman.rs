@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Binary;
 
-use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, UnaryOp};
+use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, FuncArg, UnaryOp};
 use crate::fcparse::fcparse::AstNode;
 use crate::logger::logger::{ErrKind, LogLevel, Logger, WarnKind};
 use crate::logger::logger as log;
@@ -97,6 +97,13 @@ impl SymbolTable {
         self.st.get_mut(scope)?.get_mut(name)
     }
 
+    pub fn push_funcargs(&mut self, fargs: Vec<FuncArg>) {
+        for (idx, fa) in fargs.iter().enumerate() {
+            let symb = FSymbol::new(fa.name.clone(), VarPosition::Register(idx + 1), fa.ftype);
+            self.newsymb(symb); 
+        }
+    }
+
 }
 
 /// Semantic analyzer struct
@@ -106,18 +113,21 @@ pub struct SemAn {
     cur_scope: usize,
     permissive: bool,
     parsing_loop: Vec<usize>, // fold level 
-    func_table: HashMap<String, AstNode>,
+    func_table: HashMap<String, (AstNode, FType)>, // return type
+    declared_parse: HashMap<String, usize>, // already declared function names and first occurance 
+                                        //lines to check redecl 
 }
 
 impl SemAn {
     /// Inits semantic analyzer struct. Permissive flag for less type checks
-    pub fn new(permissive: bool, functab: HashMap<String, AstNode>) -> SemAn {
+    pub fn new(permissive: bool, functab: HashMap<String, (AstNode, FType)>) -> SemAn {
         SemAn { 
             symb_table: SymbolTable::new(),
             cur_scope: 0,
             permissive: permissive,
             parsing_loop: Vec::new(),
-            func_table: functab
+            func_table: functab,
+            declared_parse: HashMap::new(),
         }
     }
 
@@ -314,7 +324,55 @@ impl SemAn {
                 }
             }
             AstNode::Function { name, args, ret_type, body } => {
+                if let Some(func_line) = self.declared_parse.get(name) {
+                    logger.emit(LogLevel::Error(ErrKind::FuncRedecl(name.clone(), *func_line)), line);
+                } else {
+                    self.declared_parse.insert(name.clone(), line);
+                }
+
+                if args.len() > 30 {
+                    logger.emit(LogLevel::Error(ErrKind::MuchDeclArgs(name.clone(), args.len())), line);
+                }
+
+                self.symb_table.enter_scope();
+                self.symb_table.push_funcargs(args.to_vec()); 
+
                 self.analyze_expr(&AstRoot::new(*body.clone(), line), logger);
+
+                self.symb_table.exit_scope();
+            }
+            AstNode::Call { func_name, args } => {
+                // TODO: add type checks for args
+                let func_entry = match self.func_table.get(func_name) {
+                    Some(v) => v.clone(),
+                    None => {
+                        logger.emit(LogLevel::Error(ErrKind::UndeclaredFunc(func_name.clone())), line);
+                        return exprdat;
+                    }
+                };
+                exprdat.ftype = func_entry.1;
+                let func = match func_entry.0 {
+                    AstNode::Function { name, args, ret_type, body } => 
+                        (name, args, ret_type, body),
+                    other => {
+                        panic!("{}: internal error: cant match function", line);
+                    }
+                };
+
+                if args.len() > func.1.len() {
+                    logger.emit(LogLevel::Error(ErrKind::MuchArgsPassed(func.1.len(), args.len())), line);
+                    return exprdat;
+                }
+
+
+                for (idx, arg) in args.iter().enumerate() {
+                    let argdat = self.analyze_expr(arg, logger);
+                    if argdat.ftype != func.1[idx].ftype {
+                        logger.emit(LogLevel::Error(ErrKind::FuncArgsTypeIncompat(
+                            idx + 1, func.1[idx].ftype, argdat.ftype
+                        )), line);
+                    }      
+                }
             }
    
             _ => {}

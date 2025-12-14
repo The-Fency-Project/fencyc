@@ -1,6 +1,4 @@
-v0.3.0:
-- update examples/1_variables.fcy
-- `%` operator for getting division remainder
-- type annotation check moved into seman
-- `continue` operator
-- functions WIP (only `main()` atp)
+v0.3.1:
+- fixed compound operators as `for` loops updaters
+- functions calls, declarations, retuns, etc
+- i dont remember what i did more

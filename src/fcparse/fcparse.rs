@@ -15,20 +15,20 @@ impl FcParser {
     }
 
     /// Returns AST (0) and Function table (1) with no function bodies
-    pub fn parse_everything(&mut self) -> (Vec<AstRoot>, HashMap<String, AstNode>) {
+    pub fn parse_everything(&mut self) -> (Vec<AstRoot>, HashMap<String, (AstNode, FType)>) {
         let mut ast: Vec<AstRoot> = Vec::new();
-        let mut funcs: HashMap<String, AstNode> = HashMap::new();
+        let mut funcs: HashMap<String, (AstNode, FType)> = HashMap::new();
 
         while self.peek().is_some() {
             let expr = self.parse_expr(0);
 
             if let AstNode::Function { name, args, ret_type, body } = &expr.node {
-                funcs.insert(name.clone(), AstNode::Function { 
+                funcs.insert(name.clone(), (AstNode::Function { 
                     name: name.clone(), 
                     args: args.clone(),
-                    ret_type: ret_type.clone(), 
+                    ret_type: *ret_type, 
                     body: Box::new(AstNode::none) 
-                });
+                }, *ret_type));
             }
 
             ast.push(expr);
@@ -136,6 +136,23 @@ impl FcParser {
                             name: idt_cl, 
                             newval: Box::new(self.parse_expr(0))
                         }
+                    } else if let Tok::Combined(tok1, tok2) = &nexttok.tok.clone() {
+                        if **tok2 == Tok::Equals {
+                            self.consume(); 
+                            let bop = self.match_bop_for_tok(tok1, None).unwrap_or_else(|| {
+                                panic!("{}: cant get binary op for operand {:?}", self.line, tok1)
+                            });
+                            let right = self.parse_expr(0);
+                            let new_val_node = AstNode::BinaryOp { 
+                                op: bop, 
+                                left: Box::new(AstNode::Variable(idt_cl.clone())), 
+                                right: Box::new(right.node) 
+                            };
+                            return AstNode::Reassignment { 
+                                name: idt_cl, 
+                                newval: Box::new(AstRoot::new(new_val_node, self.line))
+                            };
+                        }
                     } else if nexttok.tok == Tok::DollarSign {
                         self.consume();
                         let type_token = self.consume().unwrap_or_else(|| {
@@ -151,16 +168,22 @@ impl FcParser {
                         let ftype = match_ftype(&type_idt).unwrap_or_else(|| {
                             panic!("\n{}: {} is invalid type", line_n, type_idt);
                         });
-    
+
                         return AstNode::VariableCast {
                             name: idt.to_owned(), 
                             target_type: ftype, 
                         }
+                    } else if nexttok.tok == Tok::LPar {
+                        let args_nodes = self.parse_args_call();
+
+                        return AstNode::Call { 
+                            func_name: idt.clone(), 
+                            args: args_nodes 
+                        };
                     }
                 }
                 AstNode::Variable(idt.clone())
             },
-
             Tok::Keyword(Kword::If) => self.parse_if(),
 
             Tok::Keyword(Kword::Let) => {
@@ -223,6 +246,20 @@ impl FcParser {
                 self.parse_func()
             }
 
+            Tok::Keyword(Kword::Return) => {
+                if let Some(t) = self.peek() {
+                    if t.tok == Tok::Semicol {
+                        return AstNode::ReturnVal { val: Box::new(AstRoot 
+                            { node: AstNode::none, line: self.line }) 
+                        };
+                    }
+                }
+
+                let body = self.parse_expr(0);
+
+                AstNode::ReturnVal { val: Box::new(body) }
+            }
+
             Tok::Combined(tok1, tok2) => {
                 let line = self.line;
                 match (*tok1.clone(), *tok2.clone()) {
@@ -282,6 +319,27 @@ impl FcParser {
         };
 
         ftype
+    }
+
+    fn parse_args_call(&mut self) -> Vec<AstRoot> {
+        let mut res: Vec<AstRoot> = Vec::new();
+
+        self.expect(Tok::LPar);
+        while let Some(t) = self.peek() {
+            if t.tok == Tok::RPar {
+                self.consume();
+                break;
+            }
+            if res.len() > 0 {
+                self.expect(Tok::Comma);
+            }
+
+            let newval = self.parse_expr(0);
+
+            res.push(newval);
+        };
+
+        res
     }
 
     fn expect(&mut self, want: Tok) -> &Token {
@@ -429,12 +487,14 @@ impl FcParser {
 
         let args = self.parse_func_args();
 
+        let ret_type = self.parse_func_rettype();
+
         let body = self.parse_expr(0);
 
         AstNode::Function { 
             name: name, 
             args: args, 
-            ret_type: FType::none, 
+            ret_type: ret_type, 
             body: Box::new(body.node)
         }
     }
@@ -463,6 +523,25 @@ impl FcParser {
         };
 
         res
+    }
+
+    fn parse_func_rettype(&mut self) -> FType {
+        if let Some(t) = self.peek() {
+            if t.tok != Tok::Combined(Box::new(Tok::Minus), Box::new(Tok::RAngBr)) {
+                return FType::none;
+            }
+
+            self.consume();
+            let ftype_name = self.expect_idt().unwrap_or_else( ||
+                {panic!("{}: expected typename for return type", self.line);}
+            );
+
+            match_ftype(&ftype_name).unwrap_or_else(|| 
+                {panic!("{}: invalid typename {}", self.line, &ftype_name);}
+            )
+        } else {
+            panic!("{}: unexpected EOF while parsing return type", self.line);
+        }
     }
 
     fn expect_idt(&mut self) -> Option<String> {
@@ -510,9 +589,13 @@ pub enum AstNode {
         body: Box<AstNode>,
     },
 
+    ReturnVal {
+        val: Box<AstRoot>,
+    },
+
     Call {
         func_name: String,
-        args: Vec<AstNode>,
+        args: Vec<AstRoot>,
     },
 
     Intrinsic {
@@ -617,8 +700,8 @@ impl AstRoot {
 
 #[derive(Debug, Clone)]
 pub struct FuncArg {
-    name: String,
-    ftype: FType
+    pub name: String, 
+    pub ftype: FType
 }
 
 impl FuncArg {

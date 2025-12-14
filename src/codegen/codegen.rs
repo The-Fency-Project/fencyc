@@ -33,6 +33,7 @@ pub struct CodeGen {
     labels: HashMap<String, usize>, // usize for sbuf idx
     loop_exits: Vec<String>,
     loop_conts: Vec<String>,
+    stackidxs: Vec<usize>, // saving last stack idx before function
 }
 
 impl CodeGen {
@@ -49,6 +50,7 @@ impl CodeGen {
             labels: HashMap::new(),
             loop_exits: Vec::new(),
             loop_conts: Vec::new(),
+            stackidxs: Vec::new(),
         }
     }
 
@@ -458,11 +460,71 @@ impl CodeGen {
                 self.sbuf.push_str(&format!("jmp @{}\n", loop_label));
             }
             AstNode::Function { name, args, ret_type, body } => {
-                self.sbuf.push_str(&format!("func {}\n", name));
+                self.stackidxs.push(self.predicted_stack.len());
+
+                self.sbuf.push_str(&format!("func {}\n", &name));
+                self.symb_table.enter_scope();
+                self.symb_table.push_funcargs(args.clone());
+                for (idx, val) in args.iter().enumerate() {
+                    self.alloced_regs[idx + 1] = ValDat::Symbol(
+                        FSymbTabData::new(self.symb_table.cur_scope, 
+                        val.name.clone())
+                    ); 
+                }
 
                 self.gen_expr(*body);
 
+                let cur_len = self.predicted_stack.len();
+                let tgt_len = self.stackidxs.pop().unwrap_or_else(|| {panic!("Internal error: can't get stackidx")});
+                // poping stack until we get to prev val
+                for i in (tgt_len..cur_len).rev() {
+                    self.sbuf.push_str("pop r31");
+                }
+
+                self.symb_table.exit_scope();
+                
+                for val in self.alloced_regs.iter_mut().skip(1) {
+                    *val = ValDat::None;
+                }
+            }
+            AstNode::ReturnVal { val } => {
+                if !matches!(val.node, AstNode::none) {
+                    let valdat = self.gen_expr(val.node);
+
+                    self.sbuf.push_str(&format!("movr r0 r{}\n", valdat.alloced_regs[0]));
+                }
                 self.sbuf.push_str(&format!("ret\n"));
+            }
+            AstNode::Call { func_name, args } => {
+                self.sbuf.push_str(&format!("pushall\n")); // TODO: push only used registers for
+                                                            // better perf
+                let mut args_sf = Vec::new(); // args stack frames idxs
+                for (idx, val) in args.iter().enumerate() {
+                    let gdat = self.gen_expr(val.node.clone());
+                    self.sbuf.push_str(&format!("push r{}\n"
+                        , gdat.alloced_regs[0]));
+                    args_sf.push(self.predicted_stack.len());
+                    self.predicted_stack.push(ValDat::ImmVal(Numerical::None));
+                }
+
+                for (idx, sfi) in args_sf.iter().rev().enumerate() {
+                    if *sfi == self.predicted_stack.len().saturating_sub(1) {
+                        self.sbuf.push_str(&format!("pop r{}\n", idx + 1));
+                        self.predicted_stack.pop();
+                    } else {
+                        self.sbuf.push_str(&format!("
+                                            uload r0 {}\n\
+                                            gsf r{} r0\n\
+                                            usf r0 r0\n",
+                        sfi, idx + 1));
+                        self.predicted_stack[*sfi] = ValDat::None;
+                    }
+                }
+                
+                self.sbuf.push_str(&format!("call @{}\n\
+                                            popall\n",
+                    &func_name));
+                res.alloced_regs.push(0);
             }
             other => {
                 panic!("can't generate yet for {:?}", other);
@@ -559,6 +621,9 @@ impl CodeGen {
         for idx in 0..self.alloced_regs.len() {
             if let Some(ValDat::None) = self.alloced_regs.get(idx) {
                 self.unused_regs.push(idx);
+                //let ssub: usize = idx.saturating_sub(1);
+                //println!("alloced r{} for {:#?}, because r{} is {:#?}", idx, val,
+                //    ssub, self.alloced_regs[ssub]);
                 self.alloced_regs[idx] = val;
                 return idx;
             }
@@ -723,6 +788,7 @@ pub struct FSymbTabData {
 }
 
 impl FSymbTabData {
+    /// usize is scope, string is name
     pub fn new(scope: usize, name: String) -> FSymbTabData {
         FSymbTabData { scope: scope, name: name }
     }

@@ -224,6 +224,7 @@ pub fn try_combine(ch: &char, nextch: Option<char>, line: usize) -> Option<Token
         ('^', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::Caret), Box::new(Tok::Equals)), line)),
         ('&', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::Ampersand), Box::new(Tok::Equals)), line)),
         ('|', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::VerBar), Box::new(Tok::Equals)), line)),
+        ('-', Some('>')) => Some(Token::new(Tok::Combined(Box::new(Tok::Minus), Box::new(Tok::RAngBr)), line)),
 
         other => None,
     }
@@ -242,6 +243,7 @@ pub enum Kword {
     Break,
     Continue,
     Func,
+    Return,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -263,6 +265,7 @@ fn match_symb_tok(word: &str) -> Tok {
         "break" => Tok::Keyword(Kword::Break),
         "func" => Tok::Keyword(Kword::Func),
         "continue" => Tok::Keyword(Kword::Continue),
+        "return" => Tok::Keyword(Kword::Return),
         other => Tok::Identifier(other.to_string()),
     }
 }

@@ -128,6 +128,33 @@ impl Logger {
                             let {}: {:?} = ...;",
                         &name, help, rft, &name, rft)
                     }
+                    ErrKind::FuncRedecl(name, first_occ_line) => {
+                        format!("Function {} was already declared \n\
+                            {}: this function was defined at line {} first time \n\
+                            {}: `override` keyword will be available soon",
+                        name, help, first_occ_line, help) 
+                    }
+                    ErrKind::MuchDeclArgs(name, ctr) => {
+                        format!("Function {} was declared with {} arguments, but the limit is 30\n\
+                            {}: for code cleanity and technical reasons, fency doesn't support more than\
+                            30 function arguments",
+                        name, ctr, help)
+                    } 
+                    ErrKind::UndeclaredFunc(name) => {
+                        format!("Call of undeclared function {}\n\
+                            {}: function {} was called/referenced but never declared",
+                        &name, help, &name)
+                    }
+                    ErrKind::MuchArgsPassed(expected, got) => {
+                        format!("Function expected {} arguments, but {} were passed\n\
+                            {}: this function takes {} arguments",
+                        expected, got, help, expected)
+                    }
+                    ErrKind::FuncArgsTypeIncompat(arg_idx, expected, got) => {
+                        format!("{}-th argument has type {:?} but {:?} was expected\n\
+                            {}: this function's {}-th argument is {:?}",
+                        arg_idx, got, expected, help, arg_idx, expected)
+                    }
                 }
             }
             LogLevel::Warning(wk) => {
@@ -170,6 +197,11 @@ pub enum ErrKind {
     ContinueNotLoop,
     NoMain,
     NoneTypeAssign(String, FType), // name, help (rhs type)
+    FuncRedecl(String, usize), // function redeclaration (name, first declaration string)
+    MuchDeclArgs(String, usize), // name, got count
+    UndeclaredFunc(String), // name
+    MuchArgsPassed(usize, usize), // expected, got 
+    FuncArgsTypeIncompat(usize, FType, FType), // arg_idx, expected, got
 }
 
 #[derive(Debug)]

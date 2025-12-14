@@ -1,8 +1,11 @@
 - move halt to main end
 - refactors
 - iterators for `for`
+- `override` for functions
 now:
-- fix for compound operators (e.g. +=) inside for loop declaration
-- functions (arg parsing, arg codegen, arg seman, returns, etc)
+- recursions are broken...
+- seman: check if function has return
+- example file for functions
+- default args values
 - auto type inference for lets
 - type conv for exprs 
