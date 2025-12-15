@@ -66,13 +66,14 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermis
 
     let mut seman = Seman::SemAn::new(fpermissive, func_tab);
     seman.analyze(&ast, &mut logger);
+    let matched_overloads = seman.matched_overloads.clone();
 
     if logger.should_interrupt() {
         logger.finalize();
         exit(1);
     }
 
-    let mut gene = cgen::CodeGen::new(ast);
+    let mut gene = cgen::CodeGen::new(ast, matched_overloads);
     gene.gen_everything();
 
     let temp_fname = format!("{}_temp.vvs", input.replace(".fcy", ""));
@@ -111,5 +112,8 @@ fn assemble(input_name: &str, output_name: &str) {
     };
 
     let out = output.stdout;
+    let err = output.stderr;
+
     println!("{}", String::from_utf8_lossy(&out));
+    println!("{}", String::from_utf8_lossy(&err));
 }

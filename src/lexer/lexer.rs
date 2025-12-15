@@ -244,6 +244,7 @@ pub enum Kword {
     Continue,
     Func,
     Return,
+    Override,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -266,6 +267,7 @@ fn match_symb_tok(word: &str) -> Tok {
         "func" => Tok::Keyword(Kword::Func),
         "continue" => Tok::Keyword(Kword::Continue),
         "return" => Tok::Keyword(Kword::Return),
+        "override" => Tok::Keyword(Kword::Override),
         other => Tok::Identifier(other.to_string()),
     }
 }

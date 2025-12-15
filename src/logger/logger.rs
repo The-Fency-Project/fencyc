@@ -131,7 +131,7 @@ impl Logger {
                     ErrKind::FuncRedecl(name, first_occ_line) => {
                         format!("Function {} was already declared \n\
                             {}: this function was defined at line {} first time \n\
-                            {}: `override` keyword will be available soon",
+                            {}: you may want to use `override` keyword",
                         name, help, first_occ_line, help) 
                     }
                     ErrKind::MuchDeclArgs(name, ctr) => {
@@ -145,15 +145,30 @@ impl Logger {
                             {}: function {} was called/referenced but never declared",
                         &name, help, &name)
                     }
-                    ErrKind::MuchArgsPassed(expected, got) => {
-                        format!("Function expected {} arguments, but {} were passed\n\
-                            {}: this function takes {} arguments",
-                        expected, got, help, expected)
+                    ErrKind::MuchArgsPassed(func_name, expected, got) => {
+                        format!("Function {} expected {} arguments, but {} were passed\n\
+                            {}: none of this function overloads takes {} arguments",
+                        func_name, expected, got, help, got)
                     }
-                    ErrKind::FuncArgsTypeIncompat(arg_idx, expected, got) => {
-                        format!("{}-th argument has type {:?} but {:?} was expected\n\
-                            {}: this function's {}-th argument is {:?}",
-                        arg_idx, got, expected, help, arg_idx, expected)
+                    ErrKind::FuncArgsTypeIncompat(name) => {
+                        // TODO: list overloads for help
+                        format!("None of `{}` function overloads are compatible with given arguments\n\
+                            {}: try converting explicitly, e.g. var$int",
+                        name, help)
+                    }
+                    ErrKind::IncompatReturn(name, expected, got) => {
+                        format!("Function {} has return type {:?} but {:?} were returned\n\
+                            {}: try converting explicitly, e.g. var${:?}",
+                        name, expected, got, help, expected)
+                    }
+                    ErrKind::ReturnOutOfFunc => {
+                        "`return` keyword used outside of function".to_owned()
+                    }
+                    ErrKind::FewMains(count) => {
+                        format!("Function `main()` was declared multiple times\n\
+                            {}: main() function is an entry point and should be declared only once,\
+                            but it was declared {} times",
+                        help, count)
                     }
                 }
             }
@@ -200,8 +215,11 @@ pub enum ErrKind {
     FuncRedecl(String, usize), // function redeclaration (name, first declaration string)
     MuchDeclArgs(String, usize), // name, got count
     UndeclaredFunc(String), // name
-    MuchArgsPassed(usize, usize), // expected, got 
-    FuncArgsTypeIncompat(usize, FType, FType), // arg_idx, expected, got
+    MuchArgsPassed(String, usize, usize), // name, expected, got 
+    FuncArgsTypeIncompat(String), // func name
+    IncompatReturn(String, FType, FType), // func name, expected, got
+    ReturnOutOfFunc,
+    FewMains(usize), // count
 }
 
 #[derive(Debug)]

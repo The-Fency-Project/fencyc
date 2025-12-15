@@ -34,10 +34,12 @@ pub struct CodeGen {
     loop_exits: Vec<String>,
     loop_conts: Vec<String>,
     stackidxs: Vec<usize>, // saving last stack idx before function
+    overload_ctr: usize,
+    matched_overloads: HashMap<usize, usize>, // call idx -> overload idx 
 }
 
 impl CodeGen {
-    pub fn new(ast: Vec<AstRoot>) -> CodeGen {
+    pub fn new(ast: Vec<AstRoot>, mo: HashMap<usize, usize>) -> CodeGen {
         CodeGen { 
             ast: ast, 
             cur_ast: 0,
@@ -51,13 +53,15 @@ impl CodeGen {
             loop_exits: Vec::new(),
             loop_conts: Vec::new(),
             stackidxs: Vec::new(),
+            overload_ctr: 0,
+            matched_overloads: mo,
         }
     }
 
     pub fn gen_everything(&mut self) {
         self.sbuf.push_str("section text\n\
                             .start\n\
-                            call @main\n\
+                            call @main_0\n\
                             halt\n",
                     );
         while let Some(r) = self.ast.get(self.cur_ast) {
@@ -361,6 +365,46 @@ impl CodeGen {
                         self.sbuf.push_str(&notd_instr);
                 }
             }
+            AstNode::ExprCast { expr, target_type } => {
+                let exprgen = self.gen_expr(*expr);
+                let src_reg = exprgen.alloced_regs[0];
+                self.free_reg_not_var(src_reg);
+
+                let dst_reg = self.alloc_reg(ValDat::ImmVal(Numerical::None));
+                res.alloced_regs.push(dst_reg);
+
+                let exprtype = exprgen.expr_type;
+                if exprtype == target_type {
+                    return res;
+                }
+
+                let ftlet_src = CodeGen::ftletter(exprtype);
+                let ftlet_dst = CodeGen::ftletter(target_type);
+                if ftlet_src == ftlet_dst { // additional check bc ftletters can collide
+                    if target_type == FType::bool {
+                        let lnot_instr = format!("lnot r{} r{}\n", dst_reg, src_reg);
+                        let notd_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
+
+                        // in other words: !!var = var (but logically)
+                        self.sbuf.push_str(&lnot_instr);
+                        self.sbuf.push_str(&notd_instr);
+                    }
+                    return res;
+                }
+
+                let instr = format!("{}to{} r{} r{}\n",
+                    ftlet_src, ftlet_dst, dst_reg, src_reg);
+                self.sbuf.push_str(&instr);
+
+                if target_type == FType::bool {
+                        let lnot_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
+                        let notd_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
+
+                        // again but for other cases
+                        self.sbuf.push_str(&lnot_instr);
+                        self.sbuf.push_str(&notd_instr);
+                }
+            }
             AstNode::Intrinsic { intr, val } => {
                 let rdat = self.gen_expr(*val);
                 self.gen_intrinsic(intr, rdat.alloced_regs[0]);
@@ -462,7 +506,7 @@ impl CodeGen {
             AstNode::Function { name, args, ret_type, body } => {
                 self.stackidxs.push(self.predicted_stack.len());
 
-                self.sbuf.push_str(&format!("func {}\n", &name));
+                self.sbuf.push_str(&format!("func {}_{}\n", &name, self.overload_ctr));
                 self.symb_table.enter_scope();
                 self.symb_table.push_funcargs(args.clone());
                 for (idx, val) in args.iter().enumerate() {
@@ -487,6 +531,11 @@ impl CodeGen {
                     *val = ValDat::None;
                 }
             }
+            AstNode::FunctionOverload { func, idx } => {
+                self.overload_ctr = idx;
+                self.gen_expr(*func);
+                self.overload_ctr = 0;
+            }
             AstNode::ReturnVal { val } => {
                 if !matches!(val.node, AstNode::none) {
                     let valdat = self.gen_expr(val.node);
@@ -495,8 +544,7 @@ impl CodeGen {
                 }
                 self.sbuf.push_str(&format!("ret\n"));
             }
-            AstNode::Call { func_name, args } => {
-                self.sbuf.push_str(&format!("pushall\n")); // TODO: push only used registers for
+            AstNode::Call { func_name, args, idx } => {
                                                             // better perf
                 let mut args_sf = Vec::new(); // args stack frames idxs
                 for (idx, val) in args.iter().enumerate() {
@@ -521,11 +569,16 @@ impl CodeGen {
                     }
                 }
                 
-                self.sbuf.push_str(&format!("call @{}\n\
+                self.sbuf.push_str(&"pushall\n"); // TODO: push only used registers for
+                let overload_idx = self.matched_overloads.get(&idx).unwrap_or_else(|| {
+                    panic!("{}: internal error: can't get matched overload", &func_name);
+                });
+                self.sbuf.push_str(&format!("call @{}_{}\n\
                                             popall\n",
-                    &func_name));
+                    &func_name, *overload_idx));
                 res.alloced_regs.push(0);
             }
+
             other => {
                 panic!("can't generate yet for {:?}", other);
             }
@@ -621,9 +674,6 @@ impl CodeGen {
         for idx in 0..self.alloced_regs.len() {
             if let Some(ValDat::None) = self.alloced_regs.get(idx) {
                 self.unused_regs.push(idx);
-                //let ssub: usize = idx.saturating_sub(1);
-                //println!("alloced r{} for {:#?}, because r{} is {:#?}", idx, val,
-                //    ssub, self.alloced_regs[ssub]);
                 self.alloced_regs[idx] = val;
                 return idx;
             }
@@ -654,6 +704,10 @@ impl CodeGen {
         self.alloced_regs[oldest] = val;
         self.unused_regs.push(oldest);
         return oldest;
+    }
+
+    fn alloc_reg_hard(&mut self, idx: usize) {
+
     }
 
     fn free_reg_not_var(&mut self, idx: usize) {

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Binary;
 
-use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, FuncArg, UnaryOp};
+use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, FuncArg, FuncTable, UnaryOp};
 use crate::fcparse::fcparse::AstNode;
 use crate::logger::logger::{ErrKind, LogLevel, Logger, WarnKind};
 use crate::logger::logger as log;
@@ -113,14 +113,17 @@ pub struct SemAn {
     cur_scope: usize,
     permissive: bool,
     parsing_loop: Vec<usize>, // fold level 
-    func_table: HashMap<String, (AstNode, FType)>, // return type
+    func_table: FuncTable, 
     declared_parse: HashMap<String, usize>, // already declared function names and first occurance 
-                                        //lines to check redecl 
+                                        //lines to check redecl
+    parsing_func: Option<(String, usize)>, // currently parsing function name and overload idx
+    pub matched_overloads: HashMap<usize, usize>, // call idx -> overload idx
+    ast_idx: usize, 
 }
 
 impl SemAn {
     /// Inits semantic analyzer struct. Permissive flag for less type checks
-    pub fn new(permissive: bool, functab: HashMap<String, (AstNode, FType)>) -> SemAn {
+    pub fn new(permissive: bool, functab: FuncTable) -> SemAn {
         SemAn { 
             symb_table: SymbolTable::new(),
             cur_scope: 0,
@@ -128,12 +131,20 @@ impl SemAn {
             parsing_loop: Vec::new(),
             func_table: functab,
             declared_parse: HashMap::new(),
+            parsing_func: None,
+            matched_overloads: HashMap::new(),
+            ast_idx: 0,
         }
     }
 
     pub fn analyze(&mut self, ast: &Vec<AstRoot>, logger: &mut Logger) {
-        if self.func_table.get("main").is_none() {
-            logger.emit(LogLevel::Error(ErrKind::NoMain), 0);
+        match self.func_table.get_func("main") {
+            Some(fv) => {
+                if fv.len() > 1 {
+                    logger.emit(LogLevel::Error(ErrKind::FewMains(fv.len())), 0);
+                }
+            }
+            None => {logger.emit(LogLevel::Error(ErrKind::NoMain), 0);},
         }
 
         for root in ast {
@@ -324,8 +335,18 @@ impl SemAn {
                 }
             }
             AstNode::Function { name, args, ret_type, body } => {
+                let mut override_flag = false;
+                if let Some(v) = &self.parsing_func {
+                    self.parsing_func = Some((name.clone(), v.1));
+                    override_flag = true;
+                } else {
+                    self.parsing_func = Some((name.clone(), 0));
+                }
+
                 if let Some(func_line) = self.declared_parse.get(name) {
-                    logger.emit(LogLevel::Error(ErrKind::FuncRedecl(name.clone(), *func_line)), line);
+                    if !override_flag {
+                        logger.emit(LogLevel::Error(ErrKind::FuncRedecl(name.clone(), *func_line)), line);
+                    }
                 } else {
                     self.declared_parse.insert(name.clone(), line);
                 }
@@ -340,41 +361,63 @@ impl SemAn {
                 self.analyze_expr(&AstRoot::new(*body.clone(), line), logger);
 
                 self.symb_table.exit_scope();
+                self.parsing_func = None;
             }
-            AstNode::Call { func_name, args } => {
+            AstNode::FunctionOverload { func, idx } => {
+                self.parsing_func = Some(("".to_owned(), *idx));
+                self.analyze_expr(&AstRoot::new(*func.clone(), line), logger);
+            }
+            AstNode::Call { func_name, args, idx } => {
                 // TODO: add type checks for args
-                let func_entry = match self.func_table.get(func_name) {
+                let func_dat_vec = match self.func_table.get_func(func_name) {
                     Some(v) => v.clone(),
                     None => {
                         logger.emit(LogLevel::Error(ErrKind::UndeclaredFunc(func_name.clone())), line);
                         return exprdat;
                     }
                 };
-                exprdat.ftype = func_entry.1;
-                let func = match func_entry.0 {
-                    AstNode::Function { name, args, ret_type, body } => 
-                        (name, args, ret_type, body),
-                    other => {
-                        panic!("{}: internal error: cant match function", line);
+                for (over_idx, overload) in func_dat_vec.iter().enumerate() {
+                    let mut flag: bool = true;
+                    for (idx, arg) in args.iter().enumerate() {
+                        let argdat = self.analyze_expr(arg, logger); // TODO: get this invariant
+                                                                    // out of loop
+                        if argdat.ftype != overload.args[idx].ftype {
+                            flag = false;
+                            break;
+                        }      
                     }
-                };
-
-                if args.len() > func.1.len() {
-                    logger.emit(LogLevel::Error(ErrKind::MuchArgsPassed(func.1.len(), args.len())), line);
-                    return exprdat;
+                    if flag {
+                        self.matched_overloads.insert(*idx, over_idx);
+                        exprdat.ftype = overload.ret_type;
+                        return exprdat;
+                    }
                 }
 
-
-                for (idx, arg) in args.iter().enumerate() {
-                    let argdat = self.analyze_expr(arg, logger);
-                    if argdat.ftype != func.1[idx].ftype {
-                        logger.emit(LogLevel::Error(ErrKind::FuncArgsTypeIncompat(
-                            idx + 1, func.1[idx].ftype, argdat.ftype
-                        )), line);
-                    }      
+                logger.emit(LogLevel::Error(ErrKind::FuncArgsTypeIncompat(
+                                func_name.clone()
+                            )), line);
                 }
+            AstNode::ReturnVal { val } => {
+                let retval = self.analyze_expr(&*val, logger);
+
+                if let Some(curf) = &self.parsing_func {
+                    if let Some(fv) = self.func_table.get_func(&curf.0) {
+                        let f = &fv[curf.1];
+                        if retval.ftype != f.ret_type {
+                            logger.emit(LogLevel::Error(
+                                ErrKind::IncompatReturn(curf.0.to_owned(), f.ret_type, retval.ftype)
+                            ), line);
+                        }
+                    };
+                } else {
+                    logger.emit(LogLevel::Error(ErrKind::ReturnOutOfFunc), line);
+                }; 
             }
-   
+            AstNode::ExprCast { expr, target_type } => {
+                let expr = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
+
+                exprdat.ftype = *target_type;
+            }
             _ => {}
         }
         exprdat

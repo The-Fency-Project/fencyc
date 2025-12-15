@@ -1,4 +1,7 @@
-v0.3.1:
-- fixed compound operators as `for` loops updaters
-- functions calls, declarations, retuns, etc
-- i dont remember what i did more
+v0.3.2:
+- update to voxvm v8.04!
+- new example: `examples/3_functions.fcy`
+- better seman for functions
+- expressions type casts
+- functions overloads
+- better examples

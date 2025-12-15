@@ -1,11 +1,10 @@
 - move halt to main end
 - refactors
 - iterators for `for`
-- `override` for functions
+- examples for loops (separate)
+- const arrays
 now:
-- recursions are broken...
-- seman: check if function has return
-- example file for functions
-- default args values
+- recursive fibbonaci are kinda broken (?)
+- default args values (?)
+- match func overload based on ret type
 - auto type inference for lets
-- type conv for exprs 

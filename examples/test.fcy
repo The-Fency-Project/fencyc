@@ -1,12 +1,29 @@
 func main() {
-    let a1: int = 4;
-    let b1: int = 3;
+    let b: float = 3.0;
+    let a: int = (b + 2.0)$int;
+    let res_fact: int = factorial(5);
+    printintrin res_fact;
 
-    let res: int = add(a1, b1);
-    printintrin res;
+    let add_ints: int = add(1, 3);
+    printintrin add_ints;
+
+    let add_floats: float = add(10.5, 3.25);
+    printintrin add_floats;
+
     return;
 }
 
+func factorial(n: int) -> int {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
 func add(a: int, b: int) -> int {
+    return a + b;
+}
+
+override func add(a: float, b: float) -> float {
     return a + b;
 }

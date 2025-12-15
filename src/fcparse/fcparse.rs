@@ -6,30 +6,36 @@ pub struct FcParser {
     tokens: Vec<Token>,
     pos: usize,
     line: usize, // not for all cases
+    overload_ctr: HashMap<String, usize>,
+    call_ctr: usize,
 }
 
 /// Parser based on Pratt parsing algorithm
 impl FcParser {
     pub fn new(toks: Vec<Token>) -> FcParser {
-        FcParser { tokens: toks, pos: 0, line: 0 }
+        FcParser { 
+            tokens: toks, 
+            pos: 0, line: 0, 
+            overload_ctr: HashMap::new(),
+            call_ctr: 0,
+        }
     }
 
     /// Returns AST (0) and Function table (1) with no function bodies
-    pub fn parse_everything(&mut self) -> (Vec<AstRoot>, HashMap<String, (AstNode, FType)>) {
+    pub fn parse_everything(&mut self) -> (Vec<AstRoot>, FuncTable) {
         let mut ast: Vec<AstRoot> = Vec::new();
-        let mut funcs: HashMap<String, (AstNode, FType)> = HashMap::new();
+        let mut funcs: FuncTable  = FuncTable::new();
 
         while self.peek().is_some() {
             let expr = self.parse_expr(0);
 
             if let AstNode::Function { name, args, ret_type, body } = &expr.node {
-                funcs.insert(name.clone(), (AstNode::Function { 
-                    name: name.clone(), 
-                    args: args.clone(),
-                    ret_type: *ret_type, 
-                    body: Box::new(AstNode::none) 
-                }, *ret_type));
-            }
+                funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type));
+            } else if let AstNode::FunctionOverload { func, idx } = &expr.node {
+                if let AstNode::Function { name, args, ret_type, body } = &**func {
+                    funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type));
+                };
+            };
 
             ast.push(expr);
         }
@@ -117,6 +123,22 @@ impl FcParser {
             Tok::LPar => {
                 let expr = self.parse_expr(0);
                 self.expect(Tok::RPar);
+                if let Some(t) = self.peek() {
+                    if t.tok == Tok::DollarSign {
+                        self.consume();
+                        let typename = self.expect_idt().unwrap_or_else(|| {
+                            panic!("{}: expected typename", self.line);
+                        }); 
+                        let tgt_ftype = match_ftype(&typename).unwrap_or_else(|| {
+                            panic!("{}: unknown type {}", self.line, &typename);
+                        });
+
+                        return AstNode::ExprCast { 
+                            expr: Box::new(expr.node), 
+                            target_type: tgt_ftype 
+                        };
+                    }
+                };
                 expr.node
             },
 
@@ -175,10 +197,12 @@ impl FcParser {
                         }
                     } else if nexttok.tok == Tok::LPar {
                         let args_nodes = self.parse_args_call();
+                        self.call_ctr += 1;
 
                         return AstNode::Call { 
                             func_name: idt.clone(), 
-                            args: args_nodes 
+                            args: args_nodes,
+                            idx: self.call_ctr - 1,
                         };
                     }
                 }
@@ -243,7 +267,24 @@ impl FcParser {
             }
 
             Tok::Keyword(Kword::Func) => {
-                self.parse_func()
+                let f = self.parse_func();
+                self.overload_ctr.insert(f.1, 0);
+                f.0
+            }
+
+            Tok::Keyword(Kword::Override) => {
+                self.consume();
+                let f = self.parse_func();
+                let idx = {
+                    let h = self.overload_ctr.get_mut(&f.1).unwrap();
+                    *h += 1;
+                    *h
+                };
+                
+                AstNode::FunctionOverload { 
+                    func: Box::new(f.0),
+                    idx: idx,
+                }
             }
 
             Tok::Keyword(Kword::Return) => {
@@ -480,7 +521,7 @@ impl FcParser {
         }
     }
 
-    fn parse_func(&mut self) -> AstNode {
+    fn parse_func(&mut self) -> (AstNode, String) {
         let name = self.expect_idt().unwrap_or_else(|| {
             panic!("{}: expected function name identifier", self.line)
         }); 
@@ -491,12 +532,12 @@ impl FcParser {
 
         let body = self.parse_expr(0);
 
-        AstNode::Function { 
-            name: name, 
+        (AstNode::Function { 
+            name: name.clone(), 
             args: args, 
             ret_type: ret_type, 
             body: Box::new(body.node)
-        }
+        }, name)
     }
 
     fn parse_func_args(&mut self) -> Vec<FuncArg> {
@@ -589,6 +630,11 @@ pub enum AstNode {
         body: Box<AstNode>,
     },
 
+    FunctionOverload {
+        func: Box<AstNode>,
+        idx: usize, 
+    },
+
     ReturnVal {
         val: Box<AstRoot>,
     },
@@ -596,6 +642,7 @@ pub enum AstNode {
     Call {
         func_name: String,
         args: Vec<AstRoot>,
+        idx: usize, // call id
     },
 
     Intrinsic {
@@ -616,6 +663,11 @@ pub enum AstNode {
 
     VariableCast {
         name: String,
+        target_type: FType
+    },
+
+    ExprCast {
+        expr: Box<AstNode>,
         target_type: FType
     },
 
@@ -701,7 +753,7 @@ impl AstRoot {
 #[derive(Debug, Clone)]
 pub struct FuncArg {
     pub name: String, 
-    pub ftype: FType
+pub ftype: FType
 }
 
 impl FuncArg {
@@ -710,5 +762,54 @@ impl FuncArg {
             name: n, 
             ftype: ft 
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FuncDat {
+    pub name: String,
+    pub args: Vec<FuncArg>,
+    pub ret_type: FType,
+}
+
+impl FuncDat {
+    pub fn new(nm: String, ar: Vec<FuncArg>, ret: FType) -> FuncDat {
+        FuncDat { name: nm, 
+            args: ar, 
+            ret_type: ret 
+        }
+    }
+
+    pub fn new_from_astn(node: AstNode) -> Option<FuncDat> {
+        let res = match node {
+            AstNode::Function { name, args, ret_type, body } => {
+                Some(FuncDat::new(name, args, ret_type))
+            }
+            _ => None,
+        };
+        res
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FuncTable {
+    ft: HashMap<String, Vec<FuncDat>>
+}
+
+impl FuncTable {
+    pub fn new() -> FuncTable {
+        FuncTable { ft: HashMap::new() }
+    }
+
+    pub fn push_func(&mut self, fndat: FuncDat) {
+        if let Some(f) = self.ft.get_mut(&fndat.name) {
+            f.push(fndat);
+        } else {
+            self.ft.insert(fndat.name.clone(), vec![fndat]);
+        }
+    }
+
+    pub fn get_func(&mut self, name: &str) -> Option<&Vec<FuncDat>> {
+        self.ft.get(name)
     }
 }
