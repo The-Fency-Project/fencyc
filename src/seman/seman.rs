@@ -28,7 +28,8 @@ pub enum FType {
     strconst,
     dsptr,
     heapptr,
-    none
+    none, // No ftype! 
+    nil, // real voxvm thing!
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -117,8 +118,8 @@ pub struct SemAn {
     declared_parse: HashMap<String, usize>, // already declared function names and first occurance 
                                         //lines to check redecl
     parsing_func: Option<(String, usize)>, // currently parsing function name and overload idx
-    pub matched_overloads: HashMap<usize, usize>, // call idx -> overload idx
-    ast_idx: usize, 
+    pub matched_overloads: HashMap<usize, usize>, // call idx -> overload idx 
+    expect_type: FType, // for overloads matching and generics (in future)
 }
 
 impl SemAn {
@@ -133,7 +134,7 @@ impl SemAn {
             declared_parse: HashMap::new(),
             parsing_func: None,
             matched_overloads: HashMap::new(),
-            ast_idx: 0,
+            expect_type: FType::none,
         }
     }
 
@@ -157,9 +158,11 @@ impl SemAn {
         let line = node.line;
         match &node.node {
             AstNode::Assignment { name, val, ft } => {
+                self.expect_type = *ft;
                 let rightdat = self.analyze_expr(
                     &AstRoot::new(*val.clone(), line), logger
                 );
+                self.expect_type = FType::none;
                 
                 if self.symb_table.get(name.clone()).is_some() {
                     logger.emit(LogLevel::Error(ErrKind::Redeclaration(name.to_owned())), line);
@@ -186,6 +189,9 @@ impl SemAn {
             }
             AstNode::boolVal(bv) => {
                 exprdat.ftype = FType::bool;
+            }
+            AstNode::StringLiteral(s) => {
+                exprdat.ftype = FType::strconst;
             }
             AstNode::BinaryOp { op, left, right } => {
                 let leftd = self.analyze_expr(
@@ -281,9 +287,13 @@ impl SemAn {
             }
             AstNode::VariableCast { name, target_type } => {
                 // TODO: add some meaningful type checks here
-                if self.symb_table.get(name.clone()).is_none() {
+                if let Some(var) = self.symb_table.get(name.clone()) {
+                    if var.1.ftype == *target_type {
+                        logger.emit(LogLevel::Warning(WarnKind::ConvSame(var.1.ftype)), line);
+                    }
+                } else {
                     logger.emit(LogLevel::Error(ErrKind::UndeclaredVar(name.to_owned())), line);
-                };
+                }
 
                 exprdat.ftype = *target_type;
             }
@@ -368,7 +378,6 @@ impl SemAn {
                 self.analyze_expr(&AstRoot::new(*func.clone(), line), logger);
             }
             AstNode::Call { func_name, args, idx } => {
-                // TODO: add type checks for args
                 let func_dat_vec = match self.func_table.get_func(func_name) {
                     Some(v) => v.clone(),
                     None => {
@@ -384,7 +393,12 @@ impl SemAn {
                         if argdat.ftype != overload.args[idx].ftype {
                             flag = false;
                             break;
-                        }      
+                        }     
+                        if self.expect_type != FType::none && 
+                            self.expect_type != overload.ret_type {
+                            flag = false;
+                            break;
+                        }
                     }
                     if flag {
                         self.matched_overloads.insert(*idx, over_idx);
@@ -415,6 +429,9 @@ impl SemAn {
             }
             AstNode::ExprCast { expr, target_type } => {
                 let expr = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
+                if expr.ftype == *target_type {
+                    logger.emit(LogLevel::Warning(WarnKind::ConvSame(expr.ftype)), line);
+                }
 
                 exprdat.ftype = *target_type;
             }

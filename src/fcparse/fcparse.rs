@@ -93,6 +93,7 @@ impl FcParser {
             Tok::Int(iv) => AstNode::Int(*iv),
             Tok::Uint(uv) => AstNode::Uint(*uv),
             Tok::Float(fv) => AstNode::Float(*fv),
+            Tok::strlit(s) => AstNode::StringLiteral(s.to_owned()),
 
             Tok::Keyword(Kword::True) => AstNode::boolVal(true),
             Tok::Keyword(Kword::False) => AstNode::boolVal(false),
@@ -732,6 +733,7 @@ pub fn match_ftype(lit: &str) -> Option<FType> {
         "int" => Some(FType::int),
         "float" => Some(FType::float),
         "bool" => Some(FType::bool),
+        "str" => Some(FType::strconst),
         other => None,
         // TODO: add support for objects and str
     }

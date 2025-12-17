@@ -140,6 +140,7 @@ impl CodeGen {
             AstNode::BinaryOp { op, left, right } => {
                 let leftdat = self.gen_expr(*left);
                 let rightdat = self.gen_expr(*right);
+                res.expr_type = leftdat.expr_type; // assuming semantic analyzer already checked it 
 
                 let mut instr = String::new();
                 let ftlet = CodeGen::ftletter(leftdat.expr_type);
@@ -411,6 +412,7 @@ impl CodeGen {
             }
             AstNode::UnaryOp { op, expr } => {
                 let rdat = self.gen_expr(*expr);
+                res.expr_type = rdat.expr_type;
 
                 let dst_reg = rdat.alloced_regs[0];
 

@@ -7,6 +7,7 @@ pub enum Tok {
     Int(i64),
     Float(f64),
     Uint(u64),
+    strlit(String),
     Plus,
     Minus,
     Star,
@@ -39,6 +40,9 @@ pub enum Tok {
     Dot,
     Comma,
     Percent, // %
+    LBr,
+    RBr,
+    DQuote, // "
     Combined(Box<Tok>, Box<Tok>),
 }
 
@@ -127,6 +131,19 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                     }
                 }
             },
+            '"' => {
+                chars.next();
+                let mut res_str = String::new();
+                while let Some(ch) = chars.peek() {
+                    if *ch == '"' {break;}
+                    res_str.push(*ch);
+                    chars.next();
+                };
+                res.push(Token::new(Tok::strlit(res_str), line));
+                chars.next();
+            }
+            '[' => {res.push(Token::new(Tok::LBr, line)); chars.next();},
+            ']' => {res.push(Token::new(Tok::RBr, line)); chars.next();},
             ',' => {res.push(Token::new(Tok::Comma, line)); chars.next();},
             '(' => {res.push(Token::new(Tok::LPar, line)); chars.next();},
             ')' => {res.push(Token::new(Tok::RPar, line)); chars.next();},

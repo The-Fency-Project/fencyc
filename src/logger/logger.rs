@@ -184,6 +184,12 @@ impl Logger {
                             {}: consider explicitly converting, e.g. var$bool or var == 1\n",
                         help)
                     }
+                    WarnKind::ConvSame(ft) => {
+                        format!("Expression was converted to the same type\n\
+                            expression already has type {:?}\n\
+                            {}: remove type convertion",
+                        ft, help)
+                    }
                 }
             }
         }
@@ -226,4 +232,5 @@ pub enum ErrKind {
 pub enum WarnKind {
     IfStmtNotBool,
     WhileLoopNotBool,
+    ConvSame(FType),
 }

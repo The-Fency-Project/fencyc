@@ -1,7 +1,6 @@
-v0.3.2:
-- update to voxvm v8.04!
-- new example: `examples/3_functions.fcy`
-- better seman for functions
-- expressions type casts
-- functions overloads
-- better examples
+v0.4.0:
+- update README
+- new warning (if converted to the same type)
+- func overloads are now also being matched by return type
+- fix for unary op codegen
+- strlit lexing/parsing
