@@ -1,6 +1,6 @@
-use std::{collections::HashMap, fs::File, io::{self, BufRead, BufReader}};
+use std::{collections::HashMap, fs::File, io::{self, BufRead, BufReader}, mem};
 
-use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::FType};
+use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::{ftype_to_idx, FType}};
 
 pub struct FcParser {
     tokens: Vec<Token>,
@@ -8,6 +8,8 @@ pub struct FcParser {
     line: usize, // not for all cases
     overload_ctr: HashMap<String, usize>,
     call_ctr: usize,
+    allowed_tok: Option<Tok>, // additional tok allowed to appear and break parse 
+                                // e.g. comma (further)
 }
 
 /// Parser based on Pratt parsing algorithm
@@ -18,6 +20,7 @@ impl FcParser {
             pos: 0, line: 0, 
             overload_ctr: HashMap::new(),
             call_ctr: 0,
+            allowed_tok: None,
         }
     }
 
@@ -79,7 +82,7 @@ impl FcParser {
                 left: Box::new(left),
                 right: Box::new(right.node),
             };
-    } 
+        } 
 
         AstRoot::new(left, line_n)
     }
@@ -132,7 +135,7 @@ impl FcParser {
                         }); 
                         let tgt_ftype = match_ftype(&typename).unwrap_or_else(|| {
                             panic!("{}: unknown type {}", self.line, &typename);
-                        });
+});
 
                         return AstNode::ExprCast { 
                             expr: Box::new(expr.node), 
@@ -149,6 +152,25 @@ impl FcParser {
                 op: UnaryOp::LogicalNot, 
                 expr: Box::new(self.parse_expr(255).node) 
             },
+
+            Tok::LBr => {
+                let mut vals: Vec<AstNode> = Vec::new();
+                self.allowed_tok = Some(Tok::Comma);
+                while let Some(t) = self.peek() {
+                    if t.tok == Tok::RBr {
+                        self.consume();
+                        break;
+                    }
+                    vals.push(self.parse_expr(0).node);
+                };
+                self.allowed_tok = None;
+                let typename = self.expect_idt().unwrap_or_else(|| {
+                    panic!("{}: expected typename after array end (e.g. [1, 2]int)", self.line);
+                }); 
+                let ft = match_ftype(&typename).unwrap_or(FType::none);
+
+                AstNode::Array(ft, vals)
+            }
 
             Tok::Identifier(idt) => {
                 let idt_cl = idt.clone();
@@ -205,6 +227,14 @@ impl FcParser {
                             args: args_nodes,
                             idx: self.call_ctr - 1,
                         };
+                    } else if nexttok.tok == Tok::LBr {
+                        self.consume();
+                        self.allowed_tok = Some(Tok::RBr);
+                        let idx_ast = self.parse_expr(0);
+                        self.allowed_tok = None;
+                        self.expect(Tok::RBr);
+
+                        return AstNode::ArrayElem(idt.clone(), Box::new(idx_ast));
                     }
                 }
                 AstNode::Variable(idt.clone())
@@ -338,6 +368,9 @@ impl FcParser {
             }
 
             other => {
+                if Some(other) == self.allowed_tok.as_ref() {
+                    return self.parse_expr(255).node;
+                }
                 panic!("{}: FCparse unexpected token `{:?}`", line_n, other);
             }
         }
@@ -352,6 +385,15 @@ impl FcParser {
         };
         let ftype_name = match &ftype_tok.tok {
             Tok::Identifier(nm) => nm,
+            Tok::LBr => {
+                let ftn = self.expect_idt();
+                if let Some(name) = ftn {
+                    self.expect(Tok::RBr);
+                    let ft = match_ftype(&name).unwrap_or_else(|| {panic!("{}: unknown type {}", self.line, name)});
+                    ftype = FType::Array(ftype_to_idx(&ft), 0);
+                } 
+                return ftype;
+            }
             _ => {
                     return ftype;
                 }
@@ -389,6 +431,19 @@ impl FcParser {
             Some(t) if t.tok == want => {t},
             Some(t) => panic!("{}: expected {:?}, got {:?}", t.line, want, t.tok),
             None => panic!("expected {:?}, found EOF", want),
+        }
+    }
+
+    fn expect_uint(&mut self) -> (Token, u64) {
+        let line = self.line;
+        if let Some(t) = self.consume() {
+            let val: u64 = match &t.tok {
+                Tok::Uint(uv) => *uv,
+                other => {panic!("{}: expected uint, found {:?}", line, other);}
+            };
+            return (t.clone(), val);
+        } else {
+            panic!("unexpected EOF at {}", self.line);
         }
     }
 
@@ -599,7 +654,8 @@ impl FcParser {
 
 #[derive(Debug, Clone)]
 pub enum AstNode {
-    none, 
+    none,
+    NoParse, // internal astnode to stop parsing expr
 
     Int(i64),
     Float(f64),
@@ -607,7 +663,8 @@ pub enum AstNode {
     boolVal(bool),
     StringLiteral(String),
     Variable(String),
-    Identifier(String),
+    Array(FType, Vec<AstNode>),
+    ArrayElem(String, Box<AstRoot>), // arrname, idx val
 
     CodeBlock {
         exprs: Vec<AstRoot>,

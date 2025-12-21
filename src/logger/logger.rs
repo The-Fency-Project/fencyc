@@ -170,6 +170,20 @@ impl Logger {
                             but it was declared {} times",
                         help, count)
                     }
+                    ErrKind::IncompatArrType(expected, got, idx) => {
+                        format!("Array has type {:?}[] but {}th element is {:?}\n\
+                            {}: consider explicitly converting where possible, e.g. (expr)${:?}",
+                        expected, idx, got, help, expected)
+                    }
+                    ErrKind::ArrIdxType(arr_name, got) => {
+                        format!("Array {} was indexed with type {:?}\n\
+                            arrays has to be indexed with uint values\n\
+                            {}: consider converting explicitly, e.g. {}[(expr)$uint]",
+                        arr_name, got, help, arr_name)
+                    }
+                    ErrKind::Internal(e) => {
+                        format!("Internal error: {}", e)
+                    }
                 }
             }
             LogLevel::Warning(wk) => {
@@ -226,6 +240,9 @@ pub enum ErrKind {
     IncompatReturn(String, FType, FType), // func name, expected, got
     ReturnOutOfFunc,
     FewMains(usize), // count
+    IncompatArrType(FType, FType, usize), // expected, got, idx
+    ArrIdxType(String, FType), // name, got 
+    Internal(String), // msg
 }
 
 #[derive(Debug)]

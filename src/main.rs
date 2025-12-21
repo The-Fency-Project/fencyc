@@ -96,24 +96,26 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermis
 }
 
 fn assemble(input_name: &str, output_name: &str) {
-    let com = format!("voxvm --vas={} --vas-out={}", input_name, output_name);
-
-    let output = if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .args(["/C", &com])
-            .output()
-            .expect("failed to execute voxasm process")
-    } else {
-        Command::new("sh")
-            .arg("-c")
-            .arg(&com)
-            .output()
-            .expect("failed to execute voxasm process")
-    };
-
-    let out = output.stdout;
-    let err = output.stderr;
-
-    println!("{}", String::from_utf8_lossy(&out));
-    println!("{}", String::from_utf8_lossy(&err));
+    //let com = format!("voxvm --vas={} --vas-out={}", input_name, output_name);
+    //
+    //let output = if cfg!(target_os = "windows") {
+    //    Command::new("cmd")
+    //        .args(["/C", &com])
+    //        .output()
+    //        .expect("failed to execute voxasm process")
+    //} else {
+    //    Command::new("sh")
+    //        .arg("-c")
+    //        .arg(&com)
+    //        .output()
+    //        .expect("failed to execute voxasm process")
+    //};
+    //
+    //let out = output.stdout;
+    //let err = output.stderr;
+    //
+    //println!("{}", String::from_utf8_lossy(&out));
+    //println!("{}", String::from_utf8_lossy(&err));
+    let mut asm = voxvm::VoxAssembly::new(input_name.to_owned(), output_name.to_owned());
+    asm.assemble();
 }

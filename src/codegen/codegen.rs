@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::format};
 
-use crate::{fcparse::fcparse::{self as fparse, AstRoot, CmpOp}, lexer::lexer::Intrinsic, seman::seman::{self as sem, FSymbol, FType, SemAn, SymbolTable, VarPosition}};// AstNode;
+use crate::{fcparse::fcparse::{self as fparse, AstRoot, CmpOp}, lexer::lexer::Intrinsic, seman::seman::{self as sem, idx_to_ftype, FSymbol, FType, SemAn, SymbolTable, VarPosition}};// AstNode;
 use fparse::AstNode;
 
 #[derive(Debug, Clone)]
@@ -25,6 +25,7 @@ pub struct CodeGen {
     ast: Vec<AstRoot>,
     cur_ast: usize,
     pub sbuf: String,
+    pub dsbuf: String,
     alloced_regs: Vec<ValDat>,
     unused_regs: Vec<usize>, // which are unused for some time (lru)
     pub symb_table: SymbolTable,
@@ -36,6 +37,7 @@ pub struct CodeGen {
     stackidxs: Vec<usize>, // saving last stack idx before function
     overload_ctr: usize,
     matched_overloads: HashMap<usize, usize>, // call idx -> overload idx 
+    array_ctr: usize,
 }
 
 impl CodeGen {
@@ -44,6 +46,7 @@ impl CodeGen {
             ast: ast, 
             cur_ast: 0,
             sbuf: String::new(),
+            dsbuf: String::new(),
             alloced_regs: vec![ValDat::None; 32],
             unused_regs: Vec::new(),
             symb_table: SymbolTable::new(),
@@ -55,6 +58,7 @@ impl CodeGen {
             stackidxs: Vec::new(),
             overload_ctr: 0,
             matched_overloads: mo,
+            array_ctr: 0,
         }
     }
 
@@ -68,6 +72,9 @@ impl CodeGen {
             let gdat = self.gen_expr(r.clone().node);
             self.cur_ast += 1;
         }
+        
+        self.sbuf.push_str("section data\n");
+        self.sbuf.push_str(&self.dsbuf);
     }
 
     pub fn write_file(&mut self, fname: &str) -> Result<(), std::io::Error> {
@@ -83,8 +90,29 @@ impl CodeGen {
         let mut res = GenData::new(Vec::new());
         match node {
             AstNode::Assignment { name, val, ft } => {
+                let arr_idx = self.array_ctr;
+
                 let rightdat = self.gen_expr(*val);  
                 
+                if let FType::Array(ft_memb, _) = ft {
+                        let mut symb = FSymbol::new(name.clone(), sem::VarPosition::Register(0), ft);
+                        symb.dsname = Some(format!("array{}", arr_idx));
+                        let rdst = self.alloc_reg(ValDat::Symbol(FSymbTabData::new(
+                            self.symb_table.cur_scope,
+                            name.clone()
+                        )));
+                        symb.cur_reg = VarPosition::Register(rdst);
+
+                        self.sbuf.push_str(&format!(
+                            "dslea r{} 9 array{}\n",
+                            rdst, arr_idx
+                        ));
+
+                        res.alloced_regs.push(rdst);
+                        self.symb_table.newsymb(symb);
+                        return res;
+                }
+
                 let mut symb = FSymbol::new(
                     name.clone(), sem::VarPosition::Register(0), ft
                 );
@@ -580,7 +608,93 @@ impl CodeGen {
                     &func_name, *overload_idx));
                 res.alloced_regs.push(0);
             }
+            AstNode::Array(ft, nodes) => {
+                if nodes.len() == 0 {
+                    panic!("codegen error: array couldnt have 0 size");
+                }
 
+                let mut decl = format!("array{} {:?}[{}] [", self.array_ctr, ft, nodes.len());
+
+                for (idx, node) in nodes.iter().enumerate() {
+                    if idx > 0 {
+                        decl.push_str(", ");
+                    }
+                    match node {
+                        AstNode::Uint(uv) => {
+                            decl.push_str(&format!("{}", uv));
+                        }
+                        AstNode::Int(iv) => {
+                            decl.push_str(&format!("{}", iv));
+                        }
+                        AstNode::Float(fv) => {
+                            decl.push_str(&format!("{:#?}", fv));
+                        }
+                        other => {
+                            panic!("Codegen error: invalid array member {:#?}", other);
+                        }
+                    }
+                }
+
+                decl.push_str("]\n");
+                self.dsbuf.push_str(&decl);
+                self.array_ctr += 1;
+            }
+            // the code below is even dirtier and defly need some refactor
+            AstNode::ArrayElem(arr_name, idx_ast) => {
+                let mut idx_val: Option<usize> = None;
+                let mut dst_reg: usize = 33;
+                let idx_gendat: Option<GenData> = match &idx_ast.node {
+                    AstNode::Uint(uv) => {
+                        dst_reg = self.alloc_reg(ValDat::ImmVal(Numerical::None));
+                        idx_val = Some(*uv as usize);
+                        None
+                    } 
+                    other => {
+                        let gd = self.gen_expr(other.clone());
+                        dst_reg = gd.alloced_regs[0];
+                        Some(gd)
+                    }
+                };
+
+                let mut arrn_ds = String::new(); // ds name 
+                let mut elem_size: usize = 0;
+                if let Some(entry) = self.symb_table.get(arr_name.clone()) {
+                    arrn_ds = match &entry.1.dsname {
+                        Some(v) => v.clone(),
+                        None => panic!("Internal error: can't get ds name for symbol {}", arr_name)
+                    };
+                    let el_type_idx = match entry.1.ftype {
+                        FType::Array(fti, _) => fti,
+                        other => panic!("Unexpected type {:?} for {}", other, arr_name),
+                    };
+                    let el_type = idx_to_ftype(el_type_idx).unwrap_or_else(|| {
+                        panic!("Internal error: no type for {}", el_type_idx);
+                    });
+                    elem_size = CodeGen::match_ftype_size(el_type);
+
+                } else {
+                    unreachable!("Internal error: no array {} in codegen symbol table",
+                        arr_name);
+                }
+
+                let instr = match (idx_val, idx_gendat) { 
+                    (Some(idx), None) => format!("dsload r{} {} {}\n",
+                            dst_reg, arrn_ds, idx * elem_size),
+                    (None, Some(gd)) => {
+                        let size_reg = self.alloc_reg(ValDat::ImmVal(Numerical::uint(elem_size as u64)));
+                        format!("uload r{} {}\n\
+                            umul r{} r{}\n\
+                            dsrload r{} r{} {}\n",
+                        size_reg, elem_size, dst_reg, size_reg,
+                        dst_reg, dst_reg, arrn_ds)
+                    },
+                    other => unreachable!("Internal error: got {:?} in arr_el",
+                        other),
+                };
+
+                self.sbuf.push_str(&instr);
+                res.alloced_regs.push(dst_reg);
+            }           
             other => {
                 panic!("can't generate yet for {:?}", other);
             }
@@ -630,6 +744,13 @@ impl CodeGen {
             }
         }
     }
+
+    /// This function will currently just return 8. In future, could be extended
+    pub fn match_ftype_size(ft: FType) -> usize {
+        match ft {
+            _ => 8,
+        }
+    } 
 
     pub fn match_jmp_op(cmp_op: CmpOp, label_name: &str) -> String {
         match cmp_op {
@@ -706,10 +827,6 @@ impl CodeGen {
         self.alloced_regs[oldest] = val;
         self.unused_regs.push(oldest);
         return oldest;
-    }
-
-    fn alloc_reg_hard(&mut self, idx: usize) {
-
     }
 
     fn free_reg_not_var(&mut self, idx: usize) {

@@ -1,23 +1,7 @@
 func main() {
-    let warning_test: float = (1.5)$float;
-    printintrin warning_test;
-
-    let to_uint: uint = conv(-2.5);
-    printintrin to_uint; // expected: 2 
-
-    let to_int: int = conv(-2.5);
-    printintrin to_int; // expected: -2 
-
+    let arr: [int] = [1, 3, 5]int;
+    for let i: uint = 0u in i < 3u; i += 1u {
+        printintrin arr[i];
+    } 
     return;
-}
-
-func conv(a: float) -> uint {
-    if a < 0.0 {
-        return (-a)$uint;
-    }
-    return a$uint;
-}
-
-override func conv(a: float) -> int {
-    return a$int;
 }

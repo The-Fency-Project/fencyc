@@ -11,26 +11,61 @@ pub struct FSymbol {
     pub name: String,
     pub cur_reg: VarPosition,
     pub ftype: FType, 
+    pub dsname: Option<String>,
 }
 
 impl FSymbol {
     pub fn new(n: String, pos: VarPosition, ft: FType) -> FSymbol {
-        FSymbol { name: n, cur_reg: pos, ftype: ft }
+        FSymbol { name: n, cur_reg: pos, ftype: ft, dsname: None }
     }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(usize)]
 pub enum FType {
-    uint,
-    int,
-    float,
-    bool,
-    strconst,
-    dsptr,
-    heapptr,
-    none, // No ftype! 
-    nil, // real voxvm thing!
+    uint = 0,
+    int = 1,
+    float = 2,
+    bool = 3,
+    strconst = 4,
+    dsptr = 5,
+    heapptr = 6 ,
+    none = 7, // No ftype! 
+    nil = 8, // real voxvm thing!
+    Array(usize, usize) = 9, // typeid, count
 }
+
+pub fn idx_to_ftype(idx: usize) -> Option<FType> {
+    match idx {
+        0 => Some(FType::uint),
+        1 => Some(FType::int),
+        2 => Some(FType::float),
+        3 => Some(FType::bool),
+        4 => Some(FType::strconst),
+        5 => Some(FType::dsptr),
+        6 => Some(FType::heapptr),
+        7 => Some(FType::none), // No ftype! 
+        8 => Some(FType::nil), // real voxvm thing!
+        _ => None,
+    }
+}
+
+/// Rust's ADTs implementation is bullshit. Thus fency should have `enum as uint` 
+/// from the box
+pub fn ftype_to_idx(ft: &FType) -> usize {
+    match ft {
+        FType::uint => 0,
+        FType::int => 1,
+        FType::float => 2,
+        FType::bool => 3,
+        FType::strconst => 4,
+        FType::dsptr => 5,
+        FType::heapptr => 6,
+        FType::none => 7,
+        FType::nil => 8,
+        FType::Array(_, _) => 9,         
+    }
+} 
 
 #[derive(Debug, Clone, Copy)]
 pub enum VarPosition {
@@ -171,8 +206,18 @@ impl SemAn {
                 if *ft == FType::none {
                     logger.emit(LogLevel::Error(ErrKind::NoneTypeAssign(name.clone(), rightdat.ftype)), line);
                 }
-                if *ft != rightdat.ftype {
-                    logger.emit(LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)), line);
+
+                match (*ft, rightdat.ftype) {
+                    (FType::Array(fti1, _), FType::Array(fti2, _)) => {
+                        if fti1 != fti2 {
+                            logger.emit(LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)), line);
+                        } 
+                    }
+                    (other1, other2) => {
+                        if other1 != other2 {
+                            logger.emit(LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)), line);
+                        }
+                    }
                 }
 
                 self.symb_table.newsymb(FSymbol::new(name.to_owned(), VarPosition::None, *ft));
@@ -434,6 +479,48 @@ impl SemAn {
                 }
 
                 exprdat.ftype = *target_type;
+            }
+            AstNode::Array(ft, nodes) => {
+                for (idx, node) in nodes.iter().enumerate() {
+                    let ndat = self.analyze_expr(&AstRoot::new(node.clone(), line), logger);
+                    if ndat.ftype != *ft {
+                        logger.emit(LogLevel::Error(
+                            ErrKind::IncompatArrType(*ft, ndat.ftype, idx)
+                        ), line); 
+                    }
+                }
+                let ft_idx = ftype_to_idx(ft);
+
+                exprdat.ftype = FType::Array(ft_idx, nodes.len());
+            }
+            AstNode::ArrayElem(arr_name, idx) => {
+                let array_symb = match self.symb_table.get(arr_name.clone()) {
+                    Some(v) => v.clone().1,
+                    None => {
+                        logger.emit(LogLevel::Error(ErrKind::UndeclaredVar(arr_name.to_owned())), line);
+                        return exprdat;
+                    }
+                };
+                
+                let elem_type = match array_symb.ftype {
+                    FType::Array(fti, _) => idx_to_ftype(fti),
+                    other => unreachable!()
+                };
+
+                let idx_exprdat = self.analyze_expr(&idx, logger);    
+                if idx_exprdat.ftype != FType::uint {
+                    logger.emit(LogLevel::Error(ErrKind::ArrIdxType(arr_name.clone(), idx_exprdat.ftype)), line);
+                }
+
+                let el_type_u = match elem_type {
+                    Some(v) => v,
+                    None => {
+                        logger.emit(LogLevel::Error(ErrKind::Internal("Can't match type".to_owned())), line);   
+                        return exprdat;
+                    }
+                };
+
+                exprdat.ftype = el_type_u;
             }
             _ => {}
         }

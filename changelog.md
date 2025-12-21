@@ -1,6 +1,7 @@
-v0.4.0:
-- update README
-- new warning (if converted to the same type)
-- func overloads are now also being matched by return type
-- fix for unary op codegen
-- strlit lexing/parsing
+v0.4.1:
+- now voxvm is a build dependency
+- voxassembly are now being created and called directly, which improves compatibility and speed
+- static arrays WIP:
+    - could be created, get values by idx
+    - semantic analysis
+
