@@ -1,22 +1,27 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Binary;
 
-use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, FuncArg, FuncTable, UnaryOp};
 use crate::fcparse::fcparse::AstNode;
-use crate::logger::logger::{ErrKind, LogLevel, Logger, WarnKind};
+use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, FuncArg, FuncTable, UnaryOp};
 use crate::logger::logger as log;
+use crate::logger::logger::{ErrKind, LogLevel, Logger, WarnKind};
 
 #[derive(Debug)]
 pub struct FSymbol {
     pub name: String,
     pub cur_reg: VarPosition,
-    pub ftype: FType, 
+    pub ftype: FType,
     pub dsname: Option<String>,
 }
 
 impl FSymbol {
     pub fn new(n: String, pos: VarPosition, ft: FType) -> FSymbol {
-        FSymbol { name: n, cur_reg: pos, ftype: ft, dsname: None }
+        FSymbol {
+            name: n,
+            cur_reg: pos,
+            ftype: ft,
+            dsname: None,
+        }
     }
 }
 
@@ -29,10 +34,10 @@ pub enum FType {
     bool = 3,
     strconst = 4,
     dsptr = 5,
-    heapptr = 6 ,
-    none = 7, // No ftype! 
-    nil = 8, // real voxvm thing!
-    Array(usize, usize) = 9, // typeid, count
+    heapptr = 6,
+    none = 7,                       // No ftype!
+    nil = 8,                        // real voxvm thing!
+    Array(usize, usize, usize) = 9, // typeid, count, arridx
 }
 
 pub fn idx_to_ftype(idx: usize) -> Option<FType> {
@@ -44,13 +49,13 @@ pub fn idx_to_ftype(idx: usize) -> Option<FType> {
         4 => Some(FType::strconst),
         5 => Some(FType::dsptr),
         6 => Some(FType::heapptr),
-        7 => Some(FType::none), // No ftype! 
-        8 => Some(FType::nil), // real voxvm thing!
+        7 => Some(FType::none), // No ftype!
+        8 => Some(FType::nil),  // real voxvm thing!
         _ => None,
     }
 }
 
-/// Rust's ADTs implementation is bullshit. Thus fency should have `enum as uint` 
+/// Rust's ADTs implementation is bullshit. Thus fency should have `enum as uint`
 /// from the box
 pub fn ftype_to_idx(ft: &FType) -> usize {
     match ft {
@@ -63,27 +68,30 @@ pub fn ftype_to_idx(ft: &FType) -> usize {
         FType::heapptr => 6,
         FType::none => 7,
         FType::nil => 8,
-        FType::Array(_, _) => 9,         
+        other => unimplemented!(),
+        // FType::Array(_, _) => 9, 
     }
-} 
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum VarPosition {
-    Stack(usize), /// idx in stack 
-    Register(usize), /// reg idx 
+    Stack(usize),
+    /// idx in stack
+    Register(usize),
+    /// reg idx
     None,
 }
 
 #[derive(Debug)]
-pub struct SymbolTable { 
+pub struct SymbolTable {
     st: Vec<HashMap<String, FSymbol>>,
-    pub cur_scope: usize
+    pub cur_scope: usize,
 }
 impl SymbolTable {
     pub fn new() -> SymbolTable {
-        SymbolTable { 
-            st: vec![HashMap::new()], 
-            cur_scope: 0 
+        SymbolTable {
+            st: vec![HashMap::new()],
+            cur_scope: 0,
         }
     }
 
@@ -106,9 +114,9 @@ impl SymbolTable {
 
     pub fn newsymb(&mut self, fsymb: FSymbol) {
         self.st
-                .get_mut(self.cur_scope)
-                .unwrap()
-                .insert(fsymb.name.clone(), fsymb); 
+            .get_mut(self.cur_scope)
+            .unwrap()
+            .insert(fsymb.name.clone(), fsymb);
     }
 
     pub fn get(&self, var_name: String) -> Option<(usize, &FSymbol)> {
@@ -116,7 +124,7 @@ impl SymbolTable {
             if let Some(v) = scv.get(&var_name) {
                 return Some((idx, v));
             };
-        } 
+        }
         None
     }
 
@@ -136,10 +144,9 @@ impl SymbolTable {
     pub fn push_funcargs(&mut self, fargs: Vec<FuncArg>) {
         for (idx, fa) in fargs.iter().enumerate() {
             let symb = FSymbol::new(fa.name.clone(), VarPosition::Register(idx + 1), fa.ftype);
-            self.newsymb(symb); 
+            self.newsymb(symb);
         }
     }
-
 }
 
 /// Semantic analyzer struct
@@ -148,19 +155,19 @@ pub struct SemAn {
     symb_table: SymbolTable,
     cur_scope: usize,
     permissive: bool,
-    parsing_loop: Vec<usize>, // fold level 
-    func_table: FuncTable, 
-    declared_parse: HashMap<String, usize>, // already declared function names and first occurance 
-                                        //lines to check redecl
+    parsing_loop: Vec<usize>, // fold level
+    func_table: FuncTable,
+    declared_parse: HashMap<String, usize>, // already declared function names and first occurance
+    //lines to check redecl
     parsing_func: Option<(String, usize)>, // currently parsing function name and overload idx
-    pub matched_overloads: HashMap<usize, usize>, // call idx -> overload idx 
-    expect_type: FType, // for overloads matching and generics (in future)
+    pub matched_overloads: HashMap<usize, usize>, // call idx -> overload idx
+    expect_type: FType,                    // for overloads matching and generics (in future)
 }
 
 impl SemAn {
     /// Inits semantic analyzer struct. Permissive flag for less type checks
     pub fn new(permissive: bool, functab: FuncTable) -> SemAn {
-        SemAn { 
+        SemAn {
             symb_table: SymbolTable::new(),
             cur_scope: 0,
             permissive: permissive,
@@ -180,11 +187,13 @@ impl SemAn {
                     logger.emit(LogLevel::Error(ErrKind::FewMains(fv.len())), 0);
                 }
             }
-            None => {logger.emit(LogLevel::Error(ErrKind::NoMain), 0);},
+            None => {
+                logger.emit(LogLevel::Error(ErrKind::NoMain), 0);
+            }
         }
 
         for root in ast {
-            self.analyze_expr(root, logger); 
+            self.analyze_expr(root, logger);
         }
     }
 
@@ -194,33 +203,46 @@ impl SemAn {
         match &node.node {
             AstNode::Assignment { name, val, ft } => {
                 self.expect_type = *ft;
-                let rightdat = self.analyze_expr(
-                    &AstRoot::new(*val.clone(), line), logger
-                );
+                let rightdat = self.analyze_expr(&AstRoot::new(*val.clone(), line), logger);
                 self.expect_type = FType::none;
-                
+
                 if self.symb_table.get(name.clone()).is_some() {
-                    logger.emit(LogLevel::Error(ErrKind::Redeclaration(name.to_owned())), line);
+                    logger.emit(
+                        LogLevel::Error(ErrKind::Redeclaration(name.to_owned())),
+                        line,
+                    );
                 };
-                
+
                 if *ft == FType::none {
-                    logger.emit(LogLevel::Error(ErrKind::NoneTypeAssign(name.clone(), rightdat.ftype)), line);
+                    logger.emit(
+                        LogLevel::Error(ErrKind::NoneTypeAssign(name.clone(), rightdat.ftype)),
+                        line,
+                    );
                 }
 
                 match (*ft, rightdat.ftype) {
-                    (FType::Array(fti1, _), FType::Array(fti2, _)) => {
-                        if fti1 != fti2 {
-                            logger.emit(LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)), line);
-                        } 
+                    // TODO
+                    //// Array(usize, usize, usize) = 9, // typeid, count, arridx
+                    (FType::Array(fti1, c1, _), FType::Array(fti2, c2, _)) => {
+                       if fti1 != fti2 {
+                           logger.emit(
+                               LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)),
+                               line,
+                           );
+                       }
                     }
                     (other1, other2) => {
                         if other1 != other2 {
-                            logger.emit(LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)), line);
+                            logger.emit(
+                                LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)),
+                                line,
+                            );
                         }
                     }
                 }
 
-                self.symb_table.newsymb(FSymbol::new(name.to_owned(), VarPosition::None, *ft));
+                self.symb_table
+                    .newsymb(FSymbol::new(name.to_owned(), VarPosition::None, *ft));
                 exprdat.ftype = *ft;
             }
             AstNode::Int(iv) => {
@@ -238,25 +260,25 @@ impl SemAn {
             AstNode::StringLiteral(s) => {
                 exprdat.ftype = FType::strconst;
             }
+            AstNode::Array(fti, nodes) => {
+                exprdat.ftype = FType::Array(ftype_to_idx(fti), nodes.len(), 0);
+            }
             AstNode::BinaryOp { op, left, right } => {
-                let leftd = self.analyze_expr(
-                    &AstRoot::new(*left.clone(), line), logger);
-                let rightd = self.analyze_expr(
-                    &AstRoot::new(*right.clone(), line), logger);
+                let leftd = self.analyze_expr(&AstRoot::new(*left.clone(), line), logger);
+                let rightd = self.analyze_expr(&AstRoot::new(*right.clone(), line), logger);
 
-                let is_shift_op = (*op == BinaryOp::BitShiftLeft) || (*op == BinaryOp::BitShiftRight);
-                
+                let is_shift_op =
+                    (*op == BinaryOp::BitShiftLeft) || (*op == BinaryOp::BitShiftRight);
+
                 if is_shift_op {
                     // For shift operations, right operand must be uint or pointer
-                    let is_valid_shift_right_type = matches!(
-                        rightd.ftype,
-                        FType::uint | FType::heapptr
-                    );
-                    
+                    let is_valid_shift_right_type =
+                        matches!(rightd.ftype, FType::uint | FType::heapptr);
+
                     if !is_valid_shift_right_type {
                         logger.emit(
                             LogLevel::Error(ErrKind::BitShiftRHSType(*op, rightd.ftype)),
-                            line
+                            line,
                         );
                     }
                     // Note: left operand type doesn't need to match right operand for shifts
@@ -265,15 +287,18 @@ impl SemAn {
                     if leftd.ftype != rightd.ftype {
                         logger.emit(
                             LogLevel::Error(ErrKind::BinOpDifTypes(*op, leftd.ftype, rightd.ftype)),
-                            line
+                            line,
                         );
                     }
                 }
 
-                if (leftd.ftype == FType::bool) && 
-                    (*op == BinaryOp::Add || *op == BinaryOp::Substract || 
-                    *op == BinaryOp::Multiply || *op == BinaryOp::Divide) {
-                        logger.emit(LogLevel::Error(ErrKind::BoolBounds(*op)), line);
+                if (leftd.ftype == FType::bool)
+                    && (*op == BinaryOp::Add
+                        || *op == BinaryOp::Substract
+                        || *op == BinaryOp::Multiply
+                        || *op == BinaryOp::Divide)
+                {
+                    logger.emit(LogLevel::Error(ErrKind::BoolBounds(*op)), line);
                 }
 
                 let is_cmp_op = SemAn::is_cmp_op(op);
@@ -287,16 +312,20 @@ impl SemAn {
                 let rdat = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
                 exprdat.ftype = rdat.ftype;
 
-                if (*op == UnaryOp::Negate) && 
-                    !((exprdat.ftype == FType::float) || (exprdat.ftype == FType::int)) {
-                        logger.emit(LogLevel::Error(ErrKind::NegateBounds(exprdat.ftype)), line);
+                if (*op == UnaryOp::Negate)
+                    && !((exprdat.ftype == FType::float) || (exprdat.ftype == FType::int))
+                {
+                    logger.emit(LogLevel::Error(ErrKind::NegateBounds(exprdat.ftype)), line);
                 }
             }
             AstNode::Variable(var) => {
                 exprdat.ftype = match self.symb_table.get(var.clone()) {
                     Some(v) => v.1.ftype,
                     None => {
-                        logger.emit(LogLevel::Error(ErrKind::UndeclaredVar(var.to_owned())), line);
+                        logger.emit(
+                            LogLevel::Error(ErrKind::UndeclaredVar(var.to_owned())),
+                            line,
+                        );
                         FType::none
                     }
                 }
@@ -306,25 +335,36 @@ impl SemAn {
                     let entry = match self.symb_table.get(name.clone()) {
                         Some(en) => en,
                         None => {
-                            logger.emit(LogLevel::Error(ErrKind::UndeclaredVar(name.clone())), line);
-                            (0, &FSymbol::new(name.to_owned(), VarPosition::None, FType::none))
+                            logger
+                                .emit(LogLevel::Error(ErrKind::UndeclaredVar(name.clone())), line);
+                            (
+                                0,
+                                &FSymbol::new(name.to_owned(), VarPosition::None, FType::none),
+                            )
                         }
                     };
                     entry.1.ftype
                 };
                 let newval_data = self.analyze_expr(&newval, logger);
                 if symb_type != newval_data.ftype {
-                    logger.emit(LogLevel::Error(ErrKind::IncompatTypes(symb_type, newval_data.ftype)), line);
+                    logger.emit(
+                        LogLevel::Error(ErrKind::IncompatTypes(symb_type, newval_data.ftype)),
+                        line,
+                    );
                 }
             }
-            AstNode::IfStatement { cond, if_true, if_false } => {
+            AstNode::IfStatement {
+                cond,
+                if_true,
+                if_false,
+            } => {
                 let cond_an = self.analyze_expr(cond, logger);
                 if cond_an.ftype != FType::bool {
                     let lerr = LogLevel::Error(ErrKind::IfStmtNotBool(cond_an.ftype));
                     let lwarn = LogLevel::Warning(log::WarnKind::IfStmtNotBool);
                     self.permissive_error(line, logger, lerr, lwarn);
                 }
-                
+
                 self.analyze_expr(*&if_true, logger);
                 if let Some(iff_root) = if_false {
                     self.analyze_expr(iff_root, logger);
@@ -337,7 +377,10 @@ impl SemAn {
                         logger.emit(LogLevel::Warning(WarnKind::ConvSame(var.1.ftype)), line);
                     }
                 } else {
-                    logger.emit(LogLevel::Error(ErrKind::UndeclaredVar(name.to_owned())), line);
+                    logger.emit(
+                        LogLevel::Error(ErrKind::UndeclaredVar(name.to_owned())),
+                        line,
+                    );
                 }
 
                 exprdat.ftype = *target_type;
@@ -357,9 +400,11 @@ impl SemAn {
 
                 let cond_dat = self.analyze_expr(&cond, logger);
                 if cond_dat.ftype != FType::bool {
-                    self.permissive_error(line, logger, 
-                        LogLevel::Error(ErrKind::WhileLoopNotBool(cond_dat.ftype)), 
-                        LogLevel::Warning(WarnKind::WhileLoopNotBool)
+                    self.permissive_error(
+                        line,
+                        logger,
+                        LogLevel::Error(ErrKind::WhileLoopNotBool(cond_dat.ftype)),
+                        LogLevel::Warning(WarnKind::WhileLoopNotBool),
                     );
                 }
 
@@ -367,7 +412,12 @@ impl SemAn {
 
                 self.parsing_loop.pop();
             }
-            AstNode::ForLoop { itervar, iter_upd, iter_cond, body } => {
+            AstNode::ForLoop {
+                itervar,
+                iter_upd,
+                iter_cond,
+                body,
+            } => {
                 self.parsing_loop.push(self.parsing_loop.len());
                 self.symb_table.enter_scope();
 
@@ -389,7 +439,12 @@ impl SemAn {
                     logger.emit(LogLevel::Error(ErrKind::ContinueNotLoop), line);
                 }
             }
-            AstNode::Function { name, args, ret_type, body } => {
+            AstNode::Function {
+                name,
+                args,
+                ret_type,
+                body,
+            } => {
                 let mut override_flag = false;
                 if let Some(v) = &self.parsing_func {
                     self.parsing_func = Some((name.clone(), v.1));
@@ -400,18 +455,24 @@ impl SemAn {
 
                 if let Some(func_line) = self.declared_parse.get(name) {
                     if !override_flag {
-                        logger.emit(LogLevel::Error(ErrKind::FuncRedecl(name.clone(), *func_line)), line);
+                        logger.emit(
+                            LogLevel::Error(ErrKind::FuncRedecl(name.clone(), *func_line)),
+                            line,
+                        );
                     }
                 } else {
                     self.declared_parse.insert(name.clone(), line);
                 }
 
                 if args.len() > 30 {
-                    logger.emit(LogLevel::Error(ErrKind::MuchDeclArgs(name.clone(), args.len())), line);
+                    logger.emit(
+                        LogLevel::Error(ErrKind::MuchDeclArgs(name.clone(), args.len())),
+                        line,
+                    );
                 }
 
                 self.symb_table.enter_scope();
-                self.symb_table.push_funcargs(args.to_vec()); 
+                self.symb_table.push_funcargs(args.to_vec());
 
                 self.analyze_expr(&AstRoot::new(*body.clone(), line), logger);
 
@@ -422,11 +483,18 @@ impl SemAn {
                 self.parsing_func = Some(("".to_owned(), *idx));
                 self.analyze_expr(&AstRoot::new(*func.clone(), line), logger);
             }
-            AstNode::Call { func_name, args, idx } => {
+            AstNode::Call {
+                func_name,
+                args,
+                idx,
+            } => {
                 let func_dat_vec = match self.func_table.get_func(func_name) {
                     Some(v) => v.clone(),
                     None => {
-                        logger.emit(LogLevel::Error(ErrKind::UndeclaredFunc(func_name.clone())), line);
+                        logger.emit(
+                            LogLevel::Error(ErrKind::UndeclaredFunc(func_name.clone())),
+                            line,
+                        );
                         return exprdat;
                     }
                 };
@@ -434,13 +502,13 @@ impl SemAn {
                     let mut flag: bool = true;
                     for (idx, arg) in args.iter().enumerate() {
                         let argdat = self.analyze_expr(arg, logger); // TODO: get this invariant
-                                                                    // out of loop
+                                                                     // out of loop
                         if argdat.ftype != overload.args[idx].ftype {
                             flag = false;
                             break;
-                        }     
-                        if self.expect_type != FType::none && 
-                            self.expect_type != overload.ret_type {
+                        }
+                        if self.expect_type != FType::none && self.expect_type != overload.ret_type
+                        {
                             flag = false;
                             break;
                         }
@@ -452,10 +520,11 @@ impl SemAn {
                     }
                 }
 
-                logger.emit(LogLevel::Error(ErrKind::FuncArgsTypeIncompat(
-                                func_name.clone()
-                            )), line);
-                }
+                logger.emit(
+                    LogLevel::Error(ErrKind::FuncArgsTypeIncompat(func_name.clone())),
+                    line,
+                );
+            }
             AstNode::ReturnVal { val } => {
                 let retval = self.analyze_expr(&*val, logger);
 
@@ -463,14 +532,19 @@ impl SemAn {
                     if let Some(fv) = self.func_table.get_func(&curf.0) {
                         let f = &fv[curf.1];
                         if retval.ftype != f.ret_type {
-                            logger.emit(LogLevel::Error(
-                                ErrKind::IncompatReturn(curf.0.to_owned(), f.ret_type, retval.ftype)
-                            ), line);
+                            logger.emit(
+                                LogLevel::Error(ErrKind::IncompatReturn(
+                                    curf.0.to_owned(),
+                                    f.ret_type,
+                                    retval.ftype,
+                                )),
+                                line,
+                            );
                         }
                     };
                 } else {
                     logger.emit(LogLevel::Error(ErrKind::ReturnOutOfFunc), line);
-                }; 
+                };
             }
             AstNode::ExprCast { expr, target_type } => {
                 let expr = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
@@ -484,38 +558,51 @@ impl SemAn {
                 for (idx, node) in nodes.iter().enumerate() {
                     let ndat = self.analyze_expr(&AstRoot::new(node.clone(), line), logger);
                     if ndat.ftype != *ft {
-                        logger.emit(LogLevel::Error(
-                            ErrKind::IncompatArrType(*ft, ndat.ftype, idx)
-                        ), line); 
+                        logger.emit(
+                            LogLevel::Error(ErrKind::IncompatArrType(*ft, ndat.ftype, idx)),
+                            line,
+                        );
                     }
                 }
                 let ft_idx = ftype_to_idx(ft);
 
-                exprdat.ftype = FType::Array(ft_idx, nodes.len());
+                // TODO
+                //// Array(usize, usize, usize) = 9, // typeid, count, arridx
+                exprdat.ftype = FType::Array(ft_idx, nodes.len(), 0 );
             }
             AstNode::ArrayElem(arr_name, idx) => {
                 let array_symb = match self.symb_table.get(arr_name.clone()) {
                     Some(v) => v.clone().1,
                     None => {
-                        logger.emit(LogLevel::Error(ErrKind::UndeclaredVar(arr_name.to_owned())), line);
+                        logger.emit(
+                            LogLevel::Error(ErrKind::UndeclaredVar(arr_name.to_owned())),
+                            line,
+                        );
                         return exprdat;
                     }
                 };
-                
+
+                // TODO
                 let elem_type = match array_symb.ftype {
-                    FType::Array(fti, _) => idx_to_ftype(fti),
-                    other => unreachable!()
+                    FType::Array(fti, _, _) => idx_to_ftype(fti),
+                    other => unreachable!(),
                 };
 
-                let idx_exprdat = self.analyze_expr(&idx, logger);    
+                let idx_exprdat = self.analyze_expr(&idx, logger);
                 if idx_exprdat.ftype != FType::uint {
-                    logger.emit(LogLevel::Error(ErrKind::ArrIdxType(arr_name.clone(), idx_exprdat.ftype)), line);
+                    logger.emit(
+                        LogLevel::Error(ErrKind::ArrIdxType(arr_name.clone(), idx_exprdat.ftype)),
+                        line,
+                    );
                 }
 
                 let el_type_u = match elem_type {
                     Some(v) => v,
                     None => {
-                        logger.emit(LogLevel::Error(ErrKind::Internal("Can't match type".to_owned())), line);   
+                        logger.emit(
+                            LogLevel::Error(ErrKind::Internal("Can't match type".to_owned())),
+                            line,
+                        );
                         return exprdat;
                     }
                 };
@@ -528,7 +615,13 @@ impl SemAn {
     }
 
     /// Prints warning if permissive mode enabled, otherwise error
-    fn permissive_error(&mut self, line: usize, logger: &mut Logger, lerr: LogLevel, lwarn: LogLevel) {
+    fn permissive_error(
+        &mut self,
+        line: usize,
+        logger: &mut Logger,
+        lerr: LogLevel,
+        lwarn: LogLevel,
+    ) {
         if self.permissive {
             logger.emit(lwarn, line);
         } else {
@@ -539,7 +632,6 @@ impl SemAn {
     pub fn is_cmp_op(op: &BinaryOp) -> bool {
         matches!(*op, BinaryOp::Compare(_))
     }
-
 }
 
 #[derive(Debug)]

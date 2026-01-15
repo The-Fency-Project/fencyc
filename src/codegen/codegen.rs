@@ -1,12 +1,16 @@
 use std::{collections::HashMap, fmt::format};
 
-use crate::{fcparse::fcparse::{self as fparse, AstRoot, CmpOp}, lexer::lexer::Intrinsic, seman::seman::{self as sem, idx_to_ftype, FSymbol, FType, SemAn, SymbolTable, VarPosition}};// AstNode;
+use crate::{
+    fcparse::fcparse::{self as fparse, AstRoot, CmpOp},
+    lexer::lexer::Intrinsic,
+    seman::seman::{self as sem, idx_to_ftype, FSymbol, FType, SemAn, SymbolTable, VarPosition},
+}; // AstNode;
 use fparse::AstNode;
 
 #[derive(Debug, Clone)]
 pub enum ValDat {
     Symbol(FSymbTabData),
-    ImmVal(Numerical), // immediate value 
+    ImmVal(Numerical), // immediate value
     None,
 }
 
@@ -17,7 +21,7 @@ pub enum Numerical {
     float(f64),
     heapptr(u64),
     boolean(bool),
-    None
+    None,
 }
 
 #[derive(Debug)]
@@ -30,20 +34,20 @@ pub struct CodeGen {
     unused_regs: Vec<usize>, // which are unused for some time (lru)
     pub symb_table: SymbolTable,
     predicted_stack: Vec<ValDat>,
-    stack_end: usize, // latest stack frame idx
+    stack_end: usize,               // latest stack frame idx
     labels: HashMap<String, usize>, // usize for sbuf idx
     loop_exits: Vec<String>,
     loop_conts: Vec<String>,
     stackidxs: Vec<usize>, // saving last stack idx before function
     overload_ctr: usize,
-    matched_overloads: HashMap<usize, usize>, // call idx -> overload idx 
+    matched_overloads: HashMap<usize, usize>, // call idx -> overload idx
     array_ctr: usize,
 }
 
 impl CodeGen {
     pub fn new(ast: Vec<AstRoot>, mo: HashMap<usize, usize>) -> CodeGen {
-        CodeGen { 
-            ast: ast, 
+        CodeGen {
+            ast: ast,
             cur_ast: 0,
             sbuf: String::new(),
             dsbuf: String::new(),
@@ -63,16 +67,17 @@ impl CodeGen {
     }
 
     pub fn gen_everything(&mut self) {
-        self.sbuf.push_str("section text\n\
+        self.sbuf.push_str(
+            "section text\n\
                             .start\n\
                             call @main_0\n\
                             halt\n",
-                    );
+        );
         while let Some(r) = self.ast.get(self.cur_ast) {
             let gdat = self.gen_expr(r.clone().node);
             self.cur_ast += 1;
         }
-        
+
         self.sbuf.push_str("section data\n");
         self.sbuf.push_str(&self.dsbuf);
     }
@@ -92,64 +97,78 @@ impl CodeGen {
             AstNode::Assignment { name, val, ft } => {
                 let arr_idx = self.array_ctr;
 
-                let rightdat = self.gen_expr(*val);  
-                
-                if let FType::Array(ft_memb, _) = ft {
-                        let mut symb = FSymbol::new(name.clone(), sem::VarPosition::Register(0), ft);
+                let rightdat = self.gen_expr(*val);
+                // Array(usize, usize, usize) = 9, // typeid, count, arridx
+                if let FType::Array(typeid, count, arridx) = ft {
+                    // TODO: either add support for getting the same array,
+                    // or deny that idea completely.
+                    let is_new: bool = rightdat.arridx.is_some();
+                    
+                    let rdst = self.alloc_reg(ValDat::Symbol(FSymbTabData::new(
+                        self.symb_table.cur_scope,
+                        name.clone(),
+                    )));
+
+                    if is_new {
+                        self.sbuf
+                           .push_str(&format!("dslea r{} array{} 9\n", rdst, arr_idx));
+                        self.array_ctr += 1; 
+                    } else {
+                        self.sbuf
+                           .push_str(&format!("movr r{} r{}\n", rdst, rightdat.alloced_regs[0]));
+                    }
+
+                    res.alloced_regs.push(rdst);
+                    
+                    let mut symb = FSymbol::new(name.clone(), 
+                        sem::VarPosition::Register(rightdat.alloced_regs[0]), 
+                        ft
+                    );
+                    
+                    if is_new {
                         symb.dsname = Some(format!("array{}", arr_idx));
-                        let rdst = self.alloc_reg(ValDat::Symbol(FSymbTabData::new(
-                            self.symb_table.cur_scope,
-                            name.clone()
-                        )));
-                        symb.cur_reg = VarPosition::Register(rdst);
-
-                        self.sbuf.push_str(&format!(
-                            "dslea r{} 9 array{}\n",
-                            rdst, arr_idx
-                        ));
-
-                        res.alloced_regs.push(rdst);
-                        self.symb_table.newsymb(symb);
-                        return res;
+                    } else {
+                        panic!("Internal error: array isn't new");  
+                    };
+                    
+                    symb.cur_reg = VarPosition::Register(rdst);
+                    self.symb_table.newsymb(symb);
+                    
+                    self.free_reg_not_var(rightdat.alloced_regs[0]);
+                    return res;
                 }
-
-                let mut symb = FSymbol::new(
-                    name.clone(), sem::VarPosition::Register(0), ft
-                );
-                let leftreg = self.alloc_reg(
-                    ValDat::Symbol(FSymbTabData::new(
-                        self.symb_table.cur_scope, 
-                        name.clone()    
-                    ))
-                );
+                let mut symb = FSymbol::new(name.clone(), sem::VarPosition::Register(0), ft);
+                let leftreg = self.alloc_reg(ValDat::Symbol(FSymbTabData::new(
+                    self.symb_table.cur_scope,
+                    name.clone(),
+                )));
                 symb.cur_reg = VarPosition::Register(leftreg);
 
                 res.alloced_regs.push(leftreg);
 
                 let mut instr = String::new();
-                instr = format!("movr r{} r{}\n",
-                        leftreg, rightdat.alloced_regs[0]);
-               
+                instr = format!("movr r{} r{}\n", leftreg, rightdat.alloced_regs[0]);
+
                 self.symb_table.newsymb(symb);
                 res.expr_type = ft;
                 self.sbuf.push_str(&instr);
                 self.free_reg_not_var(rightdat.alloced_regs[0]);
-            }   
+            }
             AstNode::Int(iv) => {
                 let reg = self.alloc_reg(ValDat::ImmVal(Numerical::int(iv)));
                 let instr = format!("iload r{} {}\n", reg, iv);
                 res.alloced_regs.push(reg);
                 res.expr_type = FType::int;
                 self.sbuf.push_str(&instr);
-            },
+            }
             AstNode::Float(fv) => {
                 let reg = self.alloc_reg(ValDat::ImmVal(Numerical::float(fv)));
-                let instr = format!("fload r{} {:#?}\n", reg, fv); 
+                let instr = format!("fload r{} {:#?}\n", reg, fv);
                 // :#? so it would always be with point. its important for voxasm
                 res.alloced_regs.push(reg);
                 res.expr_type = FType::float;
                 self.sbuf.push_str(&instr);
-            },
+            }
             AstNode::Uint(uv) => {
                 let reg = self.alloc_reg(ValDat::ImmVal(Numerical::uint(uv)));
                 let instr = format!("uload r{} {}\n", reg, uv);
@@ -163,75 +182,80 @@ impl CodeGen {
                 res.alloced_regs.push(reg);
                 res.expr_type = FType::bool;
                 self.sbuf.push_str(&instr);
- 
             }
             AstNode::BinaryOp { op, left, right } => {
                 let leftdat = self.gen_expr(*left);
                 let rightdat = self.gen_expr(*right);
-                res.expr_type = leftdat.expr_type; // assuming semantic analyzer already checked it 
+                res.expr_type = leftdat.expr_type; // assuming semantic analyzer already checked it
 
                 let mut instr = String::new();
                 let ftlet = CodeGen::ftletter(leftdat.expr_type);
                 let need_save = leftdat.alloced_regs[0] == rightdat.alloced_regs[0];
                 if need_save {
-                    self.sbuf.push_str(&format!("push r{}\n", leftdat.alloced_regs[0]));
+                    self.sbuf
+                        .push_str(&format!("push r{}\n", leftdat.alloced_regs[0]));
                 }
                 match op {
                     fparse::BinaryOp::Add => {
-                        instr = format!("{}add r{} r{}\n", 
-                            ftlet,
-                            leftdat.alloced_regs[0],
-                            rightdat.alloced_regs[0],
-                        ); 
+                        instr = format!(
+                            "{}add r{} r{}\n",
+                            ftlet, leftdat.alloced_regs[0], rightdat.alloced_regs[0],
+                        );
                         res.alloced_regs.push(leftdat.alloced_regs[0]);
-                    } 
+                    }
                     fparse::BinaryOp::Substract => {
-                        instr = format!("{}sub r{} r{}\n", 
-                            ftlet,
-                            leftdat.alloced_regs[0],
-                            rightdat.alloced_regs[0],
-                        ); 
+                        instr = format!(
+                            "{}sub r{} r{}\n",
+                            ftlet, leftdat.alloced_regs[0], rightdat.alloced_regs[0],
+                        );
                         res.alloced_regs.push(leftdat.alloced_regs[0]);
                     }
                     fparse::BinaryOp::Multiply => {
-                        instr = format!("{}mul r{} r{}\n",
-                            ftlet,
-                            leftdat.alloced_regs[0],
-                            rightdat.alloced_regs[0],
-                        ); 
+                        instr = format!(
+                            "{}mul r{} r{}\n",
+                            ftlet, leftdat.alloced_regs[0], rightdat.alloced_regs[0],
+                        );
                         res.alloced_regs.push(leftdat.alloced_regs[0]);
-                    } 
+                    }
                     fparse::BinaryOp::Divide => {
-                        instr = format!("{}div r{} r{} r{}\n", 
+                        instr = format!(
+                            "{}div r{} r{} r{}\n",
                             ftlet,
                             leftdat.alloced_regs[0],
                             leftdat.alloced_regs[0],
                             rightdat.alloced_regs[0],
-                        ); 
-                        res.alloced_regs.push(leftdat.alloced_regs[0]); 
+                        );
+                        res.alloced_regs.push(leftdat.alloced_regs[0]);
                     }
                     fparse::BinaryOp::Remainder => {
-                        instr = format!("{}rem r{} r{} r{}\n",
-                            ftlet, 
+                        instr = format!(
+                            "{}rem r{} r{} r{}\n",
+                            ftlet,
                             leftdat.alloced_regs[0],
                             leftdat.alloced_regs[0],
                             rightdat.alloced_regs[0]
                         );
                         res.alloced_regs.push(leftdat.alloced_regs[0]);
-                    },
+                    }
                     fparse::BinaryOp::BitwiseAnd => {
-                        instr = format!("and r{} r{}\n",
-                            leftdat.alloced_regs[0], rightdat.alloced_regs[0]);
+                        instr = format!(
+                            "and r{} r{}\n",
+                            leftdat.alloced_regs[0], rightdat.alloced_regs[0]
+                        );
                         res.alloced_regs.push(leftdat.alloced_regs[0]);
                     }
                     fparse::BinaryOp::BitwiseOr => {
-                        instr = format!("or r{} r{}\n",
-                            leftdat.alloced_regs[0], rightdat.alloced_regs[0]);
+                        instr = format!(
+                            "or r{} r{}\n",
+                            leftdat.alloced_regs[0], rightdat.alloced_regs[0]
+                        );
                         res.alloced_regs.push(leftdat.alloced_regs[0]);
                     }
                     fparse::BinaryOp::BitwiseXor => {
-                        instr = format!("xor r{} r{}\n",
-                            leftdat.alloced_regs[0], rightdat.alloced_regs[0]);
+                        instr = format!(
+                            "xor r{} r{}\n",
+                            leftdat.alloced_regs[0], rightdat.alloced_regs[0]
+                        );
                         res.alloced_regs.push(leftdat.alloced_regs[0]);
                     }
                     fparse::BinaryOp::BitShiftLeft => {
@@ -240,9 +264,11 @@ impl CodeGen {
                         let leftreg = leftdat.alloced_regs[0];
                         let rightreg = rightdat.alloced_regs[0];
 
-                        instr = format!("movr r{} r{}\n\
+                        instr = format!(
+                            "movr r{} r{}\n\
                                         shl r{} r{}\n",
-                        res_reg, leftreg, res_reg, rightreg);
+                            res_reg, leftreg, res_reg, rightreg
+                        );
                     }
                     fparse::BinaryOp::BitShiftRight => {
                         let res_reg = self.alloc_reg(ValDat::ImmVal(Numerical::None));
@@ -250,28 +276,31 @@ impl CodeGen {
                         let leftreg = leftdat.alloced_regs[0];
                         let rightreg = rightdat.alloced_regs[0];
 
-                        instr = format!("movr r{} r{}\n\
+                        instr = format!(
+                            "movr r{} r{}\n\
                                         shr r{} r{}\n",
-                        res_reg, leftreg, res_reg, rightreg);
+                            res_reg, leftreg, res_reg, rightreg
+                        );
                     }
                     fparse::BinaryOp::Compare(cmp_op) => {
                         let leftreg = leftdat.alloced_regs[0];
                         let rightreg = rightdat.alloced_regs[0];
-                        self.sbuf.push_str(&format!("{}cmp r{} r{}\n", 
-                            ftlet, leftreg, rightreg));
-                        
+                        self.sbuf
+                            .push_str(&format!("{}cmp r{} r{}\n", ftlet, leftreg, rightreg));
+
                         let label_true = self.alloc_label();
                         let jmpinstr = CodeGen::match_jmp_op(cmp_op, &label_true);
                         self.sbuf.push_str(&jmpinstr);
 
                         let exit_lbl = self.alloc_label();
-                        self.sbuf.push_str(&format!("uload r{} 0\n\
-                                        jmp @{}\n", 
-                            leftreg, exit_lbl));
+                        self.sbuf.push_str(&format!(
+                            "uload r{} 0\n\
+                                        jmp @{}\n",
+                            leftreg, exit_lbl
+                        ));
 
                         self.push_label(&label_true);
-                        self.sbuf.push_str(&format!("uload r{} 1\n", 
-                            leftreg));
+                        self.sbuf.push_str(&format!("uload r{} 1\n", leftreg));
                         self.push_label(&exit_lbl);
 
                         self.free_reg_not_var(rightreg);
@@ -282,14 +311,16 @@ impl CodeGen {
                     }
                 }
                 if need_save {
-                    self.sbuf.push_str(&format!("pop r{}\n", leftdat.alloced_regs[0]));
+                    self.sbuf
+                        .push_str(&format!("pop r{}\n", leftdat.alloced_regs[0]));
                 }
 
                 self.sbuf.push_str(&instr);
                 self.free_reg_not_var(rightdat.alloced_regs[0]);
-            },
+            }
             AstNode::Variable(av) => {
                 self.load_variable(av, &mut res);
+
             }
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
@@ -300,9 +331,9 @@ impl CodeGen {
             }
             AstNode::Reassignment { name, newval } => {
                 let var_name = name.clone();
-                
+
                 let rhdat = self.gen_expr(newval.node);
-                
+
                 let varreg = {
                     let entry = self.symb_table.get(var_name.clone()).unwrap();
                     let scope = entry.0;
@@ -310,15 +341,11 @@ impl CodeGen {
                         VarPosition::Register(ri) => ri,
                         VarPosition::None => panic!("None var value!"),
                         VarPosition::Stack(sfi) => {
-                            self.extract_reg(sfi, 
-                                ValDat::Symbol(
-                                    FSymbTabData::new(scope, name)
-                                )
-                            )
+                            self.extract_reg(sfi, ValDat::Symbol(FSymbTabData::new(scope, name)))
                         }
                     }
                 };
-                
+
                 let instr = format!("movr r{} r{}\n", varreg, rhdat.alloced_regs[0]);
                 self.sbuf.push_str(&instr);
 
@@ -328,7 +355,11 @@ impl CodeGen {
 
                 self.free_reg_not_var(rhdat.alloced_regs[0]);
             }
-            AstNode::IfStatement { cond, if_true, if_false } => {
+            AstNode::IfStatement {
+                cond,
+                if_true,
+                if_false,
+            } => {
                 let cond_dat = self.gen_expr(cond.node);
                 let reg = cond_dat.alloced_regs[0];
                 let test_instr = format!("test r{} r{}\n", reg, reg);
@@ -339,8 +370,8 @@ impl CodeGen {
 
                 let false_labelname = self.alloc_label();
                 let exit_labelname = self.alloc_label();
-                
-                let mut iftrue_expr: GenData = self.gen_expr(if_true.node);
+
+                self.gen_expr(if_true.node);
 
                 let jumpe_instr = format!("jmp @{}\n", &exit_labelname);
                 self.sbuf.push_str(&jumpe_instr);
@@ -351,7 +382,7 @@ impl CodeGen {
                     self.gen_expr(ve.node);
                 }
                 self.leave_scope_clean();
-                self.push_label(&exit_labelname); 
+                self.push_label(&exit_labelname);
             }
             AstNode::VariableCast { name, target_type } => {
                 let dst_reg = self.alloc_reg(ValDat::ImmVal(Numerical::None));
@@ -359,7 +390,9 @@ impl CodeGen {
 
                 let vartype: FType = match self.symb_table.get(name.clone()) {
                     Some(v) => v.1.ftype,
-                    None => {panic!("undeclared {}", name);}
+                    None => {
+                        panic!("undeclared {}", name);
+                    }
                 };
                 if vartype == target_type {
                     return res;
@@ -369,29 +402,26 @@ impl CodeGen {
 
                 let ftlet_src = CodeGen::ftletter(vartype);
                 let ftlet_dst = CodeGen::ftletter(target_type);
-                if ftlet_src == ftlet_dst { // additional check bc ftletters can collide
+                if ftlet_src == ftlet_dst {
+                    // additional check bc ftletters can collide
                     if target_type == FType::bool {
-                        let lnot_instr = format!("lnot r{} r{}\n", dst_reg, reg_var);
-                        let notd_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
+                        let instr = format!("test r{} r{}\n", dst_reg, reg_var);
 
-                        // in other words: !!var = var (but logically)
-                        self.sbuf.push_str(&lnot_instr);
-                        self.sbuf.push_str(&notd_instr);
+                        self.sbuf.push_str(&instr);
                     }
                     return res;
                 }
 
-                let instr = format!("{}to{} r{} r{}\n",
-                    ftlet_src, ftlet_dst, dst_reg, reg_var);
+                let instr = format!("{}to{} r{} r{}\n", ftlet_src, ftlet_dst, dst_reg, reg_var);
                 self.sbuf.push_str(&instr);
 
                 if target_type == FType::bool {
-                        let lnot_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
-                        let notd_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
+                    let lnot_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
+                    let notd_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
 
-                        // again but for other cases
-                        self.sbuf.push_str(&lnot_instr);
-                        self.sbuf.push_str(&notd_instr);
+                    // again but for other cases
+                    self.sbuf.push_str(&lnot_instr);
+                    self.sbuf.push_str(&notd_instr);
                 }
             }
             AstNode::ExprCast { expr, target_type } => {
@@ -409,7 +439,8 @@ impl CodeGen {
 
                 let ftlet_src = CodeGen::ftletter(exprtype);
                 let ftlet_dst = CodeGen::ftletter(target_type);
-                if ftlet_src == ftlet_dst { // additional check bc ftletters can collide
+                if ftlet_src == ftlet_dst {
+                    // additional check bc ftletters can collide
                     if target_type == FType::bool {
                         let lnot_instr = format!("lnot r{} r{}\n", dst_reg, src_reg);
                         let notd_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
@@ -421,20 +452,23 @@ impl CodeGen {
                     return res;
                 }
 
-                let instr = format!("{}to{} r{} r{}\n",
-                    ftlet_src, ftlet_dst, dst_reg, src_reg);
+                let instr = format!("{}to{} r{} r{}\n", ftlet_src, ftlet_dst, dst_reg, src_reg);
                 self.sbuf.push_str(&instr);
 
                 if target_type == FType::bool {
-                        let lnot_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
-                        let notd_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
+                    let lnot_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
+                    let notd_instr = format!("lnot r{} r{}\n", dst_reg, dst_reg);
 
-                        // again but for other cases
-                        self.sbuf.push_str(&lnot_instr);
-                        self.sbuf.push_str(&notd_instr);
+                    // again but for other cases
+                    self.sbuf.push_str(&lnot_instr);
+                    self.sbuf.push_str(&notd_instr);
                 }
             }
             AstNode::Intrinsic { intr, val } => {
+                if matches!(intr, Intrinsic::Len) {
+                    // TODO!
+                }
+
                 let rdat = self.gen_expr(*val);
                 self.gen_intrinsic(intr, rdat.alloced_regs[0]);
             }
@@ -461,7 +495,7 @@ impl CodeGen {
             }
             AstNode::WhileLoop { cond, body } => {
                 self.symb_table.enter_scope();
-                
+
                 let loop_lab = self.new_label();
                 self.loop_conts.push(loop_lab.clone());
                 let exit_lab = self.alloc_label();
@@ -470,7 +504,8 @@ impl CodeGen {
                 let cond_gen = self.gen_expr(cond.node);
                 let cond_reg = cond_gen.alloced_regs[0];
 
-                self.sbuf.push_str(&format!("test r{} r{}\n", cond_reg, cond_reg));
+                self.sbuf
+                    .push_str(&format!("test r{} r{}\n", cond_reg, cond_reg));
                 self.sbuf.push_str(&format!("jz @{}\n", &exit_lab));
 
                 self.gen_expr(body.node);
@@ -487,10 +522,15 @@ impl CodeGen {
 
                 self.symb_table.exit_scope();
             }
-            AstNode::ForLoop { itervar, iter_upd, iter_cond, body } => {
+            AstNode::ForLoop {
+                itervar,
+                iter_upd,
+                iter_cond,
+                body,
+            } => {
                 self.symb_table.enter_scope();
                 let itergen = self.gen_expr(itervar.node);
-                
+
                 let loop_lab = self.new_label();
                 let exit_lab = self.alloc_label();
                 self.loop_exits.push(exit_lab.clone());
@@ -518,9 +558,10 @@ impl CodeGen {
                 self.symb_table.exit_scope();
             }
             AstNode::BreakLoop => {
-                let loop_label = match self.loop_exits.last() { // break from nearest loop
+                let loop_label = match self.loop_exits.last() {
+                    // break from nearest loop
                     Some(v) => v,
-                    None => panic!("Internal error: can't get loop exit label")
+                    None => panic!("Internal error: can't get loop exit label"),
                 };
 
                 self.sbuf.push_str(&format!("jmp @{}\n", loop_label));
@@ -528,35 +569,44 @@ impl CodeGen {
             AstNode::ContinueLoop => {
                 let loop_label = match self.loop_conts.last() {
                     Some(v) => v,
-                    None => panic!("Internal error: can't get loop continue label")
+                    None => panic!("Internal error: can't get loop continue label"),
                 };
 
                 self.sbuf.push_str(&format!("jmp @{}\n", loop_label));
             }
-            AstNode::Function { name, args, ret_type, body } => {
+            AstNode::Function {
+                name,
+                args,
+                ret_type,
+                body,
+            } => {
                 self.stackidxs.push(self.predicted_stack.len());
 
-                self.sbuf.push_str(&format!("func {}_{}\n", &name, self.overload_ctr));
+                self.sbuf
+                    .push_str(&format!("func {}_{}\n", &name, self.overload_ctr));
                 self.symb_table.enter_scope();
                 self.symb_table.push_funcargs(args.clone());
                 for (idx, val) in args.iter().enumerate() {
-                    self.alloced_regs[idx + 1] = ValDat::Symbol(
-                        FSymbTabData::new(self.symb_table.cur_scope, 
-                        val.name.clone())
-                    ); 
+                    self.alloced_regs[idx + 1] = ValDat::Symbol(FSymbTabData::new(
+                        self.symb_table.cur_scope,
+                        val.name.clone(),
+                    ));
                 }
 
                 self.gen_expr(*body);
 
                 let cur_len = self.predicted_stack.len();
-                let tgt_len = self.stackidxs.pop().unwrap_or_else(|| {panic!("Internal error: can't get stackidx")});
+                let tgt_len = self
+                    .stackidxs
+                    .pop()
+                    .unwrap_or_else(|| panic!("Internal error: can't get stackidx"));
                 // poping stack until we get to prev val
                 for i in (tgt_len..cur_len).rev() {
                     self.sbuf.push_str("pop r31");
                 }
 
                 self.symb_table.exit_scope();
-                
+
                 for val in self.alloced_regs.iter_mut().skip(1) {
                     *val = ValDat::None;
                 }
@@ -570,17 +620,22 @@ impl CodeGen {
                 if !matches!(val.node, AstNode::none) {
                     let valdat = self.gen_expr(val.node);
 
-                    self.sbuf.push_str(&format!("movr r0 r{}\n", valdat.alloced_regs[0]));
+                    self.sbuf
+                        .push_str(&format!("movr r0 r{}\n", valdat.alloced_regs[0]));
                 }
                 self.sbuf.push_str(&format!("ret\n"));
             }
-            AstNode::Call { func_name, args, idx } => {
-                                                            // better perf
+            AstNode::Call {
+                func_name,
+                args,
+                idx,
+            } => {
+                // better perf
                 let mut args_sf = Vec::new(); // args stack frames idxs
                 for (idx, val) in args.iter().enumerate() {
                     let gdat = self.gen_expr(val.node.clone());
-                    self.sbuf.push_str(&format!("push r{}\n"
-                        , gdat.alloced_regs[0]));
+                    self.sbuf
+                        .push_str(&format!("push r{}\n", gdat.alloced_regs[0]));
                     args_sf.push(self.predicted_stack.len());
                     self.predicted_stack.push(ValDat::ImmVal(Numerical::None));
                 }
@@ -590,22 +645,27 @@ impl CodeGen {
                         self.sbuf.push_str(&format!("pop r{}\n", idx + 1));
                         self.predicted_stack.pop();
                     } else {
-                        self.sbuf.push_str(&format!("
+                        self.sbuf.push_str(&format!(
+                            "
                                             uload r0 {}\n\
                                             gsf r{} r0\n\
                                             usf r0 r0\n",
-                        sfi, idx + 1));
+                            sfi,
+                            idx + 1
+                        ));
                         self.predicted_stack[*sfi] = ValDat::None;
                     }
                 }
-                
+
                 self.sbuf.push_str(&"pushall\n"); // TODO: push only used registers for
                 let overload_idx = self.matched_overloads.get(&idx).unwrap_or_else(|| {
                     panic!("{}: internal error: can't get matched overload", &func_name);
                 });
-                self.sbuf.push_str(&format!("call @{}_{}\n\
+                self.sbuf.push_str(&format!(
+                    "call @{}_{}\n\
                                             popall\n",
-                    &func_name, *overload_idx));
+                    &func_name, *overload_idx
+                ));
                 res.alloced_regs.push(0);
             }
             AstNode::Array(ft, nodes) => {
@@ -637,6 +697,15 @@ impl CodeGen {
 
                 decl.push_str("]\n");
                 self.dsbuf.push_str(&decl);
+
+                let dst_reg = self.alloc_reg(ValDat::ImmVal(Numerical::uint(0)));
+                self.sbuf.push_str(&format!(
+                        "dslea r{} array{} 9\n"
+                , dst_reg, self.array_ctr));
+
+                res.alloced_regs.push(dst_reg); 
+                res.arridx = Some(self.array_ctr);
+
                 self.array_ctr += 1;
             }
             // the code below is even dirtier and defly need some refactor
@@ -648,7 +717,7 @@ impl CodeGen {
                         dst_reg = self.alloc_reg(ValDat::ImmVal(Numerical::None));
                         idx_val = Some(*uv as usize);
                         None
-                    } 
+                    }
                     other => {
                         let gd = self.gen_expr(other.clone());
                         dst_reg = gd.alloced_regs[0];
@@ -656,45 +725,49 @@ impl CodeGen {
                     }
                 };
 
-                let mut arrn_ds = String::new(); // ds name 
+                let mut arrn_ds = String::new(); // ds name
                 let mut elem_size: usize = 0;
+
                 if let Some(entry) = self.symb_table.get(arr_name.clone()) {
                     arrn_ds = match &entry.1.dsname {
                         Some(v) => v.clone(),
-                        None => panic!("Internal error: can't get ds name for symbol {}", arr_name)
+                        None => panic!("Internal error: can't get ds name for symbol {}", arr_name),
                     };
                     let el_type_idx = match entry.1.ftype {
-                        FType::Array(fti, _) => fti,
+                        FType::Array(fti, _, _) => fti, // TODO
                         other => panic!("Unexpected type {:?} for {}", other, arr_name),
                     };
                     let el_type = idx_to_ftype(el_type_idx).unwrap_or_else(|| {
                         panic!("Internal error: no type for {}", el_type_idx);
                     });
                     elem_size = CodeGen::match_ftype_size(el_type);
-
                 } else {
-                    unreachable!("Internal error: no array {} in codegen symbol table",
-                        arr_name);
+                    unreachable!(
+                        "Internal error: no array {} in codegen symbol table",
+                        arr_name
+                    );
                 }
 
-                let instr = match (idx_val, idx_gendat) { 
-                    (Some(idx), None) => format!("dsload r{} {} {}\n",
-                            dst_reg, arrn_ds, idx * elem_size),
+                let instr = match (idx_val, idx_gendat) {
+                    (Some(idx), None) => {
+                        format!("dsload r{} {} {}\n", dst_reg, arrn_ds, idx * elem_size)
+                    }
                     (None, Some(gd)) => {
-                        let size_reg = self.alloc_reg(ValDat::ImmVal(Numerical::uint(elem_size as u64)));
-                        format!("uload r{} {}\n\
+                        let size_reg =
+                            self.alloc_reg(ValDat::ImmVal(Numerical::uint(elem_size as u64)));
+                        format!(
+                            "uload r{} {}\n\
                             umul r{} r{}\n\
                             dsrload r{} r{} {}\n",
-                        size_reg, elem_size, dst_reg, size_reg,
-                        dst_reg, dst_reg, arrn_ds)
-                    },
-                    other => unreachable!("Internal error: got {:?} in arr_el",
-                        other),
+                            size_reg, elem_size, dst_reg, size_reg, dst_reg, dst_reg, arrn_ds
+                        )
+                    }
+                    other => unreachable!("Internal error: got {:?} in arr_el", other),
                 };
 
                 self.sbuf.push_str(&instr);
                 res.alloced_regs.push(dst_reg);
-            }           
+            }
             other => {
                 panic!("can't generate yet for {:?}", other);
             }
@@ -703,10 +776,11 @@ impl CodeGen {
     }
 
     /// loads variable in place and returns register idx
-    fn load_variable(&mut self, name: String, gend: &mut GenData)
-        -> usize {
-        let (scope, vsymb) = self.symb_table.get(name.clone())
-                    .expect(&format!("No variable {} in scope", name));
+    fn load_variable(&mut self, name: String, gend: &mut GenData) -> usize {
+        let (scope, vsymb) = self
+            .symb_table
+            .get(name.clone())
+            .expect(&format!("No variable {} in scope", name));
         let var_name = vsymb.name.clone();
         gend.expr_type = vsymb.ftype;
         match vsymb.cur_reg {
@@ -722,11 +796,7 @@ impl CodeGen {
             }
             sem::VarPosition::Stack(sfi) => {
                 let mut instr = String::new();
-                let reg = self.alloc_reg(
-                    ValDat::Symbol(FSymbTabData::new(
-                        scope, var_name
-                    ))
-                );
+                let reg = self.alloc_reg(ValDat::Symbol(FSymbTabData::new(scope, var_name)));
                 if self.stack_end == sfi {
                     instr = format!("pop r{}\n", reg);
                     self.predicted_stack.pop();
@@ -750,7 +820,7 @@ impl CodeGen {
         match ft {
             _ => 8,
         }
-    } 
+    }
 
     pub fn match_jmp_op(cmp_op: CmpOp, label_name: &str) -> String {
         match cmp_op {
@@ -770,78 +840,72 @@ impl CodeGen {
                 sem::VarPosition::None => {}
                 sem::VarPosition::Register(ri) => {
                     self.free_reg(*ri);
-                    let instr = format!("uload r{} 0\n",
-                        ri);
+                    let instr = format!("uload r{} 0\n", ri);
                     self.sbuf.push_str(&instr);
                 }
                 sem::VarPosition::Stack(sfi) => {
-                    let reg_idx = self.alloc_reg(
-                        ValDat::ImmVal(Numerical::uint(*sfi as u64))
-                    );
-                    let reg_zero = self.alloc_reg(
-                        ValDat::ImmVal(Numerical::uint(0))
-                    );
+                    let reg_idx = self.alloc_reg(ValDat::ImmVal(Numerical::uint(*sfi as u64)));
+                    let reg_zero = self.alloc_reg(ValDat::ImmVal(Numerical::uint(0)));
                     let instr = format!(
                         "uload r{} {}\n
                          uload r{} {}\n 
                          usf r{} r{}",
-                        reg_idx, sfi, reg_zero, 0, reg_idx, reg_zero 
+                        reg_idx, sfi, reg_zero, 0, reg_idx, reg_zero
                     );
                     self.sbuf.push_str(&instr);
+                    self.free_reg(reg_idx);
+                    self.free_reg(reg_zero);
                 }
             }
         }
     }
 
     fn alloc_reg(&mut self, val: ValDat) -> usize {
-        for idx in 0..self.alloced_regs.len() {
-            if let Some(ValDat::None) = self.alloced_regs.get(idx) {
-                self.unused_regs.push(idx);
-                self.alloced_regs[idx] = val;
-                return idx;
+        // 1. Find any truly free register
+        for i in 0..self.alloced_regs.len() {
+            if matches!(self.alloced_regs[i], ValDat::None) {
+                self.alloced_regs[i] = val;
+                return i;
             }
         }
-        let oldest = self.unused_regs.remove(0);
-        let mut symbname: Option<(usize, String)> = None;
 
-        if let Some(dat) = self.alloced_regs.get_mut(oldest) {
-            self.predicted_stack.push(dat.clone());
-            match dat {
-                ValDat::None => {}
-                ValDat::Symbol(s) => {
-                    symbname = Some((s.scope, s.name.clone()));
-                }
-                other => {} 
+        for i in (0..self.alloced_regs.len()).rev() {
+            if !matches!(self.alloced_regs[i], ValDat::Symbol(_)) {
+                self.spill_and_use(i, val);
+                return i;
             }
         }
-        
-        if let Some((scope, name)) = symbname {
-            if let Some(val) = self.symb_table.get_mut_in_scope(&name, scope) {
-                val.cur_reg = VarPosition::Stack(
-                    self.predicted_stack.len().saturating_sub(1)
-                );
-            };
-        };
-        
-        self.sbuf.push_str(&format!("push r{}\n", oldest));
-        self.alloced_regs[oldest] = val;
-        self.unused_regs.push(oldest);
-        return oldest;
+
+        let spill_reg = self.alloced_regs.len() - 1; // R31
+        self.spill_and_use(spill_reg, val);
+        spill_reg
+    }
+
+    fn spill_and_use(&mut self, reg: usize, new_val: ValDat) {
+        if !matches!(self.alloced_regs[reg], ValDat::None) {
+            self.sbuf.push_str(&format!("push r{}\n", reg));
+            if let ValDat::Symbol(s) = &self.alloced_regs[reg].clone() {
+                if let Some(entry) = self.symb_table.get_mut_in_scope(&s.name, s.scope) {
+                    entry.cur_reg = VarPosition::Stack(self.stack_end);
+                }
+            }
+            self.stack_end += 1;
+        }
+
+        self.alloced_regs[reg] = new_val;
     }
 
     fn free_reg_not_var(&mut self, idx: usize) {
         if let Some(ValDat::Symbol(_)) = &self.alloced_regs.get(idx) {
-            return; 
+            return;
         }
         self.alloced_regs[idx] = ValDat::None;
-
     }
 
     fn free_reg(&mut self, idx: usize) {
         if let Some(ValDat::Symbol(s)) = &self.alloced_regs.get(idx) {
             if let Some(val) = self.symb_table.get_mut_in_scope(&s.name, s.scope) {
                 if let VarPosition::Register(_) = val.cur_reg {
-                    println!("set to none");
                     val.cur_reg = VarPosition::None;
                 }
             };
@@ -862,11 +926,11 @@ impl CodeGen {
                 idx_reg, sfi, dstreg, idx_reg
             );
             self.sbuf.push_str(&instr);
+            self.free_reg(idx_reg);
         }
         dstreg
     }
 
-    
     fn get_typeconv(ftyp_src: FType, ftyp_dst: FType, rd: usize, rs: usize) -> String {
         let ft1_l = CodeGen::ftletter(ftyp_src);
         let ft2_l = CodeGen::ftletter(ftyp_dst);
@@ -897,7 +961,7 @@ impl CodeGen {
         name
     }
 
-    /// pushes previously allocated label 
+    /// pushes previously allocated label
     fn push_label(&mut self, name: &str) {
         match self.labels.get_mut(name) {
             Some(v) => {
@@ -913,7 +977,8 @@ impl CodeGen {
     fn gen_intrinsic(&mut self, intrin: Intrinsic, reg_idx: usize) {
         match intrin {
             Intrinsic::Print => {
-                let instrs = format!("push r1\n\
+                let instrs = format!(
+                    "push r1\n\
                                     push r2\n\
                                     push r3\n\
                                     movr r1 r{}\n\
@@ -923,8 +988,12 @@ impl CodeGen {
                                     pop r3\n\
                                     pop r2\n\
                                     pop r1\n",
-                reg_idx);
+                    reg_idx
+                );
                 self.sbuf.push_str(&instrs);
+            }
+            Intrinsic::Len => {
+                unreachable!();
             }
         }
     }
@@ -937,15 +1006,17 @@ pub struct GenData {
     pub symbols: HashMap<String, FSymbol>,
     pub expr_type: FType,
     pub cmp_op: Option<CmpOp>,
+    pub arridx: Option<usize>,
 }
 
 impl GenData {
     pub fn new(alloced: Vec<usize>) -> GenData {
-        GenData { 
-            alloced_regs: alloced, 
+        GenData {
+            alloced_regs: alloced,
             symbols: HashMap::new(),
             expr_type: FType::none,
             cmp_op: None,
+            arridx: None,
         }
     }
 
@@ -963,6 +1034,9 @@ pub struct FSymbTabData {
 impl FSymbTabData {
     /// usize is scope, string is name
     pub fn new(scope: usize, name: String) -> FSymbTabData {
-        FSymbTabData { scope: scope, name: name }
+        FSymbTabData {
+            scope: scope,
+            name: name,
+        }
     }
 }

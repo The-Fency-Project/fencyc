@@ -266,7 +266,8 @@ pub enum Kword {
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum Intrinsic {
-    Print
+    Print,
+    Len,
 }
 
 fn match_symb_tok(word: &str) -> Tok {
@@ -285,6 +286,7 @@ fn match_symb_tok(word: &str) -> Tok {
         "continue" => Tok::Keyword(Kword::Continue),
         "return" => Tok::Keyword(Kword::Return),
         "override" => Tok::Keyword(Kword::Override),
+        "_len" => Tok::Intrin(Intrinsic::Len), 
         other => Tok::Identifier(other.to_string()),
     }
 }

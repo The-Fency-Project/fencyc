@@ -1,5 +1,4 @@
 func main() {
-
     let uvar: uint = 10u; // declaring unsigned integer (64 bit)
     let ivar: int = -5; // declaring signed integer (64 bit)
     let fvar: float = 3.14; // declaring floating point variable (double precision)
@@ -19,4 +18,6 @@ func main() {
     printintrin uvar_from_fvar;
     printintrin fvar_from_uvar;
     printintrin some_ops;
+
+    return;
 }

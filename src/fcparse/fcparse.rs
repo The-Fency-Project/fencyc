@@ -390,7 +390,7 @@ impl FcParser {
                 if let Some(name) = ftn {
                     self.expect(Tok::RBr);
                     let ft = match_ftype(&name).unwrap_or_else(|| {panic!("{}: unknown type {}", self.line, name)});
-                    ftype = FType::Array(ftype_to_idx(&ft), 0);
+                    ftype = FType::Array(ftype_to_idx(&ft), 0, 0);
                 } 
                 return ftype;
             }

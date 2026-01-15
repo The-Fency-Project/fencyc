@@ -17,4 +17,5 @@ func main() {
     // shorter way
     for let a: int = 0 in a < 10; a = a + 1 printintrin a; 
 
+    return;
 }

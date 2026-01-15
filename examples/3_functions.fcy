@@ -7,7 +7,7 @@ func main() {
     let fact_res: int = factorial(5);
     printintrin fact_res; // 120 
     
-    // compiler will match func overload according to given params
+    // compiler will match func overload according to given params and return type
     let sum_float_res: float = add(15.5, 3.75);
     printintrin sum_float_res;
 
