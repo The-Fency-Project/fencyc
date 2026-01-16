@@ -41,7 +41,7 @@ pub struct CodeGen {
     stackidxs: Vec<usize>, // saving last stack idx before function
     overload_ctr: usize,
     matched_overloads: HashMap<usize, usize>, // call idx -> overload idx
-    array_ctr: usize,
+    arrays: HashMap<String, ArrayData>,
 }
 
 impl CodeGen {
@@ -62,7 +62,7 @@ impl CodeGen {
             stackidxs: Vec::new(),
             overload_ctr: 0,
             matched_overloads: mo,
-            array_ctr: 0,
+            arrays: HashMap::new(),
         }
     }
 
@@ -95,14 +95,17 @@ impl CodeGen {
         let mut res = GenData::new(Vec::new());
         match node {
             AstNode::Assignment { name, val, ft } => {
-                let arr_idx = self.array_ctr;
-
                 let rightdat = self.gen_expr(*val);
-                // Array(usize, usize, usize) = 9, // typeid, count, arridx
-                if let FType::Array(typeid, count, arridx) = ft {
+
+                // Array(usize, usize, usize) // typeid, count, arridx
+                if let FType::Array(typeid, _, _) = ft {
                     // TODO: either add support for getting the same array,
                     // or deny that idea completely.
-                    let is_new: bool = rightdat.arridx.is_some();
+                    let mut count: Option<usize> = None;
+                    rightdat.arrd.inspect(|x| {count = Some(x.len)});
+
+                    let arr_idx = self.arrays.len();
+                    let is_new: bool = count.is_some();
                     
                     let rdst = self.alloc_reg(ValDat::Symbol(FSymbTabData::new(
                         self.symb_table.cur_scope,
@@ -112,7 +115,11 @@ impl CodeGen {
                     if is_new {
                         self.sbuf
                            .push_str(&format!("dslea r{} array{} 9\n", rdst, arr_idx));
-                        self.array_ctr += 1; 
+                        self.arrays.insert(name.clone(), ArrayData::new(
+                            self.arrays.len(),
+                            count.unwrap(), // has to be some here
+                            idx_to_ftype(typeid).expect("internal: unknown ftype")
+                        )); 
                     } else {
                         self.sbuf
                            .push_str(&format!("movr r{} r{}\n", rdst, rightdat.alloced_regs[0]));
@@ -466,7 +473,26 @@ impl CodeGen {
             }
             AstNode::Intrinsic { intr, val } => {
                 if matches!(intr, Intrinsic::Len) {
-                    // TODO!
+                    match *val {
+                        AstNode::Variable(name) => {
+                            let arr_len = match self.arrays.get(&name) {
+                                Some(v) => v.len,
+                                None => panic!("Internal error: can't get\
+                                    array for len intrin")
+                            };
+
+                            let reg = self.alloc_reg(ValDat::ImmVal(
+                                    Numerical::uint(arr_len as u64)
+                            ));
+                            self.sbuf.push_str(&format!("uload r{} {}\n",
+                                reg, arr_len
+                            ));
+                            res.alloced_regs.push(reg);
+
+                        }
+                        other => {todo!("Could only get _len for variables")}
+                    }
+                    return res;
                 }
 
                 let rdat = self.gen_expr(*val);
@@ -673,7 +699,7 @@ impl CodeGen {
                     panic!("codegen error: array couldnt have 0 size");
                 }
 
-                let mut decl = format!("array{} {:?}[{}] [", self.array_ctr, ft, nodes.len());
+                let mut decl = format!("array{} {:?}[{}] [", self.arrays.len(), ft, nodes.len());
 
                 for (idx, node) in nodes.iter().enumerate() {
                     if idx > 0 {
@@ -686,7 +712,7 @@ impl CodeGen {
                         AstNode::Int(iv) => {
                             decl.push_str(&format!("{}", iv));
                         }
-                        AstNode::Float(fv) => {
+                    AstNode::Float(fv) => {
                             decl.push_str(&format!("{:#?}", fv));
                         }
                         other => {
@@ -701,12 +727,15 @@ impl CodeGen {
                 let dst_reg = self.alloc_reg(ValDat::ImmVal(Numerical::uint(0)));
                 self.sbuf.push_str(&format!(
                         "dslea r{} array{} 9\n"
-                , dst_reg, self.array_ctr));
+                , dst_reg, self.arrays.len()));
 
                 res.alloced_regs.push(dst_reg); 
-                res.arridx = Some(self.array_ctr);
+                res.arrd = Some(ArrayData::new(
+                        self.arrays.len(), nodes.len(), ft
+                ));
 
-                self.array_ctr += 1;
+                // we'd expect assignment to push new entry into 
+                // arrays hashmap
             }
             // the code below is even dirtier and defly need some refactor
             AstNode::ArrayElem(arr_name, idx_ast) => {
@@ -1006,7 +1035,7 @@ pub struct GenData {
     pub symbols: HashMap<String, FSymbol>,
     pub expr_type: FType,
     pub cmp_op: Option<CmpOp>,
-    pub arridx: Option<usize>,
+    pub arrd: Option<ArrayData>,
 }
 
 impl GenData {
@@ -1016,7 +1045,7 @@ impl GenData {
             symbols: HashMap::new(),
             expr_type: FType::none,
             cmp_op: None,
-            arridx: None,
+            arrd: None,
         }
     }
 
@@ -1037,6 +1066,23 @@ impl FSymbTabData {
         FSymbTabData {
             scope: scope,
             name: name,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ArrayData {
+    pub id: usize,     
+    pub len: usize, 
+    pub el_type: FType,
+}
+
+impl ArrayData {
+    pub fn new(id: usize, len: usize, elt: FType) -> ArrayData {
+        ArrayData {
+            id: id,
+            len: len,
+            el_type: elt
         }
     }
 }

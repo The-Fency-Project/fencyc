@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Binary;
 
 use crate::fcparse::fcparse::AstNode;
-use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, FuncArg, FuncTable, UnaryOp};
+use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, FuncArg, 
+    FuncTable, UnaryOp};
+use crate::lex::Intrinsic;
 use crate::logger::logger as log;
 use crate::logger::logger::{ErrKind, LogLevel, Logger, WarnKind};
 
@@ -386,7 +388,24 @@ impl SemAn {
                 exprdat.ftype = *target_type;
             }
             AstNode::Intrinsic { intr, val } => {
-                let _ = self.analyze_expr(&AstRoot::new(*val.clone(), line), logger);
+                let rdat = self.analyze_expr(&AstRoot::new(*val.clone(), line), logger);
+                match intr {
+                    Intrinsic::Len => {
+                        match rdat.ftype {
+                            FType::Array(_, _, _) => {},
+                            other => {
+                                logger.emit(
+                                    LogLevel::Error(
+                                        ErrKind::MismatchedTypes(FType::Array(0, 0, 0), other)
+                                    ),
+                                    line
+                                );
+                            }
+                        }
+                        exprdat.ftype = FType::uint; 
+                    },
+                    other => {}
+                }
             }
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();

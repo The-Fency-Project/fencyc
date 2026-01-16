@@ -1,12 +1,15 @@
 func main() {
-    let test: [float] = [1.61, 3.14, 9.81]float;
-    for let i: uint = 0u in i < 3u; i += 1u {
+    let test: [float] = [1.61, 2.7, 3.14, 9.81]float;
+
+    for let i: uint = 0u in i < _len test; i += 1u {
         printintrin test[i];
     }
+
     if test[2u] == 9.81 {
         printintrin 1;
     } else {
         printintrin 0;
     }
+
     return;
 }

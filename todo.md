@@ -5,9 +5,8 @@
 - auto type inference for lets
 - make error if trying to override func that wasnt declared
 now:
-- seman for arrays
+- [more] seman for arrays
 - // TODO: either add support for getting the same array,
                     // or deny that idea completely.
 - passing static arrays ptrs as func arg
-- getting arr len
 - static strings
