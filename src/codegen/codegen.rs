@@ -6,7 +6,7 @@ use crate::{
     seman::seman::{self as sem, idx_to_ftype, FSymbol, FType, SemAn, SymbolTable, VarPosition},
 }; // AstNode;
 use fparse::AstNode;
-use qbe::{Function, Instr, Linkage, Module, Type, Value};
+use qbe::{Block, Function, Instr, Linkage, Module, Type, Value};
 
 #[derive(Debug, Clone)]
 pub enum ValDat {
@@ -30,12 +30,10 @@ pub struct CodeGen {
     ast: Vec<AstRoot>,
     cur_ast: usize,
     pub sbuf: String,
-    pub module: Module<'static>,
-    alloced_regs: Vec<ValDat>,
-    unused_regs: Vec<usize>, // which are unused for some time (lru)
+    pub module: Module,
+    pub fbuild: FuncBuilder,
     pub symb_table: SymbolTable,
-    predicted_stack: Vec<ValDat>,
-    stack_end: usize,               // latest stack frame idx
+    should_push: bool,
     labels: HashMap<String, usize>, // usize for sbuf idx
     loop_exits: Vec<String>,
     loop_conts: Vec<String>,
@@ -52,11 +50,9 @@ impl CodeGen {
             cur_ast: 0,
             sbuf: String::new(),
             module: Module::new(),
-            alloced_regs: vec![ValDat::None; 32],
-            unused_regs: Vec::new(),
+            fbuild: FuncBuilder::new(),
+            should_push: true,
             symb_table: SymbolTable::new(),
-            stack_end: 0,
-            predicted_stack: Vec::new(),
             labels: HashMap::new(),
             loop_exits: Vec::new(),
             loop_conts: Vec::new(),
@@ -104,7 +100,7 @@ impl CodeGen {
     }
 
     fn gen_expr(&mut self, node: AstNode) -> GenData {
-        let mut res = GenData::new(Vec::new());
+        let mut res = GenData::new();
         match node {
             AstNode::Function { name, args, ret_type, body } => {
                 // TODO: pub 
@@ -129,7 +125,9 @@ impl CodeGen {
                     ret_t_qbe
                 );
                 func.add_block("start");
-
+                self.fbuild.func = Some(func);
+                self.fbuild.ready = false;
+                self.should_push = false;
                 {
                     let body_instrs = {
                         let instrs = {
@@ -140,12 +138,13 @@ impl CodeGen {
                     };
 
                     for instr in body_instrs {
-                        func.add_instr(instr);
+                        self.fbuild.add_instr(instr);
                     }
                 }
 
-                func.add_instr(Instr::Ret(None));
-                res.newfunc = Some(func);
+                self.fbuild.add_instr(Instr::Ret(None));
+                self.should_push = true;
+                self.fbuild.ready = true;
             }
             AstNode::ReturnVal { val } => {
 
@@ -157,15 +156,45 @@ impl CodeGen {
                 }
             }
             AstNode::Assignment { name, val, ft } => {
-                // TODO  
+                // TODO 
+                let rdat = self.gen_expr(*val);
+
+                let count = rdat.instrs.len().saturating_sub(1);
+                for i in rdat.instrs.iter().take(count) {
+                    self.fbuild.add_instr(i.clone());
+                }
+                let last_instr = rdat.instrs.last().unwrap_or_else(|| {
+                    panic!("Internal error: can't get last instr of \
+                        assignment")
+                });
+
+                self.fbuild.assign_instr(
+                    Value::Temporary(name), 
+                    Self::match_ft_qbf(ft), 
+                    last_instr.clone()
+                );
+            }
+            AstNode::Uint(uv) => {
+                let val = Value::Const(uv); 
+                res.instrs.push(
+                    Instr::Load(Type::Long, val)
+                );
+            }
+            AstNode::BinaryOp { op, left, right } => {
+                todo!();
             }
             other => {
                 panic!("can't generate yet for {:?}", other);
             }
         }
-        if let Some(ref f) = res.newfunc {
-            self.module.add_function(f.clone());
+        if let Some(f) = self.fbuild.pop_func() {
+            self.module.add_function(f);
         };
+        if self.should_push {
+            for i in res.instrs.drain(..) {
+                self.fbuild.add_instr(i);
+            }
+        }
         return res;
     }
 
@@ -229,7 +258,7 @@ impl CodeGen {
         self.sbuf.push_str(&format!("label {}\n", name));
     }
 
-    pub fn match_ft_qbf(ft: FType) -> Type<'static> {
+    pub fn match_ft_qbf(ft: FType) -> Type {
         match ft {
             FType::int | FType::uint => Type::Long,
             FType::float             => Type::Double,
@@ -241,20 +270,7 @@ impl CodeGen {
     fn gen_intrinsic(&mut self, intrin: Intrinsic, reg_idx: usize) {
         match intrin {
             Intrinsic::Print => {
-                let instrs = format!(
-                    "push r1\n\
-                                    push r2\n\
-                                    push r3\n\
-                                    movr r1 r{}\n\
-                                    uload r2 2\n\
-                                    uload r3 0\n\
-                                    ncall 1 r0\n\
-                                    pop r3\n\
-                                    pop r2\n\
-                                    pop r1\n",
-                    reg_idx
-                );
-                self.sbuf.push_str(&instrs);
+               todo!(); 
             }
             Intrinsic::Len => {
                 unreachable!();
@@ -263,35 +279,104 @@ impl CodeGen {
     }
 }
 
+#[derive(Debug)] 
+pub struct FuncBuilder {
+    pub func: Option<Function>,
+    pub ready: bool,
+}
+
+impl FuncBuilder {
+    pub fn new() -> FuncBuilder {
+        FuncBuilder { 
+            func: None,
+            ready: false,
+        }
+    }
+
+    pub fn add_instr(&mut self, i: Instr) -> Result<(), ()> {
+        if let Some(f) = self.func.as_mut() {
+            f.add_instr(i);
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn assign_instr(&mut self, dst: Value, t: Type, i: Instr)
+            -> Result<(), ()> {
+        if let Some(f) = self.func.as_mut() {
+            f.assign_instr(dst, t, i);
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn pop_func(&mut self) -> Option<Function> {
+        if !self.ready {
+            return None;
+        }
+
+        let cl = match &self.func {
+            Some(f) => f.clone(),
+            None => {return None;}
+        };
+        self.func = None;
+        Some(cl)
+    }
+}
+
 /// code generation data for each generated expression
 #[derive(Debug, Clone)]
 pub struct GenData {
-    pub alloced_regs: Vec<usize>,
     pub symbols: HashMap<String, FSymbol>,
     pub expr_type: FType,
     pub cmp_op: Option<CmpOp>,
     pub arrd: Option<ArrayData>,
-   
-    pub instrs: Vec<Instr<'static>>,
 
-    pub newfunc: Option<Function<'static>>,
+    pub val: Option<Value>,
+   
+    pub instrs: Vec<Instr>,
+
+    pub newfunc: Option<Function>,
+
+    pub asgn_dat: Option<AssignData>,
 }
 
 impl GenData {
-    pub fn new(alloced: Vec<usize>) -> GenData {
+    pub fn new() -> GenData {
         GenData {
-            alloced_regs: alloced,
             symbols: HashMap::new(),
             expr_type: FType::none,
             cmp_op: None,
             arrd: None,
             instrs: Vec::new(),
             newfunc: None,
+            asgn_dat: None,
+            val: None
         }
     }
 
     pub fn push_symb(&mut self, s: FSymbol) {
         self.symbols.insert(s.name.clone(), s);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AssignData {
+    pub name: String,
+    pub t: Type,
+    pub val: Instr,
+}
+
+impl AssignData {
+    pub fn new(name: String, t: Type, val: Instr) -> 
+    AssignData {
+        AssignData {
+            name: name,
+            t: t,
+            val: val
+        }
     }
 }
 

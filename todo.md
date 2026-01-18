@@ -1,3 +1,9 @@
+## Current:
+- do qbe retvals
+- do binary ops codegen for qbe
+- just continue doing qbe codegen
+
+### Future (from main branch):
 - refactors (especially for codegen bruh)
 - iterators for `for`
 - cargo tests

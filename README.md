@@ -23,9 +23,8 @@ Then just:
 
 ## Usage
 Compile some program:  
-- `fencyc input.fcy -o program.vve`  
-Run it with [VoxVM](https://github.com/Freemorger/voxvm):  
-`voxvm --vve=program.vve`  
+- `fencyc input input.fcy` 
+Run as normal program.
 Flags:  
 `--fpermissive`: enables permissive mode, which leads to less type system errors, but still warns.
 

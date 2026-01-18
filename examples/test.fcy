@@ -1,5 +1,6 @@
 func main() {
-    let a: uint = 1u;
+    let a: uint = 3u;
 
     return;
 }
+

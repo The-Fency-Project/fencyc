@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "fencyc"
-version = "0.4.3"
+version = "0.5.0"
 dependencies = [
  "clap",
  "colored",
@@ -146,8 +146,7 @@ dependencies = [
 [[package]]
 name = "qbe"
 version = "2.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60adc4f72627fde7472716ecdffeaf9378bd88da3d51e28de40f0aa64615f5f0"
+source = "git+https://github.com/Freemorger/qbe-rs.git#7e6b234913323863120aa5be5e49494b3b6e4187"
 
 [[package]]
 name = "quote"
