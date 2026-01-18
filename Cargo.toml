@@ -1,9 +1,10 @@
 [package]
 name = "fencyc"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.53", features = ["derive"] }
 colored = "3.0.0"
-voxvm = { git = "https://github.com/Freemorger/voxvm.git" }
+qbe = { git = "https://github.com/Freemorger/qbe-rs.git" }
+# voxvm = { git = "https://github.com/Freemorger/voxvm.git" }

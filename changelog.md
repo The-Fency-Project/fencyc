@@ -1,3 +1,5 @@
-v0.4.3: 
-- `_len` intrinsic seems to work 
-- a bit of seman and fixes
+v0.5.0: 
+- lets switch to qbe AOT! mainline codegen becomes unmaintanbale. 
+also voxvm is kinda slow
+- some basic qbe codegen 
+- forked qbe-rs for easier work

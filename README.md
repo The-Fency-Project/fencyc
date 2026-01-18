@@ -3,7 +3,7 @@
 > The toolchain is still on very early stages.
 
 The Fency programming language compiler - simple and modern language, aimed to be enjoyable.
-Targets [VoxVM](https://github.com/Freemorger/voxvm) bytecode.
+This branch targets QBE IR. 
 
 ## Fast installation
 There is a `fcyup` python script that would download/update fency toolchain for you,
@@ -23,9 +23,8 @@ Then just:
 
 ## Usage
 Compile some program:  
-- `fencyc input.fcy -o program.vve`  
-Run it with [VoxVM](https://github.com/Freemorger/voxvm):  
-`voxvm --vve=program.vve`  
+- `fencyc input input.fcy` 
+Run as normal program.
 Flags:  
 `--fpermissive`: enables permissive mode, which leads to less type system errors, but still warns.
 
