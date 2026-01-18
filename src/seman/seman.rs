@@ -8,7 +8,7 @@ use crate::lex::Intrinsic;
 use crate::logger::logger as log;
 use crate::logger::logger::{ErrKind, LogLevel, Logger, WarnKind};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FSymbol {
     pub name: String,
     pub cur_reg: VarPosition,

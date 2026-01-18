@@ -51,7 +51,13 @@ fn main() {
 fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermissive: bool) -> Result<(), ()> {
     let output_name = match output {
         Some(v) => v,
-        None => input.replace(".fcy", ".vve"),
+        None => {
+            if cfg!(target_os = "windows") {
+                input.replace(".fcy", ".exe")
+            } else {
+                input.replace(".fcy", "")
+            }
+        },
     };
 
     let mut logger: log::Logger = Logger::new();
@@ -75,8 +81,11 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermis
 
     let mut gene = cgen::CodeGen::new(ast, matched_overloads);
     gene.gen_everything();
+    #[cfg(debug_assertions)] { 
+        println!("{}", gene.module);
+    }
 
-    let temp_fname = format!("{}_temp.vvs", input.replace(".fcy", ""));
+    let temp_fname = format!("{}_temp.ssa", input.replace(".fcy", ""));
 
     if let Err(e) = gene.write_file(&temp_fname) {
         panic!("Error writing temp into file: {}", e.to_string());
@@ -84,38 +93,67 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermis
 
     assemble(&temp_fname, &output_name);
 
-    #[cfg(not(debug_assertions))] // deleting temp asm file 
-                                // if fencyc build is release
-    if let Err(e) = std::fs::remove_file(&temp_fname) {
-        eprintln!("Failed to delete temp asm file {}", temp_fname);
-    };
-
     logger.finalize();
 
     Ok(())
 }
 
 fn assemble(input_name: &str, output_name: &str) {
-    //let com = format!("voxvm --vas={} --vas-out={}", input_name, output_name);
-    //
-    //let output = if cfg!(target_os = "windows") {
-    //    Command::new("cmd")
-    //        .args(["/C", &com])
-    //        .output()
-    //        .expect("failed to execute voxasm process")
-    //} else {
-    //    Command::new("sh")
-    //        .arg("-c")
-    //        .arg(&com)
-    //        .output()
-    //        .expect("failed to execute voxasm process")
-    //};
-    //
-    //let out = output.stdout;
-    //let err = output.stderr;
-    //
-    //println!("{}", String::from_utf8_lossy(&out));
-    //println!("{}", String::from_utf8_lossy(&err));
-    let mut asm = voxvm::VoxAssembly::new(input_name.to_owned(), output_name.to_owned());
-    asm.assemble();
+    let nat_fname = input_name.replace(".ssa", ".s");
+    
+    let out1 = run_command("qbe", &["-o", &nat_fname, input_name]);
+    print_stds(out1);
+ 
+    let out2 = run_command("gcc", &[&nat_fname, "-o", output_name]);
+    print_stds(out2);
+
+    release_cleanup(vec![input_name, &nat_fname]);
+}
+
+fn release_cleanup(files: Vec<&str>) {
+    if !cfg!(debug_assertions) {
+        for file in files {
+            if let Err(e) = std::fs::remove_file(file) {
+                eprintln!("Failed to delete temp asm file {}: {}", file, e);
+            };
+        }
+    }
+}
+
+/// Prints strings if they're not empty, 
+/// assuming [0] is stdout and [1] is stderr
+fn print_stds(ss: Vec<String>) {
+    if !ss[0].is_empty() {
+        println!("Stdout: {}", ss[0]);
+    }
+    if !ss[1].is_empty() {
+        println!("Stdout: {}", ss[1]);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_command(cmd: &str, args: &[&str]) -> Vec<String> {
+    let output = Command::new("cmd")
+        .args(["/C", cmd])
+        .args(args)
+        .output()
+        .expect(&format!("Failed to run {}", cmd));
+    
+    let mut res = Vec::new();
+    res.push(String::from_utf8_lossy(&output.stdout).to_string());
+    res.push(String::from_utf8_lossy(&output.stderr).to_string());
+    res
+}
+
+#[cfg(not(target_os = "windows"))]
+fn run_command(cmd: &str, args: &[&str]) -> Vec<String> {
+    let output = Command::new(cmd)
+        .args(args)
+        .output()
+        .expect(&format!("Failed to run {}", cmd));
+    
+    let mut res = Vec::new();
+    res.push(String::from_utf8_lossy(&output.stdout).to_string());
+    res.push(String::from_utf8_lossy(&output.stderr).to_string());
+    res
 }
