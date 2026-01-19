@@ -6,7 +6,7 @@ use crate::{
     seman::seman::{self as sem, idx_to_ftype, FSymbol, FType, SemAn, SymbolTable, VarPosition},
 }; // AstNode;
 use fparse::AstNode;
-use qbe::{Block, Function, Instr, Linkage, Module, Type, Value};
+use qbe::{Block, DataDef, DataItem, Function, Instr, Linkage, Module, Type, Value};
 
 #[derive(Debug, Clone)]
 pub enum ValDat {
@@ -64,6 +64,7 @@ impl CodeGen {
     }
 
     pub fn gen_everything(&mut self) {
+        self.gen_stddat();
         self.gen_prologue();
        
         while let Some(r) = self.ast.get(self.cur_ast) {
@@ -147,7 +148,7 @@ impl CodeGen {
                 self.fbuild.ready = true;
             }
             AstNode::ReturnVal { val } => {
-
+                //todo!();
             }
             AstNode::CodeBlock { exprs } => {
                 for expr in exprs {
@@ -156,7 +157,6 @@ impl CodeGen {
                 }
             }
             AstNode::Assignment { name, val, ft } => {
-                // TODO 
                 let rdat = self.gen_expr(*val);
 
                 let count = rdat.instrs.len().saturating_sub(1);
@@ -177,11 +177,53 @@ impl CodeGen {
             AstNode::Uint(uv) => {
                 let val = Value::Const(uv); 
                 res.instrs.push(
-                    Instr::Load(Type::Long, val)
+                    Instr::Load(Type::Long, val.clone())
                 );
+                res.val = Some(val);
+                res.qtype = Some(Type::Long);
+                res.ftype = FType::uint;
+            }
+            AstNode::Int(iv) => {
+                let val = Value::Const(iv as u64); 
+                res.instrs.push(
+                    Instr::Load(Type::Long, val.clone())
+                );
+                res.val = Some(val);
+                res.qtype = Some(Type::Long);
+                res.ftype = FType::int;
+            }
+            AstNode::Float(fv) => {
+                let val = Value::Const(fv.to_bits()); 
+                res.instrs.push(
+                    Instr::Load(Type::Long, val.clone())
+                );
+                res.val = Some(val);
+                res.qtype = Some(Type::Double);
+                res.ftype = FType::float; 
             }
             AstNode::BinaryOp { op, left, right } => {
-                todo!();
+                let leftd = self.gen_expr(*left);
+                let rightd = self.gen_expr(*right);
+
+                match op {
+                    fparse::BinaryOp::Add => {
+                        res.instrs.push(
+                            Instr::Add(
+                                leftd.val.unwrap(), 
+                                rightd.val.unwrap()
+                            )
+                        )
+                    }
+                    other => todo!("{:?}", other)
+                }
+            }
+            AstNode::Intrinsic { intr, val } => {
+                let gend = self.gen_expr(*val);
+                
+                let mut ind = self.gen_intrinsic(intr, gend);
+                for instr in ind.instrs.drain(..) {
+                    res.instrs.push(instr);
+                }
             }
             other => {
                 panic!("can't generate yet for {:?}", other);
@@ -267,15 +309,68 @@ impl CodeGen {
         }
     }
 
-    fn gen_intrinsic(&mut self, intrin: Intrinsic, reg_idx: usize) {
+    fn gen_stddat(&mut self) {
+        let items = vec![
+            (Type::Byte, DataItem::Str(r"%lu\n".into())),
+            (Type::Byte, DataItem::Str(r"%ld\n".into())),
+            (Type::Byte, DataItem::Str(r"%f\n".into())),
+        ];
+        self.module.add_data(DataDef::new(
+            Linkage::private(),
+            "fmt_uint",
+            None,
+            items[0..1].to_vec()
+        ));
+        self.module.add_data(DataDef::new(
+            Linkage::private(),
+            "fmt_int",
+            None,
+            items[1..2].to_vec()
+        ));
+        self.module.add_data(DataDef::new(
+            Linkage::private(),
+            "fmt_float",
+            None,
+            items[2..3].to_vec()
+        ));
+    }
+    
+    fn gen_intrinsic(&mut self, intrin: Intrinsic, rightdat: GenData) 
+            -> GenData {
+        let mut resd = GenData::new();
         match intrin {
             Intrinsic::Print => {
-               todo!(); 
+                // TODO
+                match rightdat.qtype {
+                    Some(Type::Long) => {
+                        if rightdat.ftype == FType::uint {
+                            let args = vec![
+                                (Type::Long, Value::Global("fmt_uint".into())),
+                                (Type::Long, rightdat.val.unwrap_or_else(|| {
+                                    panic!("Internal error: expected args \
+                                        for print")
+                                }))
+                            ];
+
+                            resd.instrs.push(
+                                Instr::Call(
+                                    "printf".into(),
+                                    args, 
+                                    None
+                                )
+                            );    
+                        } else if rightdat.ftype == FType::int {
+                            todo!("finish")  
+                        }
+                    }        
+                    other => todo!("Print for {:?}", other)
+                }
             }
             Intrinsic::Len => {
-                unreachable!();
+                todo!();
             }
         }
+        resd
     }
 }
 
@@ -330,30 +425,28 @@ impl FuncBuilder {
 #[derive(Debug, Clone)]
 pub struct GenData {
     pub symbols: HashMap<String, FSymbol>,
-    pub expr_type: FType,
+    pub ftype: FType,
     pub cmp_op: Option<CmpOp>,
-    pub arrd: Option<ArrayData>,
 
     pub val: Option<Value>,
+    pub qtype: Option<Type>,
    
     pub instrs: Vec<Instr>,
 
     pub newfunc: Option<Function>,
 
-    pub asgn_dat: Option<AssignData>,
 }
 
 impl GenData {
     pub fn new() -> GenData {
         GenData {
             symbols: HashMap::new(),
-            expr_type: FType::none,
+            ftype: FType::none,
             cmp_op: None,
-            arrd: None,
             instrs: Vec::new(),
             newfunc: None,
-            asgn_dat: None,
-            val: None
+            val: None,
+            qtype: None,
         }
     }
 

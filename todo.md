@@ -1,4 +1,5 @@
 ## Current:
+- load var 
 - do qbe retvals
 - do binary ops codegen for qbe
 - just continue doing qbe codegen

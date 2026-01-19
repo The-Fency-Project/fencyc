@@ -21,6 +21,16 @@ You will need latest rustc and cargo which could be installed with rustup.
 Then just:
 `cargo build --release`
 
+## External dependencies
+To actually compile something with fencyc, you would also need:
+1. `qbe` - QBE (quick backend) binary to generate native assemblies from SSA.
+Get those from your package manager (apt/pacman/homebrew/etc) or install 
+manually, has to be in PATH. See [QBE website](https://c9x.me/compile/).
+2. `gcc` - to assemble and link native assemblies. Preinstalled on most linux 
+distributions, but for others/macos/windows you would likely need to 
+install this, also has to be in the PATH. 
+See [GNU website](https://gcc.gnu.org/install/) or get the binaries.
+
 ## Usage
 Compile some program:  
 - `fencyc input input.fcy` 
