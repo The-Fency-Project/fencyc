@@ -1,9 +1,9 @@
 use std::{collections::HashMap, fmt::format, rc::Rc};
 
 use crate::{
-    fcparse::fcparse::{self as fparse, AstRoot, CmpOp},
+    fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, CmpOp, UnaryOp},
     lexer::lexer::Intrinsic,
-    seman::seman::{self as sem, idx_to_ftype, FSymbol, FType, SemAn, SymbolTable, VarPosition},
+    seman::seman::{self as sem, FSymbol, FType, SemAn, SymbolTable, VarPosition, idx_to_ftype},
 }; // AstNode;
 use fparse::AstNode;
 use qbe::{Block, DataDef, DataItem, Function, Instr, Linkage, Module, Type, Value};
@@ -34,17 +34,18 @@ pub struct CodeGen {
     pub fbuild: FuncBuilder,
     pub symb_table: SymbolTable,
     should_push: bool,
+    tmp_ctr: usize,
+    funcs: HashMap<String, FuncData>,
     labels: HashMap<String, usize>, // usize for sbuf idx
     loop_exits: Vec<String>,
     loop_conts: Vec<String>,
     stackidxs: Vec<usize>, // saving last stack idx before function
     overload_ctr: usize,
-    matched_overloads: HashMap<usize, usize>, // call idx -> overload idx
-    arrays: HashMap<String, ArrayData>,
+    matched_overloads: HashMap<usize, (usize, FType)>, // call idx -> overload idx, ret type
 }
 
 impl CodeGen {
-    pub fn new(ast: Vec<AstRoot>, mo: HashMap<usize, usize>) -> CodeGen {
+    pub fn new(ast: Vec<AstRoot>, mo: HashMap<usize, (usize, FType)>) -> CodeGen {
         CodeGen {
             ast: ast,
             cur_ast: 0,
@@ -53,13 +54,14 @@ impl CodeGen {
             fbuild: FuncBuilder::new(),
             should_push: true,
             symb_table: SymbolTable::new(),
+            tmp_ctr: 0,
             labels: HashMap::new(),
             loop_exits: Vec::new(),
             loop_conts: Vec::new(),
             stackidxs: Vec::new(),
             overload_ctr: 0,
             matched_overloads: mo,
-            arrays: HashMap::new(),
+            funcs: HashMap::new(),
         }
     }
 
@@ -98,6 +100,7 @@ impl CodeGen {
         mainf.add_instr(Instr::Ret(Some(Value::Const(0))));
 
         self.module.add_function(mainf);
+        
     }
 
     fn gen_expr(&mut self, node: AstNode) -> GenData {
@@ -120,7 +123,7 @@ impl CodeGen {
 
 
                 let mut func = Function::new(
-                    Linkage::private(), 
+                    Linkage::private(), // TODO: pub 
                     format!("{}_0", name),  // TODO: spec overloads
                     args_qbe, 
                     ret_t_qbe
@@ -143,37 +146,96 @@ impl CodeGen {
                     }
                 }
 
-                self.fbuild.add_instr(Instr::Ret(None));
                 self.should_push = true;
                 self.fbuild.ready = true;
             }
             AstNode::ReturnVal { val } => {
-                //todo!();
+                let rightd = self.gen_expr(val.node);
+
+                res.instrs.push(Instr::Ret(rightd.val));
+            }
+            AstNode::Call { func_name, args, idx } => {
+                // call idx
+                let mut gends: Vec<GenData> = Vec::new();
+                for arg in args {
+                    let gd = self.gen_expr(arg.node);
+                    gends.push(gd);
+                }
+
+                let mut args_qbe = Vec::new();
+                for gd in gends {
+                    args_qbe.push((
+                        Self::match_ft_qbf(gd.ftype),
+                        gd.val.unwrap_or_else(|| {
+                            panic!("args incomplete val")
+                        })
+                    ));
+                }
+
+                let (ov_idx, ret_type) = match self
+                        .matched_overloads.get(&idx) {
+                    Some(f) => {
+                        f.clone()
+                    }   
+                    None => {
+                        panic!("Can't get ret type for func call")
+                    }
+                };
+
+                let instr = Instr::Call(
+                        format!("{}_{}", func_name, ov_idx), 
+                        args_qbe, 
+                        None
+                );
+                let tmpvar = self.new_temp();
+
+                res.val = Some(tmpvar.clone());
+                res.ftype = ret_type;
+                let _ = self.fbuild.assign_instr(
+                    tmpvar, 
+                    Self::match_ft_qbf(ret_type), 
+                    instr
+                );
             }
             AstNode::CodeBlock { exprs } => {
+                self.symb_table.enter_scope();
                 for expr in exprs {
                     let gend = self.gen_expr(expr.node);
                     res.instrs.extend(gend.instrs);
                 }
+                self.symb_table.exit_scope();
             }
             AstNode::Assignment { name, val, ft } => {
-                let rdat = self.gen_expr(*val);
+                let mut rdat = self.gen_expr(*val);
+                res.instrs.extend(rdat.instrs.drain(..));
 
                 let count = rdat.instrs.len().saturating_sub(1);
                 for i in rdat.instrs.iter().take(count) {
                     self.fbuild.add_instr(i.clone());
                 }
-                let last_instr = rdat.instrs.last().unwrap_or_else(|| {
-                    panic!("Internal error: can't get last instr of \
+                let val = rdat.val.unwrap_or_else(|| {
+                    panic!("Internal error: can't get val of \
                         assignment")
                 });
+                
 
-                self.fbuild.assign_instr(
-                    Value::Temporary(name), 
-                    Self::match_ft_qbf(ft), 
-                    last_instr.clone()
+                self.symb_table.newsymb(
+                    FSymbol::new(
+                        name.clone(), 
+                        VarPosition::None, // obsolete, TODO: delete  
+                        ft
+                    )
+                );
+
+                res.instrs.push(
+                    Instr::Assign(
+                        Value::Temporary(name), 
+                        Self::match_ft_qbf(ft), 
+                        Box::new(Instr::Copy(val))
+                    )
                 );
             }
+            
             AstNode::Uint(uv) => {
                 let val = Value::Const(uv); 
                 res.instrs.push(
@@ -193,26 +255,100 @@ impl CodeGen {
                 res.ftype = FType::int;
             }
             AstNode::Float(fv) => {
-                let val = Value::Const(fv.to_bits()); 
+                let val = Value::double(fv);
                 res.instrs.push(
-                    Instr::Load(Type::Long, val.clone())
+                    Instr::Copy(Value::double(fv))
                 );
                 res.val = Some(val);
                 res.qtype = Some(Type::Double);
-                res.ftype = FType::float; 
+                res.ftype = FType::float;
+            }
+            AstNode::UnaryOp { op, expr } => {
+                let gd = self.gen_expr(*expr);
+
+                let tmp = self.new_temp();
+
+                match op {
+                    UnaryOp::Negate => {
+                        let _ = self.fbuild.assign_instr(
+                            tmp.clone(), 
+                            Self::match_ft_qbf(gd.ftype), 
+                            Instr::Neg(
+                                gd.val.unwrap(), 
+                            )
+                        );
+                        res.val = Some(tmp);
+                        res.ftype = gd.ftype;
+                    }
+                    other => todo!("unary op {:#?}", other)
+                }
             }
             AstNode::BinaryOp { op, left, right } => {
                 let leftd = self.gen_expr(*left);
                 let rightd = self.gen_expr(*right);
 
+                let tmp = self.new_temp();
+
                 match op {
                     fparse::BinaryOp::Add => {
-                        res.instrs.push(
+                        let _ = self.fbuild.assign_instr(
+                            tmp.clone(), 
+                            Self::match_ft_qbf(leftd.ftype), 
                             Instr::Add(
                                 leftd.val.unwrap(), 
                                 rightd.val.unwrap()
                             )
-                        )
+                        );
+                        res.val = Some(tmp);
+                        res.ftype = leftd.ftype;
+                    }
+                    fparse::BinaryOp::Substract => {
+                        let _ = self.fbuild.assign_instr(
+                            tmp.clone(), 
+                            Self::match_ft_qbf(leftd.ftype), 
+                            Instr::Sub(
+                                leftd.val.unwrap(), 
+                                rightd.val.unwrap()
+                            )
+                        );
+                        res.val = Some(tmp);
+                        res.ftype = leftd.ftype;
+                    }
+                    fparse::BinaryOp::Multiply => {
+                        let _ = self.fbuild.assign_instr(
+                            tmp.clone(), 
+                            Self::match_ft_qbf(leftd.ftype), 
+                            Instr::Mul(
+                                leftd.val.unwrap(), 
+                                rightd.val.unwrap()
+                            )
+                        );
+                        res.val = Some(tmp);
+                        res.ftype = leftd.ftype;
+                    }
+                    fparse::BinaryOp::Divide => {
+                        let _ = self.fbuild.assign_instr(
+                            tmp.clone(), 
+                            Self::match_ft_qbf(leftd.ftype), 
+                            Instr::Div(
+                                leftd.val.unwrap(), 
+                                rightd.val.unwrap()
+                            )
+                        );
+                        res.val = Some(tmp);
+                        res.ftype = leftd.ftype;                    
+                    }
+                    fparse::BinaryOp::Remainder => {
+                        let _ = self.fbuild.assign_instr(
+                            tmp.clone(), 
+                            Self::match_ft_qbf(leftd.ftype), 
+                            Instr::Rem(
+                                leftd.val.unwrap(), 
+                                rightd.val.unwrap()
+                            )
+                        );
+                        res.val = Some(tmp);
+                        res.ftype = leftd.ftype;
                     }
                     other => todo!("{:?}", other)
                 }
@@ -225,6 +361,23 @@ impl CodeGen {
                     res.instrs.push(instr);
                 }
             }
+            AstNode::Variable(var) => { // var name
+                let var_dat = self.symb_table.get(var.clone()).unwrap_or_else(|| {
+                    panic!("Internal: Can't get variable {}", var)
+                });
+
+                res.ftype = var_dat.1.ftype;
+                res.qtype = Some(Self::match_ft_qbf(var_dat.1.ftype));
+                res.val = Some(Value::Temporary(var.clone()));
+
+                res.instrs.push(
+                    Instr::Load(
+                        Self::match_ft_qbf(var_dat.1.ftype), 
+                        Value::Temporary(var.clone())
+                    )
+                );
+            }
+            AstNode::none => {}
             other => {
                 panic!("can't generate yet for {:?}", other);
             }
@@ -238,6 +391,12 @@ impl CodeGen {
             }
         }
         return res;
+    }
+
+    fn new_temp(&mut self) -> Value {
+        let name = format!("tmp_{}", self.tmp_ctr);
+        self.tmp_ctr += 1;
+        Value::Temporary(name)
     }
 
     /// loads variable in place and returns register idx
@@ -305,7 +464,7 @@ impl CodeGen {
             FType::int | FType::uint => Type::Long,
             FType::float             => Type::Double,
             FType::bool              => Type::Byte,
-            other => todo!("Match ft qbf")
+            other => todo!("Match ft qbf for {:?}", ft)
         }
     }
 
@@ -360,9 +519,39 @@ impl CodeGen {
                                 )
                             );    
                         } else if rightdat.ftype == FType::int {
-                            todo!("finish")  
+                            let args = vec![
+                                (Type::Long, Value::Global("fmt_int".into())),
+                                (Type::Long, rightdat.val.unwrap_or_else(|| {
+                                    panic!("Internal error: expected args \
+                                        for print")
+                                }))
+                            ];
+
+                            resd.instrs.push(
+                                Instr::Call(
+                                    "printf".into(),
+                                    args, 
+                                    None
+                                )
+                            );  
                         }
-                    }        
+                    }
+                    Some(Type::Double) => {
+                        let args = vec![
+                            (Type::Long, Value::Global("fmt_float".into())),
+                            (Type::Double, rightdat.val.unwrap_or_else(|| {
+                                panic!("Internal error: expected args \
+                                        for print")
+                            }))
+                        ];
+                        resd.instrs.push(
+                            Instr::Call(
+                                "printf".into(), 
+                                args, 
+                                None
+                            )
+                        );
+                    }
                     other => todo!("Print for {:?}", other)
                 }
             }
@@ -434,7 +623,7 @@ pub struct GenData {
     pub instrs: Vec<Instr>,
 
     pub newfunc: Option<Function>,
-
+    //pub tmpname: Option<String>, 
 }
 
 impl GenData {
@@ -456,19 +645,17 @@ impl GenData {
 }
 
 #[derive(Debug, Clone)]
-pub struct AssignData {
+pub struct FuncData {
     pub name: String,
-    pub t: Type,
-    pub val: Instr,
+    pub ret_type: FType,
 }
 
-impl AssignData {
-    pub fn new(name: String, t: Type, val: Instr) -> 
-    AssignData {
-        AssignData {
+impl FuncData {
+    pub fn new(name: String, t: FType) -> 
+    FuncData {
+        FuncData {
             name: name,
-            t: t,
-            val: val
+            ret_type: t,
         }
     }
 }

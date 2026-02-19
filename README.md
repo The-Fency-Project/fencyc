@@ -1,9 +1,11 @@
 # fencyc
 > [!WARNING]
 > The toolchain is still on very early stages.
+> [!WARNING]
+> Codegen currently are being rewritten into QBE IR
 
 The Fency programming language compiler - simple and modern language, aimed to be enjoyable.
-This branch targets QBE IR. 
+Planned to be lightweight and ~~de-appled~~ swift alternative
 
 ## Fast installation
 There is a `fcyup` python script that would download/update fency toolchain for you,

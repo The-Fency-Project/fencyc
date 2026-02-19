@@ -1,9 +1,15 @@
 func main() {
-    let a: uint = 3u;
-    let b: uint = 4u;
-    let c: uint = 7u + 8u;
-    printintrin 4u;
+    let a: float = 3.14 / (1.2 + 0.77);
+
+    printintrin a;
+
+    let b: int = retint();
+
+    printintrin b;
 
     return;
 }
 
+func retint() -> int {
+    return 5;
+}

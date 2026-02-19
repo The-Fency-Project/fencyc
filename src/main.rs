@@ -91,23 +91,46 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermis
         panic!("Error writing temp into file: {}", e.to_string());
     }; 
 
-    assemble(&temp_fname, &output_name);
+    match assemble(&temp_fname, &output_name) {
+        ExternalResult::Ok => {},
+        other => {
+            logger.extrn_err = other;
+        }
+    };
 
-    logger.finalize();
-
-    Ok(())
+    let ret = logger.finalize();
+    ret
 }
 
-fn assemble(input_name: &str, output_name: &str) {
+#[derive(Debug)]
+enum ExternalResult {
+    Ok,
+    QBEError(),
+    LinkError(),
+}
+
+fn assemble(input_name: &str, output_name: &str) -> ExternalResult {
     let nat_fname = input_name.replace(".ssa", ".s");
     
-    let out1 = run_command("qbe", &["-o", &nat_fname, input_name]);
+    let out1 = match run_command("qbe", &["-o", &nat_fname, input_name]) {
+        Ok(sv) => sv,
+        Err(()) => {
+            return ExternalResult::QBEError();
+        }
+    };
     print_stds(out1);
  
-    let out2 = run_command("gcc", &[&nat_fname, "-o", output_name]);
+    let out2 = match run_command("gcc", &[&nat_fname, "-o", output_name]) {
+        Ok(sv) => sv,
+        Err(()) => {
+            return ExternalResult::LinkError();
+        }
+    };
     print_stds(out2);
 
     release_cleanup(vec![input_name, &nat_fname]);
+
+    ExternalResult::Ok
 }
 
 fn release_cleanup(files: Vec<&str>) {
@@ -132,28 +155,41 @@ fn print_stds(ss: Vec<String>) {
 }
 
 #[cfg(target_os = "windows")]
-fn run_command(cmd: &str, args: &[&str]) -> Vec<String> {
+fn run_command(cmd: &str, args: &[&str]) -> Result<Vec<String>, ()> {
     let output = Command::new("cmd")
         .args(["/C", cmd])
         .args(args)
         .output()
         .expect(&format!("Failed to run {}", cmd));
-    
+   
+    if !output.status.success() {
+        eprintln!("Error: Command '{}' failed with {}", cmd, output.status);
+        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+        return Err(()); 
+    }
+
     let mut res = Vec::new();
     res.push(String::from_utf8_lossy(&output.stdout).to_string());
     res.push(String::from_utf8_lossy(&output.stderr).to_string());
-    res
+    Ok(res)
 }
 
 #[cfg(not(target_os = "windows"))]
-fn run_command(cmd: &str, args: &[&str]) -> Vec<String> {
+fn run_command(cmd: &str, args: &[&str]) -> Result<Vec<String>, ()> {
     let output = Command::new(cmd)
         .args(args)
         .output()
         .expect(&format!("Failed to run {}", cmd));
+
+    if !output.status.success() {
+        eprintln!("Error: Command '{}' failed with {}", cmd, output.status);
+        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+        return Err(()); 
+    }
     
     let mut res = Vec::new();
     res.push(String::from_utf8_lossy(&output.stdout).to_string());
     res.push(String::from_utf8_lossy(&output.stderr).to_string());
-    res
+
+    Ok(res)
 }

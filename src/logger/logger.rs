@@ -2,17 +2,19 @@ use std::time::Instant;
 
 use colored::Colorize;
 
-use crate::{fcparse::fcparse::BinaryOp, seman::seman::FType};
+use crate::{ExternalResult, fcparse::fcparse::BinaryOp, seman::seman::FType};
 
 pub struct Logger {
     errc: usize,
     warnc: usize,
-    time: Instant
+    time: Instant,
+    pub extrn_err: ExternalResult,
 }
 
 impl Logger {
     pub fn new() -> Logger {
-        Logger { errc: 0, warnc: 0, time: Instant::now() }
+        Logger { errc: 0, warnc: 0, time: Instant::now(), 
+            extrn_err: ExternalResult::Ok }
     }
 
     pub fn start_timer(&mut self) {
@@ -35,16 +37,24 @@ impl Logger {
     }
 
     /// prints error count message
-    pub fn finalize(&self) {
+    pub fn finalize(&self) -> Result<(), ()> {
         if self.errc > 0 {
             println!("\nCompilation {} with {} errors and {} warnings, took {:.2}s.",
                 "failed".red(), self.errc, self.warnc, self.time.elapsed().as_secs_f64());
+            Err(())
         } else if self.warnc > 0 {
             println!("\n{} with {} {}, took {:.2}s", "Compilation succeed".green(), self.warnc, 
                 "warnings".yellow(), self.time.elapsed().as_secs_f64());
-        } else {
+            Ok(())
+        } else if let ExternalResult::Ok = self.extrn_err {
             println!("\n{}, took {:.2}s.", "Compilation succeed".green(),
                 self.time.elapsed().as_secs_f64());
+            Ok(())
+        } else {
+            println!("\nCompilation {} with external error {:?}, took {:.2}s.",
+                "failed".red(), self.extrn_err, self.time.elapsed().as_secs_f64()
+                );
+            Err(())
         }
     }
 

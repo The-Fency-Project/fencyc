@@ -1,11 +1,10 @@
 ## Current:
-- load var 
-- do qbe retvals
-- do binary ops codegen for qbe
+- finish unary op
+- variable casts
+- change local cargo qbe path to git (commit also)
 - just continue doing qbe codegen
 
 ### Future (from main branch):
-- refactors (especially for codegen bruh)
 - iterators for `for`
 - cargo tests
 - default args values (?)

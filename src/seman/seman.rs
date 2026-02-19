@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Binary;
 
+use crate::codegen::codegen::FuncData;
 use crate::fcparse::fcparse::AstNode;
 use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, FuncArg, 
     FuncTable, UnaryOp};
@@ -162,7 +163,7 @@ pub struct SemAn {
     declared_parse: HashMap<String, usize>, // already declared function names and first occurance
     //lines to check redecl
     parsing_func: Option<(String, usize)>, // currently parsing function name and overload idx
-    pub matched_overloads: HashMap<usize, usize>, // call idx -> overload idx
+    pub matched_overloads: HashMap<usize, (usize, FType)>, // call idx -> overload idx, ret type
     expect_type: FType,                    // for overloads matching and generics (in future)
 }
 
@@ -533,7 +534,9 @@ impl SemAn {
                         }
                     }
                     if flag {
-                        self.matched_overloads.insert(*idx, over_idx);
+                        self.matched_overloads.insert(*idx, 
+                            (over_idx, overload.ret_type)
+                        );
                         exprdat.ftype = overload.ret_type;
                         return exprdat;
                     }
