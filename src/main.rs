@@ -9,6 +9,7 @@ mod codegen {pub mod codegen;}
 mod lexer {pub mod lexer;}
 mod seman {pub mod seman;}
 mod logger {pub mod logger;}
+mod tests;
 use crate::{codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstNode, AstRoot}, lexer::lexer as lex, logger::logger::{self as log, Logger}, seman::seman as Seman, seman::seman as sem};
 
 #[derive(Parser)]
@@ -81,7 +82,7 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermis
 
     let mut gene = cgen::CodeGen::new(ast, matched_overloads);
     gene.gen_everything();
-    #[cfg(debug_assertions)] { 
+    if cfg!(debug_assertions) { 
         println!("{}", gene.module);
     }
 

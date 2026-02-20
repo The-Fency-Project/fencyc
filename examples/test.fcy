@@ -1,11 +1,20 @@
 func main() {
-    let a: float = 3.14 / (1.2 + 0.77);
+    let a: float = 3.14 / (-1.2 + 0.77);
 
     printintrin a;
 
     let b: int = retint();
 
     printintrin b;
+
+    let c: int = a$int;
+    printintrin c;
+
+    let bits: uint = a$uint;
+    printintrin bits;
+
+    let d: int = -(-4);
+    printintrin d;
 
     return;
 }

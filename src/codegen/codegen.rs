@@ -191,11 +191,12 @@ impl CodeGen {
 
                 res.val = Some(tmpvar.clone());
                 res.ftype = ret_type;
-                let _ = self.fbuild.assign_instr(
+                
+                res.instrs.push(Instr::Assign(
                     tmpvar, 
                     Self::match_ft_qbf(ret_type), 
-                    instr
-                );
+                    Box::new(instr)
+                ));
             }
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
@@ -209,10 +210,7 @@ impl CodeGen {
                 let mut rdat = self.gen_expr(*val);
                 res.instrs.extend(rdat.instrs.drain(..));
 
-                let count = rdat.instrs.len().saturating_sub(1);
-                for i in rdat.instrs.iter().take(count) {
-                    self.fbuild.add_instr(i.clone());
-                }
+                res.instrs.extend(rdat.instrs.drain(..));
                 let val = rdat.val.unwrap_or_else(|| {
                     panic!("Internal error: can't get val of \
                         assignment")
@@ -238,45 +236,67 @@ impl CodeGen {
             
             AstNode::Uint(uv) => {
                 let val = Value::Const(uv); 
-                res.instrs.push(
-                    Instr::Load(Type::Long, val.clone())
-                );
                 res.val = Some(val);
                 res.qtype = Some(Type::Long);
                 res.ftype = FType::uint;
             }
             AstNode::Int(iv) => {
                 let val = Value::Const(iv as u64); 
-                res.instrs.push(
-                    Instr::Load(Type::Long, val.clone())
-                );
                 res.val = Some(val);
                 res.qtype = Some(Type::Long);
                 res.ftype = FType::int;
             }
             AstNode::Float(fv) => {
                 let val = Value::double(fv);
-                res.instrs.push(
-                    Instr::Copy(Value::double(fv))
-                );
                 res.val = Some(val);
                 res.qtype = Some(Type::Double);
                 res.ftype = FType::float;
             }
             AstNode::UnaryOp { op, expr } => {
-                let gd = self.gen_expr(*expr);
+                let mut gd = self.gen_expr(*expr);
+                res.instrs.extend(gd.instrs.extract_if(.., |x| 
+                    {
+                        matches!(x, Instr::Assign(_, _, _))
+                    }
+                ));
 
                 let tmp = self.new_temp();
 
                 match op {
                     UnaryOp::Negate => {
-                        let _ = self.fbuild.assign_instr(
+                        res.instrs.push(Instr::Assign(
+                            tmp.clone(),
+                            Self::match_ft_qbf(gd.ftype),
+                            Box::new(Instr::Neg(
+                                gd.val.unwrap()
+                            ))
+                        ));
+                        res.val = Some(tmp);
+                        res.ftype = gd.ftype;
+                    }
+                    UnaryOp::Not => {
+                        res.instrs.push(Instr::Assign(
                             tmp.clone(), 
                             Self::match_ft_qbf(gd.ftype), 
-                            Instr::Neg(
+                            Box::new(Instr::Xor( 
                                 gd.val.unwrap(), 
-                            )
-                        );
+                                Value::Const(u64::MAX)
+                            ))
+                        ));
+                        res.val = Some(tmp);
+                        res.ftype = gd.ftype;
+                    }
+                    UnaryOp::LogicalNot => {
+                        res.instrs.push(Instr::Assign(
+                            tmp.clone(), 
+                            Self::match_ft_qbf(gd.ftype), 
+                            Box::new(Instr::Cmp( 
+                                Self::match_ft_qbf(gd.ftype),
+                                qbe::Cmp::Eq,
+                                gd.val.unwrap(), 
+                                Value::Const(0)
+                            ))
+                        ));
                         res.val = Some(tmp);
                         res.ftype = gd.ftype;
                     }
@@ -284,69 +304,80 @@ impl CodeGen {
                 }
             }
             AstNode::BinaryOp { op, left, right } => {
-                let leftd = self.gen_expr(*left);
-                let rightd = self.gen_expr(*right);
+                let mut leftd = self.gen_expr(*left);
+                res.instrs.extend(leftd.instrs.extract_if(.., |x| 
+                    {
+                        matches!(x, Instr::Assign(_, _, _))
+                    }
+                ));
+
+                let mut rightd = self.gen_expr(*right);
+                res.instrs.extend(rightd.instrs.extract_if(.., |x| 
+                    {
+                        matches!(x, Instr::Assign(_, _, _))
+                    }
+                ));
 
                 let tmp = self.new_temp();
 
                 match op {
                     fparse::BinaryOp::Add => {
-                        let _ = self.fbuild.assign_instr(
+                        res.instrs.push(Instr::Assign(
                             tmp.clone(), 
                             Self::match_ft_qbf(leftd.ftype), 
-                            Instr::Add(
+                            Box::new(Instr::Add(
                                 leftd.val.unwrap(), 
                                 rightd.val.unwrap()
-                            )
-                        );
+                            ))
+                        ));
                         res.val = Some(tmp);
                         res.ftype = leftd.ftype;
                     }
                     fparse::BinaryOp::Substract => {
-                        let _ = self.fbuild.assign_instr(
+                        res.instrs.push(Instr::Assign(
                             tmp.clone(), 
                             Self::match_ft_qbf(leftd.ftype), 
-                            Instr::Sub(
+                            Box::new(Instr::Sub(
                                 leftd.val.unwrap(), 
                                 rightd.val.unwrap()
-                            )
-                        );
+                            ))
+                        ));
                         res.val = Some(tmp);
                         res.ftype = leftd.ftype;
                     }
                     fparse::BinaryOp::Multiply => {
-                        let _ = self.fbuild.assign_instr(
+                        res.instrs.push(Instr::Assign(
                             tmp.clone(), 
                             Self::match_ft_qbf(leftd.ftype), 
-                            Instr::Mul(
+                            Box::new(Instr::Mul(
                                 leftd.val.unwrap(), 
                                 rightd.val.unwrap()
-                            )
-                        );
+                            ))
+                        ));
                         res.val = Some(tmp);
                         res.ftype = leftd.ftype;
                     }
                     fparse::BinaryOp::Divide => {
-                        let _ = self.fbuild.assign_instr(
+                        res.instrs.push(Instr::Assign(
                             tmp.clone(), 
                             Self::match_ft_qbf(leftd.ftype), 
-                            Instr::Div(
+                            Box::new(Instr::Div(
                                 leftd.val.unwrap(), 
                                 rightd.val.unwrap()
-                            )
-                        );
+                            ))
+                        ));
                         res.val = Some(tmp);
                         res.ftype = leftd.ftype;                    
                     }
                     fparse::BinaryOp::Remainder => {
-                        let _ = self.fbuild.assign_instr(
+                        res.instrs.push(Instr::Assign(
                             tmp.clone(), 
                             Self::match_ft_qbf(leftd.ftype), 
-                            Instr::Rem(
+                            Box::new(Instr::Rem(
                                 leftd.val.unwrap(), 
                                 rightd.val.unwrap()
-                            )
-                        );
+                            ))
+                        ));
                         res.val = Some(tmp);
                         res.ftype = leftd.ftype;
                     }
@@ -376,6 +407,80 @@ impl CodeGen {
                         Value::Temporary(var.clone())
                     )
                 );
+            }
+            AstNode::VariableCast { name, target_type } => {
+                let symb = self.symb_table.get(name.clone()).unwrap();
+
+                let ft_src = symb.1.ftype;
+                let tmp = self.new_temp();
+                
+                let conv_instr = match (ft_src, target_type) {
+                    (FType::float, FType::uint) => { // bitwise repr
+                        res.ftype = FType::uint;
+                        Instr::Dtoui(
+                            Value::Temporary(name.clone())
+                        )
+                    }
+                    (FType::float, FType::int) => { // bitwise repr
+                        res.ftype = FType::int;
+                        Instr::Dtosi(
+                            Value::Temporary(name.clone())
+                        )
+                    }
+                    (FType::uint, FType::float) => {
+                        res.ftype = FType::float;
+                        Instr::Ultof(
+                            Value::Temporary(name.clone())
+                        )
+                    }
+                    (FType::int, FType::float) => {
+                        res.ftype = FType::float;
+                        Instr::Sltof(
+                            Value::Temporary(name.clone())
+                        )
+                    }
+                    (FType::int, FType::uint) => {
+                        res.ftype = FType::uint;
+                        Instr::Copy(
+                            Value::Temporary(name.clone())
+                        )
+                    }
+                    (FType::uint, FType::int) => {
+                        res.ftype = FType::int;
+                        Instr::Copy(
+                            Value::Temporary(name.clone())
+                        )
+                    }
+                    other => unimplemented!("Type conv: {:?} => {:?}",
+                        ft_src, target_type)
+                };
+
+                res.instrs.push(Instr::Assign(
+                    tmp.clone(),
+                    Self::match_ft_qbf(target_type),
+                    Box::new(conv_instr)
+                ));
+
+                res.val = Some(tmp);
+            }
+            AstNode::Reassignment { name, newval } => {
+                let mut gd = self.gen_expr(newval.node);
+                res.instrs.extend(gd.instrs.extract_if(.., |x| {
+                    matches!(x, Instr::Assign(_, _, _))
+                }));
+
+                let val = Value::Temporary(name.clone());
+
+                res.instrs.push(Instr::Assign(
+                    val.clone(),
+                    Self::match_ft_qbf(gd.ftype), 
+                    Box::new(Instr::Copy(gd.val.unwrap_or_else(|| {
+                        panic!("Internal: can't get reas value")
+                    })))
+                ));
+
+                res.val = Some(val);
+                res.ftype = gd.ftype;
             }
             AstNode::none => {}
             other => {
@@ -428,9 +533,6 @@ impl CodeGen {
         }
     }
 
-    
-
-   
     fn new_label(&mut self) -> String {
         let name = format!("label_{}", self.labels.len());
         self.labels.insert(name.clone(), self.sbuf.len());

@@ -1,6 +1,5 @@
 ## Current:
-- finish unary op
-- variable casts
+- investigate `1_variables`
 - change local cargo qbe path to git (commit also)
 - just continue doing qbe codegen
 
