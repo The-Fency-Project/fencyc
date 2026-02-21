@@ -1,8 +1,10 @@
 # fencyc
 > [!WARNING]
-> The toolchain is still on very early stages.
+> The toolchain is still on very early stages. Best experience would be with 
+> Linux (amd64/aarch64/riscv64), though workarounds with other OS'es are possible 
+> with some extra tinker steps.
 > [!WARNING]
-> Codegen currently are being rewritten into QBE IR
+> Codegen currently are being rewritten for QBE IR target only
 
 The Fency programming language compiler - simple and modern language, aimed to be enjoyable.
 Planned to be lightweight and ~~de-appled~~ swift alternative
@@ -35,10 +37,11 @@ See [GNU website](https://gcc.gnu.org/install/) or get the binaries.
 
 ## Usage
 Compile some program:  
-- `fencyc input input.fcy` 
+- `fencyc input input.fcy`     
 Run as normal program.
 Flags:  
 `--fpermissive`: enables permissive mode, which leads to less type system errors, but still warns.
+`-o name`: determines output program name
 
 ## Docs
 Soon. For now, consider learning from `examples/` directory in order (1_*, 2_*, ..)

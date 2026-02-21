@@ -1,10 +1,9 @@
 func main() {
-
     // endless loop (not really)
     while true {
-        printintrin -1;
+        printintrin 0;
         break;
-        }
+    }
 
     // silly stuff 
     while true break;
@@ -12,7 +11,7 @@ func main() {
     // lets print every integer from 0 to 10 exclusively
     for let a: int = 0 in a < 10; a = a + 1 {
         printintrin a;
-        }
+    }
 
     // shorter way
     for let a: int = 0 in a < 10; a = a + 1 printintrin a; 

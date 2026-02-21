@@ -1,6 +1,6 @@
 ## Current:
-- investigate `1_variables`
-- change local cargo qbe path to git (commit also)
+- for loops
+- extern fn
 - just continue doing qbe codegen
 
 ### Future (from main branch):

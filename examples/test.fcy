@@ -1,24 +1,24 @@
 func main() {
-    let a: float = 3.14 / (-1.2 + 0.77);
+    //let a: int = (3.14 / (-1.2 + 0.77))$int;
 
-    printintrin a;
+    //printintrin a;
 
-    let b: int = retint();
+    //if (a$bool) {
+    //    printintrin 1;
+    //}
 
-    printintrin b;
+    //let b: int = 3;
 
-    let c: int = a$int;
-    printintrin c;
+    //while (b != 0) {
+    //    printintrin b;
+    //    b -= 1;
+    //}
 
-    let bits: uint = a$uint;
-    printintrin bits;
+    for let a: int = 0 in a < 10; a = a + 1 {
+        printintrin a;
+    }
 
-    let d: int = -(-4);
-    printintrin d;
 
     return;
 }
 
-func retint() -> int {
-    return 5;
-}
