@@ -1,10 +1,6 @@
-v0.5.4:
-- updated readme
-- updated Cargo.toml (fix)
-- extracted some code into func `get_conv`
-- `exprcast`
-- `if` conditions
-- `while` loops
-- compare ops
-- new code architecture: now instrs are being pushed immediately
-- example `2_loops` works (+test)
+v0.5.5:
+- functions works fine
+- `3_functions.fcy` example works (+test)
+- renamed `float` to `double`
+- added externed functions 
+- added optional `--ldflags` compile flag so you may link external libs

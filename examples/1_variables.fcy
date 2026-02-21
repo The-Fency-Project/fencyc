@@ -1,15 +1,15 @@
 func main() {
     let uvar: uint = 10u; // declaring unsigned integer (64 bit)
     let ivar: int = -5; // declaring signed integer (64 bit)
-    let fvar: float = 3.14; // declaring floating point variable (double precision)
+    let fvar: double = 3.14; // declaring floating point variable (double precision)
 
-    let fvar_sq: float = fvar * fvar;
+    let fvar_sq: double = fvar * fvar;
     let ivar_negated: int = -ivar;
 
     let uvar_from_fvar: uint = fvar$uint; // lossy 
-    let fvar_from_uvar: float = uvar$float; // $ to convert types
+    let fvar_from_uvar: double = uvar$double; // $ to convert types
 
-    let some_ops: float = fvar_from_uvar * (2.0 + 1.0);
+    let some_ops: double = fvar_from_uvar * (2.0 + 1.0);
     some_ops -= 2.5; // subtract and assign
 
     // printing it all using print intrinsic (later would be std::print)

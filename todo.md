@@ -1,11 +1,9 @@
 ## Current:
-- for loops
-- extern fn
+- arrays
 - just continue doing qbe codegen
-
+- refactor src/main.rs
 ### Future (from main branch):
 - iterators for `for`
-- cargo tests
 - default args values (?)
 - auto type inference for lets
 - make error if trying to override func that wasnt declared

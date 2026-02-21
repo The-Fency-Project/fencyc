@@ -33,10 +33,12 @@ impl FcParser {
             let expr = self.parse_expr(0);
 
             if let AstNode::Function { name, args, ret_type, body } = &expr.node {
-                funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type));
-            } else if let AstNode::FunctionOverload { func, idx } = &expr.node {
+                funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type, false));
+            } else if let AstNode::ExternedFunc { name, args, ret_type } = &expr.node {
+                funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type, true));
+            } if let AstNode::FunctionOverload { func, idx } = &expr.node {
                 if let AstNode::Function { name, args, ret_type, body } = &**func {
-                    funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type));
+                    funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type, false));
                 };
             };
 
@@ -95,7 +97,7 @@ impl FcParser {
         match &token.tok {
             Tok::Int(iv) => AstNode::Int(*iv),
             Tok::Uint(uv) => AstNode::Uint(*uv),
-            Tok::Float(fv) => AstNode::Float(*fv),
+            Tok::Float(fv) => AstNode::Double(*fv),
             Tok::strlit(s) => AstNode::StringLiteral(s.to_owned()),
 
             Tok::Keyword(Kword::True) => AstNode::boolVal(true),
@@ -298,14 +300,20 @@ impl FcParser {
             }
 
             Tok::Keyword(Kword::Func) => {
-                let f = self.parse_func();
+                let f = self.parse_func(false);
+                self.overload_ctr.insert(f.1, 0);
+                f.0
+            }
+            Tok::Keyword(Kword::Extern) => {
+                self.consume();
+                let f = self.parse_func(true);
                 self.overload_ctr.insert(f.1, 0);
                 f.0
             }
 
             Tok::Keyword(Kword::Override) => {
                 self.consume();
-                let f = self.parse_func();
+                let f = self.parse_func(false);
                 let idx = {
                     let h = self.overload_ctr.get_mut(&f.1).unwrap();
                     *h += 1;
@@ -577,7 +585,7 @@ impl FcParser {
         }
     }
 
-    fn parse_func(&mut self) -> (AstNode, String) {
+    fn parse_func(&mut self, externed: bool) -> (AstNode, String) {
         let name = self.expect_idt().unwrap_or_else(|| {
             panic!("{}: expected function name identifier", self.line)
         }); 
@@ -586,14 +594,22 @@ impl FcParser {
 
         let ret_type = self.parse_func_rettype();
 
-        let body = self.parse_expr(0);
+        if !externed {
+            let body = self.parse_expr(0);
 
-        (AstNode::Function { 
-            name: name.clone(), 
-            args: args, 
-            ret_type: ret_type, 
-            body: Box::new(body.node)
-        }, name)
+            (AstNode::Function { 
+                name: name.clone(), 
+                args: args, 
+                ret_type: ret_type, 
+                body: Box::new(body.node)
+            }, name)
+        } else {
+            (AstNode::ExternedFunc { 
+                name: name.clone(),
+                args: args, 
+                ret_type: ret_type 
+            }, name)
+        }
     }
 
     fn parse_func_args(&mut self) -> Vec<FuncArg> {
@@ -658,7 +674,7 @@ pub enum AstNode {
     NoParse, // internal astnode to stop parsing expr
 
     Int(i64),
-    Float(f64),
+    Double(f64),
     Uint(u64),
     boolVal(bool),
     StringLiteral(String),
@@ -686,6 +702,12 @@ pub enum AstNode {
         args: Vec<FuncArg>,
         ret_type: FType,
         body: Box<AstNode>,
+    },
+
+    ExternedFunc {
+        name: String,
+        args: Vec<FuncArg>,
+        ret_type: FType,
     },
 
     FunctionOverload {
@@ -749,6 +771,8 @@ pub enum AstNode {
         iter_cond: Box<AstRoot>, // e.g. a < 10
         body: Box<AstRoot>,
     },
+
+    
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -788,7 +812,7 @@ pub fn match_ftype(lit: &str) -> Option<FType> {
     match lit {
         "uint" => Some(FType::uint),
         "int" => Some(FType::int),
-        "float" => Some(FType::float),
+        "double" => Some(FType::double),
         "bool" => Some(FType::bool),
         "str" => Some(FType::strconst),
         other => None,
@@ -812,7 +836,7 @@ impl AstRoot {
 #[derive(Debug, Clone)]
 pub struct FuncArg {
     pub name: String, 
-pub ftype: FType
+    pub ftype: FType
 }
 
 impl FuncArg {
@@ -829,20 +853,22 @@ pub struct FuncDat {
     pub name: String,
     pub args: Vec<FuncArg>,
     pub ret_type: FType,
+    pub externed: bool,
 }
 
 impl FuncDat {
-    pub fn new(nm: String, ar: Vec<FuncArg>, ret: FType) -> FuncDat {
+    pub fn new(nm: String, ar: Vec<FuncArg>, ret: FType, ext: bool) -> FuncDat {
         FuncDat { name: nm, 
             args: ar, 
-            ret_type: ret 
+            ret_type: ret,
+            externed: ext,
         }
     }
 
     pub fn new_from_astn(node: AstNode) -> Option<FuncDat> {
         let res = match node {
             AstNode::Function { name, args, ret_type, body } => {
-                Some(FuncDat::new(name, args, ret_type))
+                Some(FuncDat::new(name, args, ret_type, false))
             }
             _ => None,
         };

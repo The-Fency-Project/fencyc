@@ -8,7 +8,7 @@ func main() {
     printintrin fact_res; // 120 
     
     // compiler will match func overload according to given params and return type
-    let sum_float_res: float = add(15.5, 3.75);
+    let sum_float_res: double = add(15.5, 3.75);
     printintrin sum_float_res;
 
     return; // just return for none return type
@@ -35,6 +35,6 @@ func factorial(n: int) -> int {
 // override operator allows you to redefine function's 
 // arguments (count, types), return type and even function 
 // behaviour.
-override func add(a: float, b: float) -> float {
+override func add(a: double, b: double) -> double {
     return a + b;
 }

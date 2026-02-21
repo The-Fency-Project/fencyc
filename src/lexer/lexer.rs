@@ -71,7 +71,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                 let mut ftyp = FType::int;
                 while let Some('0'..='9' | '.' | 'u') = chars.peek() {
                     let chn = chars.next().unwrap();
-                    if chn == '.' {ftyp = FType::float};
+                    if chn == '.' {ftyp = FType::double};
                     if chn == 'u' {ftyp = FType::uint; continue;}
                     num_st.push(chn);
                 };
@@ -85,7 +85,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                         let nval: u64 = num_st.parse().unwrap();
                         res.push(Token::new(Tok::Uint(nval), line));
                     }
-                    FType::float => {
+                    FType::double => {
                         let nval: f64 = num_st.parse().unwrap();
                         res.push(Token::new(Tok::Float(nval), line));
                     }
@@ -262,6 +262,7 @@ pub enum Kword {
     Func,
     Return,
     Override,
+    Extern,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -286,7 +287,8 @@ fn match_symb_tok(word: &str) -> Tok {
         "continue" => Tok::Keyword(Kword::Continue),
         "return" => Tok::Keyword(Kword::Return),
         "override" => Tok::Keyword(Kword::Override),
-        "_len" => Tok::Intrin(Intrinsic::Len), 
+        "extern" => Tok::Keyword(Kword::Extern),
+        "_len" => Tok::Intrin(Intrinsic::Len),
         other => Tok::Identifier(other.to_string()),
     }
 }

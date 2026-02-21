@@ -1,23 +1,15 @@
+// Compile with 
+// `fencyc input examples/test.fcy -o testbins/test --ldflags lm`
+
+extern func sqrt(a: double) -> double;
+
 func main() {
-    //let a: int = (3.14 / (-1.2 + 0.77))$int;
+    let c: double = sqrt(16.0); 
+    printintrin c;
 
-    //printintrin a;
-
-    //if (a$bool) {
-    //    printintrin 1;
-    //}
-
-    //let b: int = 3;
-
-    //while (b != 0) {
-    //    printintrin b;
-    //    b -= 1;
-    //}
-
-    for let a: int = 0 in a < 10; a = a + 1 {
-        printintrin a;
+    while (true) {
+        return;
     }
-
 
     return;
 }

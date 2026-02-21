@@ -33,7 +33,7 @@ impl FSymbol {
 pub enum FType {
     uint = 0,
     int = 1,
-    float = 2,
+    double = 2,
     bool = 3,
     strconst = 4,
     dsptr = 5,
@@ -47,7 +47,7 @@ pub fn idx_to_ftype(idx: usize) -> Option<FType> {
     match idx {
         0 => Some(FType::uint),
         1 => Some(FType::int),
-        2 => Some(FType::float),
+        2 => Some(FType::double),
         3 => Some(FType::bool),
         4 => Some(FType::strconst),
         5 => Some(FType::dsptr),
@@ -64,7 +64,7 @@ pub fn ftype_to_idx(ft: &FType) -> usize {
     match ft {
         FType::uint => 0,
         FType::int => 1,
-        FType::float => 2,
+        FType::double => 2,
         FType::bool => 3,
         FType::strconst => 4,
         FType::dsptr => 5,
@@ -152,6 +152,8 @@ impl SymbolTable {
     }
 }
 
+pub type OverloadTable = HashMap<usize, (Option<usize>, FType)>;
+
 /// Semantic analyzer struct
 #[derive(Debug)]
 pub struct SemAn {
@@ -163,7 +165,7 @@ pub struct SemAn {
     declared_parse: HashMap<String, usize>, // already declared function names and first occurance
     //lines to check redecl
     parsing_func: Option<(String, usize)>, // currently parsing function name and overload idx
-    pub matched_overloads: HashMap<usize, (usize, FType)>, // call idx -> overload idx, ret type
+    pub matched_overloads: OverloadTable, // call idx -> overload idx, ret type
     expect_type: FType,                    // for overloads matching and generics (in future)
 }
 
@@ -254,8 +256,8 @@ impl SemAn {
             AstNode::Uint(uv) => {
                 exprdat.ftype = FType::uint;
             }
-            AstNode::Float(fv) => {
-                exprdat.ftype = FType::float;
+            AstNode::Double(fv) => {
+                exprdat.ftype = FType::double;
             }
             AstNode::boolVal(bv) => {
                 exprdat.ftype = FType::bool;
@@ -316,7 +318,7 @@ impl SemAn {
                 exprdat.ftype = rdat.ftype;
 
                 if (*op == UnaryOp::Negate)
-                    && !((exprdat.ftype == FType::float) || (exprdat.ftype == FType::int))
+                    && !((exprdat.ftype == FType::double) || (exprdat.ftype == FType::int))
                 {
                     logger.emit(LogLevel::Error(ErrKind::NegateBounds(exprdat.ftype)), line);
                 }
@@ -484,17 +486,40 @@ impl SemAn {
                     self.declared_parse.insert(name.clone(), line);
                 }
 
-                if args.len() > 30 {
-                    logger.emit(
-                        LogLevel::Error(ErrKind::MuchDeclArgs(name.clone(), args.len())),
-                        line,
-                    );
-                }
-
                 self.symb_table.enter_scope();
                 self.symb_table.push_funcargs(args.to_vec());
 
                 self.analyze_expr(&AstRoot::new(*body.clone(), line), logger);
+
+                self.symb_table.exit_scope();
+                self.parsing_func = None;
+            }
+            AstNode::ExternedFunc {
+                name,
+                args,
+                ret_type,
+            } => {
+                let mut override_flag = false;
+                if let Some(v) = &self.parsing_func {
+                    self.parsing_func = Some((name.clone(), v.1));
+                    override_flag = true;
+                } else {
+                    self.parsing_func = Some((name.clone(), 0));
+                }
+
+                if let Some(func_line) = self.declared_parse.get(name) {
+                    if !override_flag {
+                        logger.emit(
+                            LogLevel::Error(ErrKind::FuncRedecl(name.clone(), *func_line)),
+                            line,
+                        );
+                    }
+                } else {
+                    self.declared_parse.insert(name.clone(), line);
+                }
+
+                self.symb_table.enter_scope();
+                self.symb_table.push_funcargs(args.to_vec());
 
                 self.symb_table.exit_scope();
                 self.parsing_func = None;
@@ -520,6 +545,11 @@ impl SemAn {
                 };
                 for (over_idx, overload) in func_dat_vec.iter().enumerate() {
                     let mut flag: bool = true;
+                    let mut extrn = false;
+                    if overload.externed {
+                        extrn = true;
+                    }
+
                     for (idx, arg) in args.iter().enumerate() {
                         let argdat = self.analyze_expr(arg, logger); // TODO: get this invariant
                                                                      // out of loop
@@ -534,8 +564,14 @@ impl SemAn {
                         }
                     }
                     if flag {
+                        let ov_idx_op = if extrn {
+                            None
+                        } else {
+                            Some(over_idx)
+                        };
+
                         self.matched_overloads.insert(*idx, 
-                            (over_idx, overload.ret_type)
+                            (ov_idx_op, overload.ret_type)
                         );
                         exprdat.ftype = overload.ret_type;
                         return exprdat;

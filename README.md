@@ -36,6 +36,8 @@ install this, also has to be in the PATH.
 See [GNU website](https://gcc.gnu.org/install/) or get the binaries.
 
 ## Usage
+Make sure everything working:
+- `cargo test`    
 Compile some program:  
 - `fencyc input input.fcy`     
 Run as normal program.

@@ -32,6 +32,9 @@ enum Commands {
 
         #[arg(long = "fpermissive")]
         fpermissive: bool,
+
+        #[arg(long = "ldflags")]
+        ldflags: Vec<String>,
     },
 }
 
@@ -39,8 +42,8 @@ fn main() {
     let cli = CliArgs::parse();
     
     match cli.command {
-        Some(Commands::Input { file, output, fpermissive } ) => {
-            start_compiling(file, output, cli.verbose, fpermissive);
+        Some(Commands::Input { file, output, fpermissive, ldflags } ) => {
+            start_compiling(file, output, cli.verbose, fpermissive, ldflags);
             return;
         }
         None => {
@@ -49,7 +52,8 @@ fn main() {
     }
 }
 
-fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermissive: bool) -> Result<(), ()> {
+fn start_compiling(input: String, output: Option<String>, verbose: bool, 
+    fpermissive: bool, ldflags: Vec<String>) -> Result<(), ()> {
     let output_name = match output {
         Some(v) => v,
         None => {
@@ -92,7 +96,7 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool, fpermis
         panic!("Error writing temp into file: {}", e.to_string());
     }; 
 
-    match assemble(&temp_fname, &output_name) {
+    match assemble(&temp_fname, &output_name, ldflags) {
         ExternalResult::Ok => {},
         other => {
             logger.extrn_err = other;
@@ -110,7 +114,8 @@ enum ExternalResult {
     LinkError(),
 }
 
-fn assemble(input_name: &str, output_name: &str) -> ExternalResult {
+fn assemble(input_name: &str, output_name: &str, ldflags: Vec<String>)
+        -> ExternalResult {
     let nat_fname = input_name.replace(".ssa", ".s");
     
     let out1 = match run_command("qbe", &["-o", &nat_fname, input_name]) {
@@ -121,7 +126,13 @@ fn assemble(input_name: &str, output_name: &str) -> ExternalResult {
     };
     print_stds(out1);
  
-    let out2 = match run_command("gcc", &[&nat_fname, "-o", output_name]) {
+    let mut args: Vec<&str> = vec![&nat_fname, "-o", output_name];
+
+    let dash_flags: Vec<String> = ldflags.iter().map(|s| format!("-{}", s))
+        .collect();
+    args.extend(dash_flags.iter().map(|s| s.as_str()));  
+
+    let out2 = match run_command("gcc", &args) {
         Ok(sv) => sv,
         Err(()) => {
             return ExternalResult::LinkError();

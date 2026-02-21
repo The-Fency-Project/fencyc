@@ -1,9 +1,9 @@
 use std::{collections::HashMap, fmt::format, rc::Rc};
 
 use crate::{
-    fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, CmpOp, UnaryOp},
+    fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, CmpOp, FuncArg, UnaryOp},
     lexer::lexer::Intrinsic,
-    seman::seman::{self as sem, FSymbol, FType, SemAn, SymbolTable, VarPosition, idx_to_ftype},
+    seman::seman::{self as sem, FSymbol, FType, OverloadTable, SemAn, SymbolTable, VarPosition, idx_to_ftype},
 }; // AstNode;
 use fparse::AstNode;
 use qbe::{Block, DataDef, DataItem, Function, Instr, Linkage, Module, Type, Value};
@@ -41,11 +41,11 @@ pub struct CodeGen {
     loop_conts: Vec<String>,
     stackidxs: Vec<usize>, // saving last stack idx before function
     overload_ctr: usize,
-    matched_overloads: HashMap<usize, (usize, FType)>, // call idx -> overload idx, ret type
+    matched_overloads: OverloadTable, // call idx -> overload idx, ret type
 }
 
 impl CodeGen {
-    pub fn new(ast: Vec<AstRoot>, mo: HashMap<usize, (usize, FType)>) -> CodeGen {
+    pub fn new(ast: Vec<AstRoot>, mo: OverloadTable) -> CodeGen {
         CodeGen {
             ast: ast,
             cur_ast: 0,
@@ -107,50 +107,21 @@ impl CodeGen {
         let mut res = GenData::new();
         match node {
             AstNode::Function { name, args, ret_type, body } => {
-                // TODO: pub 
-                let mut args_qbe = Vec::new();
-                for arg in args {
-                    args_qbe.push((
-                        Self::match_ft_qbf(arg.ftype),
-                        Value::Temporary(arg.name.into())
-                    ));
-                }
-
-                let ret_t_qbe = match ret_type {
-                    FType::none | FType::nil => None,
-                    other => Some(Self::match_ft_qbf(other))
+                self.gen_func(name, args, ret_type, body, 0); 
+            }
+            AstNode::FunctionOverload { func, idx } => {
+                let (name, args, ret_type, body) = match *func {
+                    AstNode::Function { name, args, ret_type, body } => {
+                        (name, args, ret_type, body)
+                    }
+                    other => unreachable!()
                 };
 
-
-                let mut func = Function::new(
-                    Linkage::private(), // TODO: pub 
-                    format!("{}_0", name),  // TODO: spec overloads
-                    args_qbe, 
-                    ret_t_qbe
-                );
-                func.add_block("start");
-                self.fbuild.func = Some(func);
-                self.fbuild.ready = false;
-                self.should_push = false;
-                {
-                    let body_instrs = {
-                        let instrs = {
-                            let bgd = self.gen_expr(*body).clone();
-                            bgd.instrs.clone()
-                        };
-                        instrs
-                    };
-
-                    for instr in body_instrs {
-                        self.fbuild.add_instr(instr);
-                    }
-                }
-
-                self.should_push = true;
-                self.fbuild.ready = true;
+                self.gen_func(name, args, ret_type, body, idx); 
             }
             AstNode::ReturnVal { val } => {
                 let rightd = self.gen_expr(val.node);
+                res.returned = true;
 
                 self.fbuild.add_instr(Instr::Ret(rightd.val));
             }
@@ -182,8 +153,13 @@ impl CodeGen {
                     }
                 };
 
+                let name = match ov_idx {
+                    Some(v) => format!("{}_{}", func_name, v),
+                    None => format!("{}", func_name)
+                };
+
                 let instr = Instr::Call(
-                        format!("{}_{}", func_name, ov_idx), 
+                        name, 
                         args_qbe, 
                         None
                 );
@@ -192,17 +168,22 @@ impl CodeGen {
                 res.val = Some(tmpvar.clone());
                 res.ftype = ret_type;
                 
-                self.fbuild.add_instr(Instr::Assign(
-                    tmpvar, 
-                    Self::match_ft_qbf(ret_type), 
-                    Box::new(instr)
-                ));
+                if ret_type != FType::none {
+                    self.fbuild.add_instr(Instr::Assign(
+                        tmpvar, 
+                        Self::match_ft_qbf(ret_type), 
+                        Box::new(instr)
+                    ));
+                } else {
+                    self.fbuild.add_instr(instr);
+                }
             }
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
                 for expr in exprs {
                     let gend = self.gen_expr(expr.node);
                     res.instrs.extend(gend.instrs);
+                    res.returned = gend.returned;
                 }
                 self.symb_table.exit_scope();
             }
@@ -246,11 +227,11 @@ impl CodeGen {
                 res.qtype = Some(Type::Long);
                 res.ftype = FType::int;
             }
-            AstNode::Float(fv) => {
+            AstNode::Double(fv) => {
                 let val = Value::double(fv);
                 res.val = Some(val);
                 res.qtype = Some(Type::Double);
-                res.ftype = FType::float;
+                res.ftype = FType::double;
             }
             AstNode::boolVal(bv) => {
                 let val = Value::Const(bv as u64);
@@ -507,21 +488,28 @@ impl CodeGen {
                 let false_lab = self.alloc_label();
                 let endif     = self.alloc_label();
 
+                let false_to = if if_false.is_some() {
+                    false_lab.clone()
+                } else {
+                    endif.clone()
+                };
+
                 let _ = self.fbuild.add_instr(Instr::Jnz(
                         cond_res_tmp, 
                         true_lab.clone(), // if true  
-                        false_lab.clone() // if false
+                        false_to // if false
                 ));
 
                 let _ = self.fbuild.add_block(true_lab);
 
                 let true_gd = self.gen_expr(if_true.node);
                 res.instrs.extend(true_gd.instrs);
-                let _ = self.fbuild.add_instr(Instr::Jmp(endif.clone()));
-
-                let _ = self.fbuild.add_block(false_lab);
+                if !true_gd.returned { 
+                    let _ = self.fbuild.add_instr(Instr::Jmp(endif.clone()));
+                }
 
                 if let Some(n) = if_false {
+                    let _ = self.fbuild.add_block(false_lab);
                     let false_gd = self.gen_expr(n.node);
                     res.instrs.extend(false_gd.instrs);
                 }
@@ -573,7 +561,9 @@ impl CodeGen {
                 self.fbuild.add_block(body_lbl);
 
                 let body_gd = self.gen_expr(body.node);
-                self.fbuild.add_instr(Instr::Jmp(loop_block));
+                if !body_gd.returned {
+                    self.fbuild.add_instr(Instr::Jmp(loop_block));
+                }
 
                 let _ = self.fbuild.add_block(end);
 
@@ -604,7 +594,9 @@ impl CodeGen {
 
                 let _ = self.fbuild.add_block(body_block);
                 let body_gd = self.gen_expr(body.node);
-                let _ = self.fbuild.add_instr(Instr::Jmp(loop_block));
+                if !body_gd.returned {
+                    let _ = self.fbuild.add_instr(Instr::Jmp(loop_block));
+                }
 
                 let _ = self.fbuild.add_block(end_block);
 
@@ -627,6 +619,7 @@ impl CodeGen {
                 let blk_name = self.alloc_label();
                 let _ = self.fbuild.add_block(blk_name); // making qbe stfu
             }
+            AstNode::ExternedFunc { name, args, ret_type } => {}
             AstNode::none => {}
             other => {
                 panic!("can't generate yet for {:?}", other);
@@ -643,6 +636,53 @@ impl CodeGen {
         return res;
     }
 
+    fn gen_func(&mut self, name: String, args: Vec<FuncArg>, 
+            ret_type: FType, body: Box<AstNode>, over_idx: usize)  {
+        // TODO: pub 
+        self.symb_table.push_funcargs(args.clone());
+
+        let mut args_qbe = Vec::new();
+        for arg in args {
+            args_qbe.push((
+                Self::match_ft_qbf(arg.ftype),
+                Value::Temporary(arg.name.into())
+            ));
+        }
+
+        let ret_t_qbe = match ret_type {
+            FType::none | FType::nil => None,
+            other => Some(Self::match_ft_qbf(other))
+        };
+
+
+        let mut func = Function::new(
+            Linkage::private(), // TODO: pub 
+            format!("{}_{}", name, over_idx),
+            args_qbe, 
+            ret_t_qbe
+        );
+        func.add_block("start");
+        self.fbuild.func = Some(func);
+        self.fbuild.ready = false;
+        self.should_push = false;
+        {
+            let body_instrs = {
+                let instrs = {
+                    let bgd = self.gen_expr(*body).clone();
+                    bgd.instrs.clone()
+                };
+                instrs
+            };
+
+            for instr in body_instrs {
+                self.fbuild.add_instr(instr);
+            }
+        }
+
+        self.should_push = true;
+        self.fbuild.ready = true;
+    }
+
     fn new_temp(&mut self) -> Value {
         let name = format!("tmp_{}", self.tmp_ctr);
         self.tmp_ctr += 1;
@@ -651,22 +691,22 @@ impl CodeGen {
 
     fn get_conv(ft_src: FType, target_type: FType, src: Value) -> Instr {
         match (ft_src, target_type) {
-            (FType::float, FType::uint) => { // bitwise repr
+            (FType::double, FType::uint) => { // bitwise repr
                 Instr::Dtoui(
                     src
                 )
             }
-            (FType::float, FType::int) => { // bitwise repr
+            (FType::double, FType::int) => { // bitwise repr
                 Instr::Dtosi(
                     src
                 )
             }
-            (FType::uint, FType::float) => {
+            (FType::uint, FType::double) => {
                 Instr::Ultof(
                     src
                 )
             }
-            (FType::int, FType::float) => {
+            (FType::int, FType::double) => {
                 Instr::Sltof(
                     src
                 )
@@ -782,7 +822,7 @@ impl CodeGen {
     pub fn match_ft_qbf(ft: FType) -> Type {
         match ft {
             FType::int | FType::uint => Type::Long,
-            FType::float             => Type::Double,
+            FType::double             => Type::Double,
             FType::bool              => Type::Byte,
             other => todo!("Match ft qbf for {:?}", ft)
         }
@@ -953,6 +993,8 @@ pub struct GenData {
     pub instrs: Vec<Instr>,
 
     pub newfunc: Option<Function>,
+
+    pub returned: bool, // if expr has return 
 }
 
 impl GenData {
@@ -965,6 +1007,7 @@ impl GenData {
             newfunc: None,
             val: None,
             qtype: None,
+            returned: false,
         }
     }
 
