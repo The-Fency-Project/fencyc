@@ -32,9 +32,9 @@ func factorial(n: int) -> int {
     return n * factorial(n - 1);
 }
 
-// override operator allows you to redefine function's 
+// Overload operator allows you to redefine function's 
 // arguments (count, types), return type and even function 
 // behaviour.
-override func add(a: double, b: double) -> double {
+overload func add(a: double, b: double) -> double {
     return a + b;
 }

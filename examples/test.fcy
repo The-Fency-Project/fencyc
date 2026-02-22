@@ -1,16 +1,21 @@
-// Compile with 
-// `fencyc input examples/test.fcy -o testbins/test --ldflags lm`
-
-extern func sqrt(a: double) -> double;
-
 func main() {
-    let c: double = sqrt(16.0); 
-    printintrin c;
+    let arr: [int] = [1, 2, 3]int;
+    let l: uint = 3u;
 
-    while (true) {
-        return;
+    for let i: uint = 0u in i < l; i += 1u {
+        printintrin arr[i];
     }
+
+    let s: str = "Hello, world!";
+    print_s(s);
+
+    let arr_s: [str] = ["hello", "world"]str;
+    printintrin arr_s[1u];
 
     return;
 }
 
+func print_s(s1: str) {
+    printintrin s1;
+    return;
+}

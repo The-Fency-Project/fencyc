@@ -71,6 +71,7 @@ fn test_loops_example() {
 
     let expected = "\
 0
+0
 1
 2
 3
@@ -80,6 +81,7 @@ fn test_loops_example() {
 7
 8
 9
+0
 1
 2
 3

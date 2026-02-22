@@ -9,12 +9,12 @@ func main() {
     while true break;
 
     // lets print every integer from 0 to 10 exclusively
-    for let a: int = 0 in a < 10; a = a + 1 {
+    for let a: int = 0 in a < 10; a += 1 {
         printintrin a;
     }
 
     // shorter way
-    for let a: int = 0 in a < 10; a = a + 1 printintrin a; 
+    for let a: int = 0 in a < 10; a += 1 printintrin a; 
 
     return;
 }

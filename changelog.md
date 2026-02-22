@@ -1,6 +1,9 @@
-v0.5.5:
-- functions works fine
-- `3_functions.fcy` example works (+test)
-- renamed `float` to `double`
-- added externed functions 
-- added optional `--ldflags` compile flag so you may link external libs
+v0.6.0:
+- renamed `override` keyword to `overload` (more technically correct here)
+- update readme
+- added `fmt_str`
+- added arrays
+- added strs 
+- added raylib example
+- codegen rewrite seems to be done! i implemented everything that was in voxvm codegen.
+fency would see new features now!

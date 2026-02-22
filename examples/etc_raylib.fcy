@@ -1,0 +1,24 @@
+// Compile with:
+// fencyc input examples/etc_raylib.fcy -o testbins/etc_raylib \
+//                                       --ldflags lraylib
+
+extern func InitWindow(width: int, height: int, title: str);
+extern func CloseWindow();
+extern func WindowShouldClose() -> bool;
+extern func SetTargetFPS(fps: int);
+extern func BeginDrawing();
+extern func EndDrawing();
+
+func main() {
+    InitWindow(640, 480, "Fency raylib!");
+    SetTargetFPS(60);
+
+    while (!WindowShouldClose()) {
+        BeginDrawing();
+
+        EndDrawing();
+    }
+    
+    CloseWindow();
+    return;
+}

@@ -115,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "fencyc"
-version = "0.5.5"
+version = "0.6.0"
 dependencies = [
  "clap",
  "colored",
@@ -170,7 +170,7 @@ dependencies = [
 [[package]]
 name = "qbe"
 version = "2.5.1"
-source = "git+https://github.com/Freemorger/qbe-rs.git#bb290449a8d4f43ef4329400b917a9ef1550476b"
+source = "git+https://github.com/Freemorger/qbe-rs.git#a6cb94522cecd379a1193aa1280f3347dd709a4d"
 dependencies = [
  "ordered-float",
 ]

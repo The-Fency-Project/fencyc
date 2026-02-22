@@ -311,7 +311,7 @@ impl FcParser {
                 f.0
             }
 
-            Tok::Keyword(Kword::Override) => {
+            Tok::Keyword(Kword::Overload) => {
                 self.consume();
                 let f = self.parse_func(false);
                 let idx = {
@@ -627,10 +627,18 @@ impl FcParser {
                 self.expect(Tok::Comma);
             }
 
-            let arg_name = self.expect_idt().unwrap_or_else(|| {panic!("{}: expected arg name", self.line)});
+            let arg_name = self.expect_idt().unwrap_or_else(|| {
+                panic!("{}: expected arg name", self.line)}
+            );
             self.expect(Tok::Colon);
-            let arg_typename = self.expect_idt().unwrap_or_else(|| {panic!("{}: expected typename for arg", self.line)});
-            let ft = match_ftype(&arg_typename).unwrap_or_else(|| {panic!("{}: unknown type {}", self.line, arg_typename)});
+            // TODO: arrays args
+
+            let arg_typename = self.expect_idt().unwrap_or_else(|| {
+                panic!("{}: expected typename for arg", self.line)}
+            );
+            let ft = match_ftype(&arg_typename).unwrap_or_else(|| {
+                panic!("{}: unknown type {}", self.line, arg_typename)}
+            );
 
             res.push(FuncArg::new(arg_name, ft));
         };
@@ -771,7 +779,6 @@ pub enum AstNode {
         iter_cond: Box<AstRoot>, // e.g. a < 10
         body: Box<AstRoot>,
     },
-
     
 }
 
