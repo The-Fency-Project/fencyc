@@ -11,7 +11,6 @@ env:
 jobs:
   build_and_release:
     runs-on: ubuntu-latest
-    # Grant permissions for creating releases and pushing tags
     permissions:
       contents: write
 
@@ -25,11 +24,29 @@ jobs:
         override: true
         components: rustfmt, clippy
 
+    # --- Cargo Cache Steps ---
+    - name: Cache Cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: cargo-registry-nightly-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          cargo-registry-nightly-${{ runner.os }}-
+
+    - name: Cache Cargo build
+      uses: actions/cache@v3
+      with:
+        path: target
+        key: cargo-build-nightly-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          cargo-build-nightly-${{ runner.os }}-
+
     - name: Build nightly
       run: cargo build --verbose
     
     # --- Release Steps ---
-
     - name: Get current date for release name
       id: date
       run: echo "NOW=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT

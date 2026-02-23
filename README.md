@@ -7,9 +7,6 @@ Planned to be lightweight and ~~de-appled~~ swift alternative
 > Linux (amd64/aarch64/riscv64), though workarounds with other OS'es are possible 
 > with some extra tinker steps.
 
-> [!WARNING]
-> Codegen is currently being rewritten for QBE IR target only
-
 
 ## Fast installation
 There is a `fcyup` python script that would download/update fency toolchain for you,

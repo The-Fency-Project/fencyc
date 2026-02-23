@@ -4,3 +4,5 @@ v0.6.1:
 - implemented `_len` intrinsic for str's and fixed-size arrays
 - added `@` operator for arrays (repeat previous elements N times)
 - added `4_arrays` example (+test)
+patch A:
+- changed github actions so it would cache and work..
