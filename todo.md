@@ -1,15 +1,12 @@
 ## Current:
-- array as function arg 
-- `_len` intrinsic
-- arrays example
+- modules
 - refactor src/main.rs
-### Future (from main branch):
+### Future:
 Small:
 - iterators for `for`
-- default args values (?)
+- default args values in funcs
 - auto type inference for lets
 - make error if trying to override func that wasnt declared
 Major:
 - structures
-- modules
 - traits

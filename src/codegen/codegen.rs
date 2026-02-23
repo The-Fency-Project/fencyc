@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::format, rc::Rc};
 use crate::{
     fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, CmpOp, FuncArg, UnaryOp},
     lexer::lexer::Intrinsic,
-    seman::seman::{self as sem, FSymbol, FType, OverloadTable, SemAn, SymbolTable, VarPosition, idx_to_ftype},
+    seman::seman::{self as sem, FSymbol, FType, OverloadTable, SemAn, SymbolTable, VarPosition, ftype_to_idx, idx_to_ftype},
 }; // AstNode;
 use fparse::AstNode;
 use qbe::{Block, DataDef, DataItem, Function, Instr, Linkage, Module, Type, Value};
@@ -188,23 +188,26 @@ impl CodeGen {
                 self.symb_table.exit_scope();
             }
             AstNode::Assignment { name, val, ft } => {
-                let mut rdat = self.gen_expr(*val);
-                res.instrs.extend(rdat.instrs.drain(..));
+                let rdat = self.gen_expr(*val);
 
-                res.instrs.extend(rdat.instrs.drain(..));
                 let val = rdat.val.unwrap_or_else(|| {
                     panic!("Internal error: can't get val of \
                         assignment")
                 });
                 
+                let res_ft = match rdat.ftype {
+                    FType::none | FType::nil => ft,
+                    other => other.clone()
+                };
 
-                self.symb_table.newsymb(
-                    FSymbol::new(
-                        name.clone(), 
-                        VarPosition::None, // obsolete, TODO: delete  
-                        ft
-                    )
+                let mut symb = FSymbol::new(
+                    name.clone(), 
+                    VarPosition::None, // obsolete, TODO: delete  
+                    res_ft
                 );
+                res.ftype = res_ft;
+
+                self.symb_table.newsymb(symb);
 
                 self.fbuild.add_instr(
                     Instr::Assign(
@@ -240,6 +243,7 @@ impl CodeGen {
             }
             AstNode::StringLiteral(st) => {
                 let st_name = self.new_dslab();
+                let len = st.len();
 
                 let items = vec![
                     (Type::Byte, DataItem::Str(st)),
@@ -253,11 +257,14 @@ impl CodeGen {
                     items: items
                 });
 
-                self.symb_table.newsymb(FSymbol::new(
+                let mut symb = FSymbol::new(
                     st_name.clone(),
                     VarPosition::None, // obsolete 
                     FType::strconst
-                ));
+                );
+                symb.len = Some(len);
+                symb.dsname = Some(st_name.clone());
+                self.symb_table.newsymb(symb);
 
                 res.val = Some(Value::Global(st_name));
                 res.ftype = FType::strconst;
@@ -268,7 +275,19 @@ impl CodeGen {
                 let mut total_size: u64 = 0;
                 let mut el_size: u64    = 0;
                 let mut vals = Vec::new();
+
                 for el in elems {
+                    if let AstNode::ArrRep(n) = el {
+                        let prefix_len = vals.len(); // everything so far
+                        for _ in 1..n {
+                            vals.extend(vals[0..prefix_len].to_vec());
+                        }
+                        
+                        total_size *= n;
+
+                        continue;
+                    };
+
                     let gd = self.gen_expr(el);
                     vals.push(gd.val.clone().unwrap());
                     if el_size == 0 {
@@ -277,7 +296,13 @@ impl CodeGen {
                     total_size += el_size;
                 }
 
-                let _ = self.fbuild.assign_instr(
+                res.ftype = FType::Array(
+                    ftype_to_idx(&ft),
+                    vals.len(), 
+                    0
+                );
+
+                self.fbuild.assign_instr(
                     tmp.clone(),
                     Type::Long,
                     Instr::Alloc8(total_size)
@@ -286,7 +311,7 @@ impl CodeGen {
                 let qtype = Self::match_ft_qbf(ft);
                 let idx_tmp = self.new_temp();
                 for (i, v) in vals.iter().enumerate() { 
-                    let _ = self.fbuild.assign_instr(
+                    self.fbuild.assign_instr(
                         idx_tmp.clone(),
                         Type::Long,
                         Instr::Add(
@@ -295,7 +320,7 @@ impl CodeGen {
                         )
                     );
 
-                    let _ = self.fbuild.add_instr(Instr::Store(
+                    self.fbuild.add_instr(Instr::Store(
                         qtype.clone(),
                         idx_tmp.clone(),
                         v.clone()
@@ -319,19 +344,19 @@ impl CodeGen {
                 let el_size  = Self::sizeof(el_ftype);
                 let el_qtype = Self::match_ft_qbf(el_ftype);
 
-                let _ = self.fbuild.assign_instr(
+                self.fbuild.assign_instr(
                     tmp.clone(),
                     Type::Long,
                     Instr::Mul(idx_gd.val.unwrap(), Value::Const(el_size))
                 );
                
-                let _ = self.fbuild.assign_instr(
+                self.fbuild.assign_instr(
                     tmp.clone(),
                     Type::Long,
                     Instr::Add(tmp.clone(), Value::Temporary(arr_name.clone()))
                 );
 
-                let _ = self.fbuild.assign_instr(
+                self.fbuild.assign_instr(
                     tmp.clone(),
                     Type::Long,
                     Instr::Load(el_qtype, tmp.clone())
@@ -473,10 +498,9 @@ impl CodeGen {
             AstNode::Intrinsic { intr, val } => {
                 let gend = self.gen_expr(*val);
                 
-                let mut ind = self.gen_intrinsic(intr, gend);
-                for instr in ind.instrs.drain(..) {
-                    self.fbuild.add_instr(instr);
-                }
+                let ind = self.gen_intrinsic(intr, gend);
+                res.ftype = ind.ftype;
+                res.val = ind.val;
             }
             AstNode::Variable(var) => { // var name
                 let var_dat = self.symb_table.get(var.clone()).unwrap_or_else(|| {
@@ -545,10 +569,7 @@ impl CodeGen {
                 res.val = Some(tmp);
             }
             AstNode::Reassignment { name, newval } => {
-                let mut gd = self.gen_expr(newval.node);
-                res.instrs.extend(gd.instrs.extract_if(.., |x| {
-                    matches!(x, Instr::Assign(_, _, _))
-                }));
+                let gd = self.gen_expr(newval.node);
 
                 let val = Value::Temporary(name.clone());
 
@@ -567,7 +588,7 @@ impl CodeGen {
                 let cond_gd = self.gen_expr(cond.node);
 
                 let cond_val_tmp = self.new_temp();
-                let _ = self.fbuild.add_instr(Instr::Assign(
+                self.fbuild.add_instr(Instr::Assign(
                     cond_val_tmp.clone(),
                     Type::Long,
                     Box::new(Instr::Extub(cond_gd.val.unwrap()))
@@ -580,7 +601,7 @@ impl CodeGen {
                     cond_val_tmp,
                     Value::Const(1)
                 );
-                let _ = self.fbuild.add_instr(Instr::Assign(
+                self.fbuild.add_instr(Instr::Assign(
                     cond_res_tmp.clone(),
                     Type::Long,
                     Box::new(cmp_instr)
@@ -596,27 +617,27 @@ impl CodeGen {
                     endif.clone()
                 };
 
-                let _ = self.fbuild.add_instr(Instr::Jnz(
+                self.fbuild.add_instr(Instr::Jnz(
                         cond_res_tmp, 
                         true_lab.clone(), // if true  
                         false_to // if false
                 ));
 
-                let _ = self.fbuild.add_block(true_lab);
+                self.fbuild.add_block(true_lab);
 
                 let true_gd = self.gen_expr(if_true.node);
                 res.instrs.extend(true_gd.instrs);
                 if !true_gd.returned { 
-                    let _ = self.fbuild.add_instr(Instr::Jmp(endif.clone()));
+                    self.fbuild.add_instr(Instr::Jmp(endif.clone()));
                 }
 
                 if let Some(n) = if_false {
-                    let _ = self.fbuild.add_block(false_lab);
+                    self.fbuild.add_block(false_lab);
                     let false_gd = self.gen_expr(n.node);
                     res.instrs.extend(false_gd.instrs);
                 }
 
-                let _ = self.fbuild.add_block(endif);
+                self.fbuild.add_block(endif);
 
                 // TODO: if returning smth, like in rust
             }
@@ -635,7 +656,7 @@ impl CodeGen {
                 let cond_gd = self.gen_expr(cond.node);
 
                 let cond_val_tmp = self.new_temp();
-                let _ = self.fbuild.add_instr(Instr::Assign(
+                self.fbuild.add_instr(Instr::Assign(
                     cond_val_tmp.clone(),
                     Type::Long,
                     Box::new(Instr::Extub(cond_gd.val.unwrap()))
@@ -648,13 +669,13 @@ impl CodeGen {
                     cond_val_tmp,
                     Value::Const(1)
                 );
-                let _ = self.fbuild.add_instr(Instr::Assign(
+                self.fbuild.add_instr(Instr::Assign(
                     cond_res_tmp.clone(),
                 Type::Long,
                     Box::new(cmp_instr)
                 ));
 
-                let _ = self.fbuild.add_instr(Instr::Jnz(
+                self.fbuild.add_instr(Instr::Jnz(
                         cond_res_tmp, 
                         body_lbl.clone(), // if true  
                         end.clone() // if false
@@ -667,7 +688,7 @@ impl CodeGen {
                     self.fbuild.add_instr(Instr::Jmp(loop_block));
                 }
 
-                let _ = self.fbuild.add_block(end);
+                self.fbuild.add_block(end);
 
                 self.loop_exits.pop();
                 self.loop_conts.pop();
@@ -682,25 +703,25 @@ impl CodeGen {
                 self.loop_conts.push(loop_block.clone());
                 self.loop_exits.push(end_block.clone());
 
-                let _ = self.fbuild.add_instr(Instr::Jmp(loop_block.clone()));
-                let _ = self.fbuild.add_block(loop_block.clone());
+                self.fbuild.add_instr(Instr::Jmp(loop_block.clone()));
+                self.fbuild.add_block(loop_block.clone());
 
                 let iter_cond_gd = self.gen_expr(iter_cond.node);
 
-                let _ = self.fbuild.add_instr(Instr::Jnz(
+                self.fbuild.add_instr(Instr::Jnz(
                     iter_cond_gd.val.unwrap(),
                     body_block.clone(),
                     end_block .clone(),
                 ));
 
-                let _ = self.fbuild.add_block(body_block);
+                self.fbuild.add_block(body_block);
                 let body_gd = self.gen_expr(body.node);
                 let iter_upd_gd = self.gen_expr(iter_upd.node);  
                 if !body_gd.returned {
-                    let _ = self.fbuild.add_instr(Instr::Jmp(loop_block));
+                    self.fbuild.add_instr(Instr::Jmp(loop_block));
                 }
 
-                let _ = self.fbuild.add_block(end_block);
+                self.fbuild.add_block(end_block);
 
                 self.loop_exits.pop();
                 self.loop_conts.pop();
@@ -708,18 +729,18 @@ impl CodeGen {
             AstNode::BreakLoop => {
                 let exit = self.loop_exits.pop().unwrap();
 
-                let _ = self.fbuild.add_instr(Instr::Jmp(exit));
+                self.fbuild.add_instr(Instr::Jmp(exit));
                 
                 let blk_name = self.alloc_label();
-                let _ = self.fbuild.add_block(blk_name); // making qbe stfu
+                self.fbuild.add_block(blk_name); // making qbe stfu
             }
             AstNode::ContinueLoop => {
                 let tgt = self.loop_conts.pop().unwrap();
 
-                let _ = self.fbuild.add_instr(Instr::Jmp(tgt));
+                self.fbuild.add_instr(Instr::Jmp(tgt));
                 
                 let blk_name = self.alloc_label();
-                let _ = self.fbuild.add_block(blk_name); // making qbe stfu
+                self.fbuild.add_block(blk_name); // making qbe stfu
             }
             AstNode::ExternedFunc { name, args, ret_type } => {}
             AstNode::none => {}
@@ -954,7 +975,7 @@ impl CodeGen {
                                     }))
                                 ];
 
-                                resd.instrs.push(
+                                self.fbuild.add_instr(
                                     Instr::Call(
                                         "printf".into(),
                                         args, 
@@ -971,7 +992,7 @@ impl CodeGen {
                                     }))
                                 ];
 
-                                resd.instrs.push(
+                                self.fbuild.add_instr(
                                     Instr::Call(
                                         "printf".into(),
                                         args, 
@@ -988,7 +1009,7 @@ impl CodeGen {
                                         }))
                                     ];
 
-                                    resd.instrs.push(
+                                    self.fbuild.add_instr(
                                         Instr::Call(
                                             "printf".into(),
                                             args, 
@@ -1007,7 +1028,7 @@ impl CodeGen {
                                         for print")
                             }))
                         ];
-                        resd.instrs.push(
+                        self.fbuild.add_instr(
                             Instr::Call(
                                 "printf".into(), 
                                 args, 
@@ -1019,7 +1040,34 @@ impl CodeGen {
                 }
             }
             Intrinsic::Len => {
-                todo!();
+                let tmp = self.new_temp();
+                resd.val = Some(tmp.clone());
+                resd.ftype = FType::uint;
+
+                match rightdat.ftype {
+                    FType::strconst => {
+                        self.fbuild.assign_instr(
+                            tmp,
+                            Type::Long,
+                            Instr::Call(
+                                "strlen".into(), // libc
+                                vec![(Type::Long, rightdat.val.unwrap())],
+                                None,
+                            )
+                        );
+
+                    }
+                    FType::Array(el_ft, l, _) => {
+                        self.fbuild.assign_instr(
+                            tmp.clone(),
+                            Type::Long,
+                            Instr::Copy(
+                                Value::Const(l as u64)
+                            )
+                        );
+                    }
+                    other => unimplemented!("{:#?}", other)
+                }
             }
         }
         resd
@@ -1040,22 +1088,19 @@ impl FuncBuilder {
         }
     }
 
-    pub fn add_instr(&mut self, i: Instr) -> Result<(), ()> {
+    pub fn add_instr(&mut self, i: Instr) {
         if let Some(f) = self.func.as_mut() {
             f.add_instr(i);
-            Ok(())
         } else {
-            Err(())
+            panic!("Can't get function in fbuild!")
         }
     }
 
-    pub fn assign_instr(&mut self, dst: Value, t: Type, i: Instr)
-            -> Result<(), ()> {
+    pub fn assign_instr(&mut self, dst: Value, t: Type, i: Instr) {
         if let Some(f) = self.func.as_mut() {
             f.assign_instr(dst, t, i);
-            Ok(())
         } else {
-            Err(())
+            panic!("Can't get current function in fbuild!")
         }
     }
 
@@ -1072,13 +1117,12 @@ impl FuncBuilder {
         Some(cl)
     }
 
-    pub fn add_block<S>(&mut self, name: S) -> Result<(), ()>
+    pub fn add_block<S>(&mut self, name: S) 
         where S: Into<String> {
         if let Some(f) = self.func.as_mut() {
             f.add_block(name);
-            Ok(())
         } else {
-            Err(())
+            panic!("Can't get current func in fbuild!")
         }
     }
 }

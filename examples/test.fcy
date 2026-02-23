@@ -1,21 +1,11 @@
-func main() {
-    let arr: [int] = [1, 2, 3]int;
-    let l: uint = 3u;
+// This file is a small test for current features
 
-    for let i: uint = 0u in i < l; i += 1u {
+func main() {
+    let arr: [int] = [1, 2, 3 @3u]int;
+
+    for let i: uint = 0u in i < _len arr; i += 1u {
         printintrin arr[i];
     }
 
-    let s: str = "Hello, world!";
-    print_s(s);
-
-    let arr_s: [str] = ["hello", "world"]str;
-    printintrin arr_s[1u];
-
-    return;
-}
-
-func print_s(s1: str) {
-    printintrin s1;
     return;
 }

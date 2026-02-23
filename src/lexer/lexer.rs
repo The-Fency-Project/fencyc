@@ -42,6 +42,7 @@ pub enum Tok {
     Percent, // %
     LBr,
     RBr,
+    At, // @
     DQuote, // "
     Combined(Box<Tok>, Box<Tok>),
 }
@@ -163,6 +164,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '{' => {res.push(Token::new(Tok::LCurBr, line)); chars.next();},
             '$' => {res.push(Token::new(Tok::DollarSign, line)); chars.next();},
             '~' => {res.push(Token::new(Tok::Tilde, line)); chars.next();},
+            '@' => {res.push(Token::new(Tok::At, line)); chars.next();},
             '!' => {
                 chars.next();
                 if Some('=') == chars.peek().copied() {

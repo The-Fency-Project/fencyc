@@ -1,0 +1,39 @@
+// Fixed-size arrays + `str` demo
+
+func main() {
+    // Array of size 3
+    // placed on stack
+    let arr: [int] = [1, 2, 3]int;
+    print_nth(arr, 2u); // passing by pointer; would print 3
+
+    for let i: uint = 0u in i < _len arr; i += 1u {
+        printintrin arr[i];
+    }
+
+    // static string, placed in data segment
+    let s: str = "Hello, world!"; 
+    print_s(s); // passing by pointer (againt)
+
+    printintrin _len s; // 13 (chars count)
+    printintrin _len arr; // 3 (elems count)
+
+    // `.. @ N` means:
+    // Repeat all elements thus far N times
+    // So this one would be `1, 2, 1, 2, ...`,
+    // 8 elements basically 
+    let rep_arr: [int] = [1, 2 @ 4u]int;
+    print_nth(rep_arr, 6u); // 1
+    printintrin _len rep_arr; // 8
+
+    return;
+}
+
+func print_s(s1: str) {
+    printintrin s1;
+    return;
+}
+
+func print_nth(arr: [int], idx: uint) {
+    printintrin arr[idx];
+    return;
+}

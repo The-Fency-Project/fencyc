@@ -163,6 +163,13 @@ impl FcParser {
                         self.consume();
                         break;
                     }
+                    if t.tok == Tok::At {
+                        self.consume();
+                        let count = self.expect_uint();
+                        vals.push(AstNode::ArrRep(count.1));
+                        self.consume();
+                        break;
+                    }
                     vals.push(self.parse_expr(0).node);
                 };
                 self.allowed_tok = None;
@@ -631,7 +638,22 @@ impl FcParser {
                 panic!("{}: expected arg name", self.line)}
             );
             self.expect(Tok::Colon);
-            // TODO: arrays args
+            if let Some(v) = self.peek() {
+                if v.tok == Tok::LBr {
+                    self.consume();
+                    let arg_typename = self.expect_idt().unwrap_or_else(|| {
+                        panic!("{}: expected typename for arg", self.line)}
+                    );
+                    let el_ft = match_ftype(&arg_typename).unwrap_or_else(|| {
+                        panic!("{}: unknown type {}", self.line, arg_typename)}
+                    );
+                    let ft = FType::Array(ftype_to_idx(&el_ft), 0, 0);
+
+                    res.push(FuncArg::new(arg_name, ft));
+                    self.expect(Tok::RBr);
+                    continue;
+                }
+            };
 
             let arg_typename = self.expect_idt().unwrap_or_else(|| {
                 panic!("{}: expected typename for arg", self.line)}
@@ -689,6 +711,7 @@ pub enum AstNode {
     Variable(String),
     Array(FType, Vec<AstNode>),
     ArrayElem(String, Box<AstRoot>), // arrname, idx val
+    ArrRep(u64), // repeat array elems N times
 
     CodeBlock {
         exprs: Vec<AstRoot>,

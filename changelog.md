@@ -1,9 +1,6 @@
-v0.6.0:
-- renamed `override` keyword to `overload` (more technically correct here)
-- update readme
-- added `fmt_str`
-- added arrays
-- added strs 
-- added raylib example
-- codegen rewrite seems to be done! i implemented everything that was in voxvm codegen.
-fency would see new features now!
+v0.6.1:
+- fixed seman bug
+- now you can have array as function parameter
+- implemented `_len` intrinsic for str's and fixed-size arrays
+- added `@` operator for arrays (repeat previous elements N times)
+- added `4_arrays` example (+test)

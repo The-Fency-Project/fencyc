@@ -15,6 +15,7 @@ pub struct FSymbol {
     pub cur_reg: VarPosition,
     pub ftype: FType,
     pub dsname: Option<String>,
+    pub len: Option<usize>, // for arrays and strings
 }
 
 impl FSymbol {
@@ -24,6 +25,7 @@ impl FSymbol {
             cur_reg: pos,
             ftype: ft,
             dsname: None,
+            len: None,
         }
     }
 }
@@ -146,7 +148,8 @@ impl SymbolTable {
 
     pub fn push_funcargs(&mut self, fargs: Vec<FuncArg>) {
         for (idx, fa) in fargs.iter().enumerate() {
-            let symb = FSymbol::new(fa.name.clone(), VarPosition::Register(idx + 1), fa.ftype);
+            // varposition is obsolete
+            let symb = FSymbol::new(fa.name.clone(), VarPosition::None, fa.ftype);
             self.newsymb(symb);
         }
     }
@@ -396,6 +399,7 @@ impl SemAn {
                     Intrinsic::Len => {
                         match rdat.ftype {
                             FType::Array(_, _, _) => {},
+                            FType::strconst => {},
                             other => {
                                 logger.emit(
                                     LogLevel::Error(
@@ -553,7 +557,8 @@ impl SemAn {
                     for (idx, arg) in args.iter().enumerate() {
                         let argdat = self.analyze_expr(arg, logger); // TODO: get this invariant
                                                                      // out of loop
-                        if argdat.ftype != overload.args[idx].ftype {
+                        if (overload.args.len() != args.len()) 
+                                || argdat.ftype != overload.args[idx].ftype {
                             flag = false;
                             break;
                         }
