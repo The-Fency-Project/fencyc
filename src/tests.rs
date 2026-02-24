@@ -166,7 +166,7 @@ fn test_arrays_example() {
 3
 1
 2
-3
+7
 Hello, world!
 13
 3

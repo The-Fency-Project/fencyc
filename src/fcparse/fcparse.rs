@@ -182,71 +182,99 @@ impl FcParser {
             }
 
             Tok::Identifier(idt) => {
-                let idt_cl = idt.clone();
-                if let Some(nexttok) = self.peek() {
-                    if nexttok.tok == Tok::Equals {
-                        self.consume();
-                        return AstNode::Reassignment { 
-                            name: idt_cl, 
-                            newval: Box::new(self.parse_expr(0))
+                let idt_cl                            = idt.clone();
+                let mut el_idx: Option<Box<AstRoot>>  = None;
+                let mut buf: Vec<AstNode>             = Vec::new();
+
+                while let Some(nexttok) = self.peek() {
+                    match &nexttok.tok.clone() {
+                        Tok::Semicol => {
+                            break;
                         }
-                    } else if let Tok::Combined(tok1, tok2) = &nexttok.tok.clone() {
-                        if **tok2 == Tok::Equals {
-                            self.consume(); 
-                            let bop = self.match_bop_for_tok(tok1, None).unwrap_or_else(|| {
-                                panic!("{}: cant get binary op for operand {:?}", self.line, tok1)
-                            });
-                            let right = self.parse_expr(0);
-                            let new_val_node = AstNode::BinaryOp { 
-                                op: bop, 
-                                left: Box::new(AstNode::Variable(idt_cl.clone())), 
-                                right: Box::new(right.node) 
-                            };
+                        Tok::Equals => {
+                            self.consume();
                             return AstNode::Reassignment { 
                                 name: idt_cl, 
-                                newval: Box::new(AstRoot::new(new_val_node, self.line))
+                                idx: el_idx,
+                                newval: Box::new(self.parse_expr(0))
+                            }
+                        }
+                        Tok::Combined(tok1, tok2) => {
+                            if **tok2 == Tok::Equals {
+                                self.consume(); 
+                                let bop = self.match_bop_for_tok(&tok1, None)
+                                    .unwrap_or_else(|| {
+                                    panic!("{}: cant get binary op for operand {:?}", 
+                                        self.line, tok1)
+                                });
+                                let right = self.parse_expr(0);
+                                let new_val_node = AstNode::BinaryOp { 
+                                    op: bop, 
+                                    left: Box::new(AstNode::Variable(idt_cl.clone())), 
+                                    right: Box::new(right.node) 
+                                };
+                                return AstNode::Reassignment { 
+                                    name: idt_cl,
+                                    idx: el_idx,
+                                    newval: Box::new(
+                                        AstRoot::new(new_val_node, self.line)
+                                    )
+                                };
+                            }
+                        }
+                        Tok::DollarSign => { // variable cast
+                            self.consume();
+                            let type_token = self.consume().unwrap_or_else(|| {
+                                panic!("\n{}: expected typename for {}", line_n, idt);
+                            });
+                            let type_idt = match &type_token.tok {
+                                Tok::Identifier(i) => i,
+                                other => {
+                                    panic!("\n{}: expected typename, found {:?}", 
+                                        line_n, other);
+                                }
+                            };
+
+                            let ftype = match_ftype(&type_idt).unwrap_or_else(|| {
+                                panic!("\n{}: {} is invalid type", line_n, type_idt);
+                            });
+
+                            return AstNode::VariableCast {
+                                name: idt.to_owned(), 
+                                target_type: ftype, 
+                            }
+                        }
+                        Tok::LPar => { // function call
+                            let args_nodes = self.parse_args_call();
+                            self.call_ctr += 1;
+
+                            return AstNode::Call { 
+                                func_name: idt.clone(), 
+                                args: args_nodes,
+                                idx: self.call_ctr - 1,
                             };
                         }
-                    } else if nexttok.tok == Tok::DollarSign {
-                        self.consume();
-                        let type_token = self.consume().unwrap_or_else(|| {
-                            panic!("\n{}: expected typename for {}", line_n, idt);
-                        });
-                        let type_idt = match &type_token.tok {
-                            Tok::Identifier(i) => i,
-                            other => {
-                                panic!("\n{}: expected typename, found {:?}", line_n, other);
-                            }
-                        };
+                        Tok::LBr => {
+                            self.consume();
+                            self.allowed_tok = Some(Tok::RBr);
+                            let idx_ast = self.parse_expr(0);
+                            self.allowed_tok = None;
+                            self.expect(Tok::RBr);
+                            el_idx = Some(Box::new(idx_ast.clone()));
 
-                        let ftype = match_ftype(&type_idt).unwrap_or_else(|| {
-                            panic!("\n{}: {} is invalid type", line_n, type_idt);
-                        });
-
-                        return AstNode::VariableCast {
-                            name: idt.to_owned(), 
-                            target_type: ftype, 
+                            let n = AstNode::ArrayElem(idt.clone(), Box::new(idx_ast));
+                            buf.push(n);
                         }
-                    } else if nexttok.tok == Tok::LPar {
-                        let args_nodes = self.parse_args_call();
-                        self.call_ctr += 1;
-
-                        return AstNode::Call { 
-                            func_name: idt.clone(), 
-                            args: args_nodes,
-                            idx: self.call_ctr - 1,
-                        };
-                    } else if nexttok.tok == Tok::LBr {
-                        self.consume();
-                        self.allowed_tok = Some(Tok::RBr);
-                        let idx_ast = self.parse_expr(0);
-                        self.allowed_tok = None;
-                        self.expect(Tok::RBr);
-
-                        return AstNode::ArrayElem(idt.clone(), Box::new(idx_ast));
+                        other => {break;}
                     }
                 }
-                AstNode::Variable(idt.clone())
+
+                match buf.get(0) {
+                    Some(ast_r) => {return ast_r.clone();},
+                    None => {
+                        return AstNode::Variable(idt.clone());
+                    }
+                }
             },
             Tok::Keyword(Kword::If) => self.parse_if(),
 
@@ -372,7 +400,8 @@ impl FcParser {
                         };
 
                         AstNode::Reassignment { 
-                            name: var_name, 
+                            name: var_name,
+                            idx: None,
                             newval: Box::new(AstRoot::new(new_val_node, line))
                         } 
                     },
@@ -702,6 +731,7 @@ impl FcParser {
 pub enum AstNode {
     none,
     NoParse, // internal astnode to stop parsing expr
+    Invalid, // invalid node
 
     Int(i64),
     Double(f64),
@@ -769,7 +799,8 @@ pub enum AstNode {
 
     Reassignment {
         name: String,
-        newval: Box<AstRoot>
+        idx: Option<Box<AstRoot>>,
+        newval: Box<AstRoot>,
     },
 
     VariableCast {

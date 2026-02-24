@@ -2,6 +2,7 @@
 
 func main() {
     let arr: [int] = [1, 2, 3 @3u]int;
+    arr[2u] = 4;
 
     for let i: uint = 0u in i < _len arr; i += 1u {
         printintrin arr[i];

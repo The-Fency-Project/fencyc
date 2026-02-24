@@ -74,6 +74,7 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool,
     let parsing_res = parser.parse_everything();
     let ast = parsing_res.0;
     let func_tab = parsing_res.1;
+    println!("AST: {:#?}", ast);
 
     let mut seman = Seman::SemAn::new(fpermissive, func_tab);
     seman.analyze(&ast, &mut logger);

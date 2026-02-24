@@ -1,8 +1,5 @@
-v0.6.1:
-- fixed seman bug
-- now you can have array as function parameter
-- implemented `_len` intrinsic for str's and fixed-size arrays
-- added `@` operator for arrays (repeat previous elements N times)
-- added `4_arrays` example (+test)
-patch A:
-- changed github actions so it would cache and work..
+v0.6.2:
+- some refactor in parser
+- reassignment to array elements are now possible
+- changed `4_arrays` example so it would also cover array elem reassignment
+- updated `CONTRIBUTING.md`

@@ -6,6 +6,10 @@ func main() {
     let arr: [int] = [1, 2, 3]int;
     print_nth(arr, 2u); // passing by pointer; would print 3
 
+    // you can't push/remove from fixed-size arrays, 
+    // but you can change existing values
+    arr[2u] = 7; 
+
     for let i: uint = 0u in i < _len arr; i += 1u {
         printintrin arr[i];
     }
@@ -24,6 +28,8 @@ func main() {
     let rep_arr: [int] = [1, 2 @ 4u]int;
     print_nth(rep_arr, 6u); // 1
     printintrin _len rep_arr; // 8
+
+    
 
     return;
 }

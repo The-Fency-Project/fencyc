@@ -568,18 +568,60 @@ impl CodeGen {
                 res.ftype = target_type;
                 res.val = Some(tmp);
             }
-            AstNode::Reassignment { name, newval } => {
+            AstNode::Reassignment { name, idx, newval } => {
                 let gd = self.gen_expr(newval.node);
+
+                let symb = self.symb_table.get(name.clone()).unwrap_or_else(|| {
+                    panic!("Internal: can't get `{}`", name)
+                });
 
                 let val = Value::Temporary(name.clone());
 
-                self.fbuild.add_instr(Instr::Assign(
-                    val.clone(),
-                    Self::match_ft_qbf(gd.ftype), 
-                    Box::new(Instr::Copy(gd.val.unwrap_or_else(|| {
-                        panic!("Internal: can't get reas value")
-                    })))
-                ));
+                match symb.1.ftype {
+                    FType::Array(el_ft_idx, _, _) if idx.is_some() => {
+                        let el_idx_node = idx.unwrap();
+                        let el_idx_gd = self.gen_expr(el_idx_node.node);
+
+                        let offset_tmp = self.new_temp();
+                        let el_ft = idx_to_ftype(el_ft_idx).unwrap();
+                        let el_size = Self::sizeof(el_ft);
+
+                        self.fbuild.assign_instr(
+                            offset_tmp.clone(),
+                            Type::Long,
+                            Instr::Mul(
+                                Value::Const(el_size),
+                                el_idx_gd.val.unwrap()
+                            )
+                        );
+
+                        self.fbuild.assign_instr(
+                            offset_tmp.clone(),
+                            Type::Long,
+                            Instr::Add(
+                                offset_tmp.clone(),
+                                val.clone()
+                            )
+                        );
+
+                        self.fbuild.add_instr(
+                            Instr::Store(
+                                Self::match_ft_qbf(el_ft),
+                                offset_tmp,
+                                gd.val.unwrap()
+                            ) // type dst val          
+                        );
+                    }
+                    other => {
+                        self.fbuild.add_instr(Instr::Assign(
+                            val.clone(),
+                            Self::match_ft_qbf(gd.ftype), 
+                            Box::new(Instr::Copy(gd.val.unwrap_or_else(|| {
+                                panic!("Internal: can't get reas value")
+                            })))
+                        ));
+                    }
+                }
 
                 res.val = Some(val);
                 res.ftype = gd.ftype;

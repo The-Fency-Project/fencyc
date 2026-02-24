@@ -233,9 +233,10 @@ impl SemAn {
                     //// Array(usize, usize, usize) = 9, // typeid, count, arridx
                     (FType::Array(fti1, c1, _), FType::Array(fti2, c2, _)) => {
                        if fti1 != fti2 {
+                            println!("here");
                            logger.emit(
-                               LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)),
-                               line,
+                                LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)),
+                                    line,
                            );
                        }
                     }
@@ -338,7 +339,7 @@ impl SemAn {
                     }
                 }
             }
-            AstNode::Reassignment { name, newval } => {
+            AstNode::Reassignment { name, idx, newval } => {
                 let symb_type = {
                     let entry = match self.symb_table.get(name.clone()) {
                         Some(en) => en,
@@ -354,9 +355,15 @@ impl SemAn {
                     entry.1.ftype
                 };
                 let newval_data = self.analyze_expr(&newval, logger);
-                if symb_type != newval_data.ftype {
+                let res_type: FType = match symb_type {
+                    FType::Array(el_ft, _, _) if idx.is_some() => {
+                        idx_to_ftype(el_ft).unwrap_or(FType::nil)
+                    }
+                    other => other
+                };
+                if res_type != newval_data.ftype {
                     logger.emit(
-                        LogLevel::Error(ErrKind::IncompatTypes(symb_type, newval_data.ftype)),
+                        LogLevel::Error(ErrKind::IncompatTypes(res_type, newval_data.ftype)),
                         line,
                     );
                 }
