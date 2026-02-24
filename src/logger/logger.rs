@@ -2,19 +2,19 @@ use std::time::Instant;
 
 use colored::Colorize;
 
-use crate::{ExternalResult, fcparse::fcparse::BinaryOp, seman::seman::FType};
+use crate::{CompilationError, fcparse::fcparse::BinaryOp, seman::seman::FType};
 
 pub struct Logger {
     errc: usize,
     warnc: usize,
     time: Instant,
-    pub extrn_err: ExternalResult,
+    pub extrn_err: CompilationError,
 }
 
 impl Logger {
     pub fn new() -> Logger {
         Logger { errc: 0, warnc: 0, time: Instant::now(), 
-            extrn_err: ExternalResult::Ok }
+            extrn_err: CompilationError::Ok }
     }
 
     pub fn start_timer(&mut self) {
@@ -46,7 +46,7 @@ impl Logger {
             println!("\n{} with {} {}, took {:.2}s", "Compilation succeed".green(), self.warnc, 
                 "warnings".yellow(), self.time.elapsed().as_secs_f64());
             Ok(())
-        } else if let ExternalResult::Ok = self.extrn_err {
+        } else if let CompilationError::Ok = self.extrn_err {
             println!("\n{}, took {:.2}s.", "Compilation succeed".green(),
                 self.time.elapsed().as_secs_f64());
             Ok(())
@@ -220,13 +220,19 @@ impl Logger {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct LogMessage {
+    pub level: LogLevel,
+    pub kind: ErrKind,
+}
+
+#[derive(Debug, Clone)]
 pub enum LogLevel {
     Error(ErrKind),
     Warning(WarnKind),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ErrKind {
     Redeclaration(String), // var name
     MismatchedTypes(FType, FType), // expected, found
@@ -255,7 +261,7 @@ pub enum ErrKind {
     Internal(String), // msg
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum WarnKind {
     IfStmtNotBool,
     WhileLoopNotBool,

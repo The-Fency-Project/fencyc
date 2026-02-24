@@ -1,12 +1,10 @@
-// This file is a small test for current features
+// Compile with:
+// cargo run -- input examples/test.fcy examples/test1.fcy -o testbins/test
+
+extern func print_hello_0();
 
 func main() {
-    let arr: [int] = [1, 2, 3 @3u]int;
-    arr[2u] = 4;
-
-    for let i: uint = 0u in i < _len arr; i += 1u {
-        printintrin arr[i];
-    }
+    print_hello_0(); 
 
     return;
 }

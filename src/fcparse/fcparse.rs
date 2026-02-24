@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, io::{self, BufRead, BufReader}, mem};
+use std::{collections::{HashMap, HashSet}, fs::File, io::{self, BufRead, BufReader}, mem};
 
 use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::{ftype_to_idx, FType}};
 
@@ -10,6 +10,7 @@ pub struct FcParser {
     call_ctr: usize,
     allowed_tok: Option<Tok>, // additional tok allowed to appear and break parse 
                                 // e.g. comma (further)
+    prev_flags: HashSet<ParseFlags>,
 }
 
 /// Parser based on Pratt parsing algorithm
@@ -21,6 +22,7 @@ impl FcParser {
             overload_ctr: HashMap::new(),
             call_ctr: 0,
             allowed_tok: None,
+            prev_flags: HashSet::new(),
         }
     }
 
@@ -32,12 +34,12 @@ impl FcParser {
         while self.peek().is_some() {
             let expr = self.parse_expr(0);
 
-            if let AstNode::Function { name, args, ret_type, body } = &expr.node {
+            if let AstNode::Function { name, args, ret_type, body, public } = &expr.node {
                 funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type, false));
-            } else if let AstNode::ExternedFunc { name, args, ret_type } = &expr.node {
+            } else if let AstNode::ExternedFunc { name, args, ret_type, public } = &expr.node {
                 funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type, true));
-            } if let AstNode::FunctionOverload { func, idx } = &expr.node {
-                if let AstNode::Function { name, args, ret_type, body } = &**func {
+            } if let AstNode::FunctionOverload { func, idx, public } = &expr.node {
+                if let AstNode::Function { name, args, ret_type, body, public } = &**func {
                     funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type, false));
                 };
             };
@@ -334,6 +336,13 @@ impl FcParser {
                 AstNode::ContinueLoop
             }
 
+            Tok::Keyword(Kword::Pub) => {
+                self.prev_flags.insert(ParseFlags::Public);
+                let expr = self.parse_expr(0);
+                self.prev_flags.remove(&ParseFlags::Public);
+                expr.node
+            }
+
             Tok::Keyword(Kword::Func) => {
                 let f = self.parse_func(false);
                 self.overload_ctr.insert(f.1, 0);
@@ -358,6 +367,7 @@ impl FcParser {
                 AstNode::FunctionOverload { 
                     func: Box::new(f.0),
                     idx: idx,
+                    public: self.prev_flags.contains(&ParseFlags::Public) 
                 }
             }
 
@@ -637,13 +647,15 @@ impl FcParser {
                 name: name.clone(), 
                 args: args, 
                 ret_type: ret_type, 
-                body: Box::new(body.node)
+                body: Box::new(body.node),
+                public: self.prev_flags.contains(&ParseFlags::Public) 
             }, name)
         } else {
             (AstNode::ExternedFunc { 
                 name: name.clone(),
                 args: args, 
-                ret_type: ret_type 
+                ret_type: ret_type,
+                public: self.prev_flags.contains(&ParseFlags::Public) 
             }, name)
         }
     }
@@ -763,17 +775,20 @@ pub enum AstNode {
         args: Vec<FuncArg>,
         ret_type: FType,
         body: Box<AstNode>,
+        public: bool,
     },
 
     ExternedFunc {
         name: String,
         args: Vec<FuncArg>,
         ret_type: FType,
+        public: bool,
     },
 
     FunctionOverload {
         func: Box<AstNode>,
         idx: usize, 
+        public: bool,
     },
 
     ReturnVal {
@@ -869,6 +884,11 @@ pub enum CmpOp {
     Ne, // !=
 }
 
+#[derive(Debug, Clone, PartialEq, Copy, Eq, Hash)]
+pub enum ParseFlags {
+    Public,
+}
+
 pub fn match_ftype(lit: &str) -> Option<FType> {
     match lit {
         "uint" => Some(FType::uint),
@@ -928,7 +948,8 @@ impl FuncDat {
 
     pub fn new_from_astn(node: AstNode) -> Option<FuncDat> {
         let res = match node {
-            AstNode::Function { name, args, ret_type, body } => {
+            AstNode::Function { name, args, ret_type, body, public } => {
+                // TODO: add public
                 Some(FuncDat::new(name, args, ret_type, false))
             }
             _ => None,

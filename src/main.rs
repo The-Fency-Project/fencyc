@@ -2,7 +2,7 @@
 use std::fs;
 use std::{fs::File, io::BufReader, process::{exit, Command}, time::Instant};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, Args};
 
 mod fcparse {pub mod fcparse;}
 mod codegen {pub mod codegen;}
@@ -25,26 +25,37 @@ pub struct CliArgs {
 #[derive(Subcommand)]
 enum Commands {
     Input {
-        file: String,
+        files: Vec<String>,
 
         #[arg(short, long)]
         output: Option<String>,
 
-        #[arg(long = "fpermissive")]
-        fpermissive: bool,
+        #[command(flatten)]
+        flags: InputFlags,
 
         #[arg(long = "ldflags")]
         ldflags: Vec<String>,
     },
 }
 
+#[derive(Args, Debug, Default, Clone, Copy)]
+struct InputFlags {
+    #[arg(short, long)]
+    verbose: bool,
+
+    #[arg(long = "fpermissive")]
+    permissive: bool,
+}
+
 fn main() {
     let cli = CliArgs::parse();
     
     match cli.command {
-        Some(Commands::Input { file, output, fpermissive, ldflags } ) => {
-            start_compiling(file, output, cli.verbose, fpermissive, ldflags);
-            return;
+        Some(Commands::Input { files, output, flags, ldflags } ) => {
+            match compile(files, output, flags, ldflags) {
+                Ok(_) => {return;}
+                Err(_) => {exit(1);}
+            }
         }
         None => {
             eprintln!("Please, specify command or try fencyc --help.");
@@ -52,8 +63,39 @@ fn main() {
     }
 }
 
-fn start_compiling(input: String, output: Option<String>, verbose: bool, 
-    fpermissive: bool, ldflags: Vec<String>) -> Result<(), ()> {
+fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
+    ldflags: Vec<String>) -> Result<(), CompilationError> {
+     
+    let mut nat_fnames = Vec::new();
+
+    for (idx, file) in files.iter().enumerate() {
+        let is_first = idx == 0;
+        let name = match compile_file(
+            file.to_owned(), None, flags, &ldflags, is_first) {
+
+            Ok(s) => s,
+            Err(e) => {
+                return Err(e);
+            }
+        };
+        nat_fnames.push(name);
+    }
+
+    let out = match output {
+        Some(s) => s,
+        None => String::from("program")
+    };
+
+    let strs = nat_fnames.iter()
+        .map(String::as_str)
+        .collect();
+    link(&strs, &out, &ldflags)?;
+
+    Ok(())
+}
+
+fn compile_file(input: String, output: Option<String>, flags: InputFlags,
+    ldflags: &Vec<String>, is_first: bool) -> Result<String, CompilationError> {
     let output_name = match output {
         Some(v) => v,
         None => {
@@ -74,18 +116,17 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool,
     let parsing_res = parser.parse_everything();
     let ast = parsing_res.0;
     let func_tab = parsing_res.1;
-    println!("AST: {:#?}", ast);
 
-    let mut seman = Seman::SemAn::new(fpermissive, func_tab);
+    let mut seman = Seman::SemAn::new(flags.permissive, func_tab);
     seman.analyze(&ast, &mut logger);
     let matched_overloads = seman.matched_overloads.clone();
 
     if logger.should_interrupt() {
         logger.finalize();
-        exit(1);
+        return Err(CompilationError::Compilation);
     }
 
-    let mut gene = cgen::CodeGen::new(ast, matched_overloads);
+    let mut gene = cgen::CodeGen::new(ast, matched_overloads, is_first);
     gene.gen_everything();
     if cfg!(debug_assertions) { 
         println!("{}", gene.module);
@@ -97,37 +138,58 @@ fn start_compiling(input: String, output: Option<String>, verbose: bool,
         panic!("Error writing temp into file: {}", e.to_string());
     }; 
 
-    match assemble(&temp_fname, &output_name, ldflags) {
-        ExternalResult::Ok => {},
+    let nname = match assemble(&temp_fname, &output_name, ldflags) {
+        CompilationError::OkFile(f) => {f},
         other => {
             logger.extrn_err = other;
+            String::from("")
         }
     };
 
-    let ret = logger.finalize();
-    ret
+    match logger.finalize() {
+        Ok(_) => {
+            Ok(nname)
+        }
+        Err(_) => {
+            Err(CompilationError::QBEError())
+        }
+    }
 }
 
 #[derive(Debug)]
-enum ExternalResult {
-    Ok,
+enum CompilationError {
+    Ok, // fname
+    OkFile(String),
     QBEError(),
     LinkError(),
+    Compilation,
+    Unknown,
 }
 
-fn assemble(input_name: &str, output_name: &str, ldflags: Vec<String>)
-        -> ExternalResult {
+fn assemble(input_name: &str, output_name: &str, ldflags: &Vec<String>)
+        -> CompilationError {
     let nat_fname = input_name.replace(".ssa", ".s");
     
     let out1 = match run_command("qbe", &["-o", &nat_fname, input_name]) {
         Ok(sv) => sv,
         Err(()) => {
-            return ExternalResult::QBEError();
+            return CompilationError::QBEError();
         }
     };
     print_stds(out1);
  
-    let mut args: Vec<&str> = vec![&nat_fname, "-o", output_name];
+    
+    release_cleanup(vec![input_name]);
+
+    CompilationError::OkFile(nat_fname.clone())
+}
+
+fn link(nat_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>)
+    -> Result<(), CompilationError> {
+    let mut args: Vec<&str> = Vec::new();
+    args.extend(nat_fnames);
+    args.push("-o");
+    args.push(output_name);
 
     let dash_flags: Vec<String> = ldflags.iter().map(|s| format!("-{}", s))
         .collect();
@@ -136,14 +198,13 @@ fn assemble(input_name: &str, output_name: &str, ldflags: Vec<String>)
     let out2 = match run_command("gcc", &args) {
         Ok(sv) => sv,
         Err(()) => {
-            return ExternalResult::LinkError();
+            return Err(CompilationError::LinkError());
         }
     };
     print_stds(out2);
 
-    release_cleanup(vec![input_name, &nat_fname]);
 
-    ExternalResult::Ok
+    Ok(())
 }
 
 fn release_cleanup(files: Vec<&str>) {

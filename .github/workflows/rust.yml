@@ -20,7 +20,15 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt update
-        sudo apt install -y qbe gcc
+        sudo apt install -y gcc
+
+    - name: Make bundled qbe executable
+      run: |
+        chmod +x ci-bin/qbe
+        echo "${{ github.workspace }}/ci-bin" >> $GITHUB_PATH
+
+    - name: Check qbe workability
+      run: qbe -h
 
     - name: Cache Cargo registry
       uses: actions/cache@v3

@@ -1,0 +1,5 @@
+pub func print_hello() {
+    printintrin "Hello, world!";
+
+    return;
+}

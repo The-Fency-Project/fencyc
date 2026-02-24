@@ -40,12 +40,12 @@ pub struct CodeGen {
     labels: HashMap<String, usize>, // usize for sbuf idx
     loop_exits: Vec<String>,
     loop_conts: Vec<String>,
-    stackidxs: Vec<usize>, // saving last stack idx before function
     matched_overloads: OverloadTable, // call idx -> overload idx, ret type
+    first: bool, // is cur file first 
 }
 
 impl CodeGen {
-    pub fn new(ast: Vec<AstRoot>, mo: OverloadTable) -> CodeGen {
+    pub fn new(ast: Vec<AstRoot>, mo: OverloadTable, first: bool) -> CodeGen {
         CodeGen {
             ast: ast,
             cur_ast: 0,
@@ -59,15 +59,17 @@ impl CodeGen {
             labels: HashMap::new(),
             loop_exits: Vec::new(),
             loop_conts: Vec::new(),
-            stackidxs: Vec::new(),
             matched_overloads: mo,
             funcs: HashMap::new(),
+            first: first,
         }
     }
 
     pub fn gen_everything(&mut self) {
         self.gen_stddat();
-        self.gen_prologue();
+        if self.first {
+            self.gen_prologue();
+        }
        
         while let Some(r) = self.ast.get(self.cur_ast) {
             let gdat = self.gen_expr(r.clone().node);
@@ -106,18 +108,18 @@ impl CodeGen {
     fn gen_expr(&mut self, node: AstNode) -> GenData {
         let mut res = GenData::new();
         match node {
-            AstNode::Function { name, args, ret_type, body } => {
-                self.gen_func(name, args, ret_type, body, 0); 
+            AstNode::Function { name, args, ret_type, body, public } => {
+                self.gen_func(name, args, ret_type, body, 0, public); 
             }
-            AstNode::FunctionOverload { func, idx } => {
+            AstNode::FunctionOverload { func, idx, public } => {
                 let (name, args, ret_type, body) = match *func {
-                    AstNode::Function { name, args, ret_type, body } => {
+                    AstNode::Function { name, args, ret_type, body, public } => {
                         (name, args, ret_type, body)
                     }
                     other => unreachable!()
                 };
 
-                self.gen_func(name, args, ret_type, body, idx); 
+                self.gen_func(name, args, ret_type, body, idx, public); 
             }
             AstNode::ReturnVal { val } => {
                 let rightd = self.gen_expr(val.node);
@@ -784,7 +786,7 @@ impl CodeGen {
                 let blk_name = self.alloc_label();
                 self.fbuild.add_block(blk_name); // making qbe stfu
             }
-            AstNode::ExternedFunc { name, args, ret_type } => {}
+            AstNode::ExternedFunc { name, args, ret_type, public } => {}
             AstNode::none => {}
             other => {
                 panic!("can't generate yet for {:?}", other);
@@ -802,8 +804,7 @@ impl CodeGen {
     }
 
     fn gen_func(&mut self, name: String, args: Vec<FuncArg>, 
-            ret_type: FType, body: Box<AstNode>, over_idx: usize)  {
-        // TODO: pub 
+            ret_type: FType, body: Box<AstNode>, over_idx: usize, public: bool)  {
         self.symb_table.push_funcargs(args.clone());
 
         let mut args_qbe = Vec::new();
@@ -819,9 +820,13 @@ impl CodeGen {
             other => Some(Self::match_ft_qbf(other))
         };
 
+        let linkage = match public {
+            true => Linkage::public(),
+            false => Linkage::private(),
+        };
 
         let mut func = Function::new(
-            Linkage::private(), // TODO: pub 
+            linkage, 
             format!("{}_{}", name, over_idx),
             args_qbe, 
             ret_t_qbe

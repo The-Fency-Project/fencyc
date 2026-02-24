@@ -196,7 +196,7 @@ impl SemAn {
                 }
             }
             None => {
-                logger.emit(LogLevel::Error(ErrKind::NoMain), 0);
+                //logger.emit(LogLevel::Error(ErrKind::NoMain), 0);
             }
         }
 
@@ -477,6 +477,7 @@ impl SemAn {
                 args,
                 ret_type,
                 body,
+                public,
             } => {
                 let mut override_flag = false;
                 if let Some(v) = &self.parsing_func {
@@ -509,6 +510,7 @@ impl SemAn {
                 name,
                 args,
                 ret_type,
+                public
             } => {
                 let mut override_flag = false;
                 if let Some(v) = &self.parsing_func {
@@ -535,7 +537,7 @@ impl SemAn {
                 self.symb_table.exit_scope();
                 self.parsing_func = None;
             }
-            AstNode::FunctionOverload { func, idx } => {
+            AstNode::FunctionOverload { func, idx, public } => {
                 self.parsing_func = Some(("".to_owned(), *idx));
                 self.analyze_expr(&AstRoot::new(*func.clone(), line), logger);
             }

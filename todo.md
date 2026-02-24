@@ -1,5 +1,6 @@
 ## Current:
 - modules
+- name resolution (+publics)
 - refactor src/main.rs?
 ### Future:
 Small:

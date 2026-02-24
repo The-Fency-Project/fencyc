@@ -27,12 +27,16 @@ Then just:
 ## External dependencies
 To actually compile something with fencyc, you would also need:
 1. `qbe` - QBE (quick backend) binary to generate native assemblies from SSA.
-Get those from your package manager (apt/pacman/homebrew/etc) or install 
-manually, has to be in PATH. See [QBE website](https://c9x.me/compile/).
+Get those from your package manager (apt/pacman/homebrew/etc) / install 
+manually; You may also use the provided linux binary from 
+`ci-bin/` repository directory or visit [QBE website](https://c9x.me/compile/).    
 2. `gcc` - to assemble and link native assemblies. Preinstalled on most linux 
 distributions, but for others/macos/windows you would likely need to 
 install this, also has to be in the PATH. 
 See [GNU website](https://gcc.gnu.org/install/) or get the binaries.
+
+> [!NOTE]
+> All the external dependencies binaries has to be in your PATH.
 
 ## Usage
 Make sure everything working:

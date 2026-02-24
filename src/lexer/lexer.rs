@@ -265,6 +265,7 @@ pub enum Kword {
     Return,
     Overload,
     Extern,
+    Pub,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -290,6 +291,7 @@ fn match_symb_tok(word: &str) -> Tok {
         "return" => Tok::Keyword(Kword::Return),
         "overload" => Tok::Keyword(Kword::Overload),
         "extern" => Tok::Keyword(Kword::Extern),
+        "pub" => Tok::Keyword(Kword::Pub),
         "_len" => Tok::Intrin(Intrinsic::Len),
         other => Tok::Identifier(other.to_string()),
     }

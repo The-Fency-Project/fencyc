@@ -1,5 +1,6 @@
-v0.6.2:
-- some refactor in parser
-- reassignment to array elements are now possible
-- changed `4_arrays` example so it would also cover array elem reassignment
-- updated `CONTRIBUTING.md`
+v0.7.0:
+- added `ci-bin` (see `ci-bin/README.md`)
+- update README.md
+- fixed github ci (once again)
+- `src/main.rs` changes for multifile support
+
