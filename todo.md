@@ -1,6 +1,6 @@
 ## Current:
-- modules
-- name resolution (+publics)
+- fix externs
+- structures, traits
 - refactor src/main.rs?
 ### Future:
 Small:
@@ -11,3 +11,4 @@ Small:
 Major:
 - structures
 - traits
+- github wiki

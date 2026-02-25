@@ -3,3 +3,4 @@ examples/*_temp.*
 examples/*.vve
 fencyc-*
 testbins/*
+!testbins/.gitkeep

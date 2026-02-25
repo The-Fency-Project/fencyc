@@ -6,5 +6,6 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.5.53", features = ["derive"] }
 colored = "3.0.0"
+itertools = "0.14.0"
 qbe = { git = "https://github.com/Freemorger/qbe-rs.git" }
 # voxvm = { git = "https://github.com/Freemorger/voxvm.git" } # good old times

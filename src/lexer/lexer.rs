@@ -96,7 +96,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                     }
                 }
             }
-            '+' | '-' | '*' | '^' | '&' | '|' => {
+            '+' | '-' | '*' | '^' | '&' | '|' | ':' => {
                 chars.next();
                 let combined = try_combine(&ch, chars.peek().copied(), line);
                 if let Some(comb) = combined {
@@ -110,6 +110,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                         '^' => Tok::Caret,
                         '&' => Tok::Ampersand,
                         '|' => Tok::VerBar,
+                        ':' => Tok::Colon,
                         other => panic!("{}: internal tok match error", line)
                     };
                     res.push(Token::new(tok, line));
@@ -244,6 +245,8 @@ pub fn try_combine(ch: &char, nextch: Option<char>, line: usize) -> Option<Token
         ('&', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::Ampersand), Box::new(Tok::Equals)), line)),
         ('|', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::VerBar), Box::new(Tok::Equals)), line)),
         ('-', Some('>')) => Some(Token::new(Tok::Combined(Box::new(Tok::Minus), Box::new(Tok::RAngBr)), line)),
+        (':', Some(':')) => Some(Token::new(Tok::Combined(Box::new(Tok::Colon), Box::new(Tok::Colon)), line)),
+
 
         other => None,
     }
@@ -266,6 +269,7 @@ pub enum Kword {
     Overload,
     Extern,
     Pub,
+    Module,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -292,6 +296,7 @@ fn match_symb_tok(word: &str) -> Tok {
         "overload" => Tok::Keyword(Kword::Overload),
         "extern" => Tok::Keyword(Kword::Extern),
         "pub" => Tok::Keyword(Kword::Pub),
+        "module" => Tok::Keyword(Kword::Module),
         "_len" => Tok::Intrin(Intrinsic::Len),
         other => Tok::Identifier(other.to_string()),
     }

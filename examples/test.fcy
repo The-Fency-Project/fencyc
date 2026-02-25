@@ -1,10 +1,9 @@
 // Compile with:
 // cargo run -- input examples/test.fcy examples/test1.fcy -o testbins/test
 
-extern func print_hello_0();
-
 func main() {
-    print_hello_0(); 
+    other::print_hello();
+    other::submod::print_bye();
 
     return;
 }

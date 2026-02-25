@@ -1,0 +1,6 @@
+func main() {
+    other::print_hello();
+    other::submod::print_bye();
+
+    return;
+}

@@ -11,6 +11,8 @@ pub struct FcParser {
     allowed_tok: Option<Tok>, // additional tok allowed to appear and break parse 
                                 // e.g. comma (further)
     prev_flags: HashSet<ParseFlags>,
+    curmod: String, // cur module name
+    funcs: FuncTable,
 }
 
 /// Parser based on Pratt parsing algorithm
@@ -23,31 +25,22 @@ impl FcParser {
             call_ctr: 0,
             allowed_tok: None,
             prev_flags: HashSet::new(),
+            curmod: "main".to_owned(),
+            funcs: FuncTable::new(),
         }
     }
 
     /// Returns AST (0) and Function table (1) with no function bodies
     pub fn parse_everything(&mut self) -> (Vec<AstRoot>, FuncTable) {
         let mut ast: Vec<AstRoot> = Vec::new();
-        let mut funcs: FuncTable  = FuncTable::new();
 
         while self.peek().is_some() {
             let expr = self.parse_expr(0);
 
-            if let AstNode::Function { name, args, ret_type, body, public } = &expr.node {
-                funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type, false));
-            } else if let AstNode::ExternedFunc { name, args, ret_type, public } = &expr.node {
-                funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type, true));
-            } if let AstNode::FunctionOverload { func, idx, public } = &expr.node {
-                if let AstNode::Function { name, args, ret_type, body, public } = &**func {
-                    funcs.push_func(FuncDat::new(name.clone(), args.to_vec(), *ret_type, false));
-                };
-            };
-
             ast.push(expr);
         }
 
-        (ast, funcs)
+        (ast, self.funcs.clone())
     }
 
     pub fn parse_expr(&mut self, min_bp: u8) -> AstRoot {
@@ -104,6 +97,28 @@ impl FcParser {
 
             Tok::Keyword(Kword::True) => AstNode::boolVal(true),
             Tok::Keyword(Kword::False) => AstNode::boolVal(false),
+            Tok::Keyword(Kword::Module) => {
+                let name = self.expect_idt().unwrap_or("".to_owned());
+
+                if name.is_empty() {
+                    // TODO: put here error into astnode 
+                    println!("{}: expected module name", self.line);
+                    return AstNode::Invalid;
+                }
+
+                let old_mod = self.curmod.clone();
+                self.curmod = match old_mod.as_str() {
+                    "main" => name.clone(),
+                    other => format!("{}::{}", other, name),
+                };
+                let node = self.parse_expr(0);
+                self.curmod = old_mod;
+
+                AstNode::Module {
+                    name: name,
+                    node: Box::new(node)
+                }
+            }
 
             Tok::LCurBr => {
                 let mut exprs: Vec<AstRoot> = Vec::new();
@@ -202,26 +217,36 @@ impl FcParser {
                             }
                         }
                         Tok::Combined(tok1, tok2) => {
-                            if **tok2 == Tok::Equals {
-                                self.consume(); 
-                                let bop = self.match_bop_for_tok(&tok1, None)
-                                    .unwrap_or_else(|| {
-                                    panic!("{}: cant get binary op for operand {:?}", 
-                                        self.line, tok1)
-                                });
-                                let right = self.parse_expr(0);
-                                let new_val_node = AstNode::BinaryOp { 
-                                    op: bop, 
-                                    left: Box::new(AstNode::Variable(idt_cl.clone())), 
-                                    right: Box::new(right.node) 
-                                };
-                                return AstNode::Reassignment { 
-                                    name: idt_cl,
-                                    idx: el_idx,
-                                    newval: Box::new(
-                                        AstRoot::new(new_val_node, self.line)
-                                    )
-                                };
+                            match (tok1.as_ref(), tok2.as_ref()) {
+                                (Tok::Colon, Tok::Colon) => {
+                                    let path = self.parse_path(idt.clone());
+                                    
+                                    if self.peek_is(Tok::LPar) {
+                                        return self.parse_call(&path);
+                                    }
+                                }
+                                (_, Tok::Equals) => {
+                                    self.consume(); 
+                                    let bop = self.match_bop_for_tok(&tok1, None)
+                                        .unwrap_or_else(|| {
+                                        panic!("{}: cant get binary op for operand {:?}", 
+                                            self.line, tok1)
+                                    });
+                                    let right = self.parse_expr(0);
+                                    let new_val_node = AstNode::BinaryOp { 
+                                        op: bop, 
+                                        left: Box::new(AstNode::Variable(idt_cl.clone())), 
+                                        right: Box::new(right.node) 
+                                    };
+                                    return AstNode::Reassignment { 
+                                        name: idt_cl,
+                                        idx: el_idx,
+                                        newval: Box::new(
+                                            AstRoot::new(new_val_node, self.line)
+                                        )
+                                    };
+                                }
+                                _ => {break;}
                             }
                         }
                         Tok::DollarSign => { // variable cast
@@ -247,14 +272,9 @@ impl FcParser {
                             }
                         }
                         Tok::LPar => { // function call
-                            let args_nodes = self.parse_args_call();
-                            self.call_ctr += 1;
+                            let name = AstNode::string_to_path(idt);
 
-                            return AstNode::Call { 
-                                func_name: idt.clone(), 
-                                args: args_nodes,
-                                idx: self.call_ctr - 1,
-                            };
+                            return self.parse_call(&name); 
                         }
                         Tok::LBr => {
                             self.consume();
@@ -345,12 +365,16 @@ impl FcParser {
 
             Tok::Keyword(Kword::Func) => {
                 let f = self.parse_func(false);
+                self.funcs.push_func(FuncDat::new_from_astn(&f.0)
+                    .expect(&format!("{}: Expected func", self.line)));
                 self.overload_ctr.insert(f.1, 0);
                 f.0
             }
             Tok::Keyword(Kword::Extern) => {
                 self.consume();
                 let f = self.parse_func(true);
+                self.funcs.push_func(FuncDat::new_from_astn(&f.0)
+                    .expect(&format!("{}: Expected func", self.line)));
                 self.overload_ctr.insert(f.1, 0);
                 f.0
             }
@@ -358,6 +382,8 @@ impl FcParser {
             Tok::Keyword(Kword::Overload) => {
                 self.consume();
                 let f = self.parse_func(false);
+                self.funcs.push_func(FuncDat::new_from_astn(&f.0)
+                    .expect(&format!("{}: Expected func", self.line)));
                 let idx = {
                     let h = self.overload_ctr.get_mut(&f.1).unwrap();
                     *h += 1;
@@ -459,6 +485,50 @@ impl FcParser {
         ftype
     }
 
+    fn parse_path(&mut self, first: String) -> AstNode {
+        let mut segments = match first.contains("::") {
+            true => first
+                .split("::")
+                .map(|s| s.to_owned())
+                .collect(),
+            false => vec![first]
+        };
+
+        while let Some(tok) = self.peek() {
+            match &tok.tok {
+                Tok::Combined(t1, t2)
+                    if matches!((t1.as_ref(), t2.as_ref()), (Tok::Colon, Tok::Colon)) =>
+                {
+                    self.consume(); 
+                    let next = self.expect_idt()
+                        .expect("Expected identifier after ::");
+                    segments.push(next);
+                }
+                _ => break,
+            }
+        }
+
+        AstNode::Path { segments }
+    }
+
+    fn parse_call(&mut self, idt: &AstNode) -> AstNode {
+        let args_nodes = self.parse_args_call();
+        self.call_ctr += 1;
+        
+        let name = match idt.path_to_string().contains("::") {
+            true => idt.clone(),
+            false => AstNode::string_to_path(&format!(
+                "{}::{}", self.curmod, idt.path_to_string()
+            ))
+        };
+
+        return AstNode::Call { 
+            func_name: Box::new(name), 
+            args: args_nodes,
+            idx: self.call_ctr - 1,
+        };
+    }
+
     fn parse_args_call(&mut self) -> Vec<AstRoot> {
         let mut res: Vec<AstRoot> = Vec::new();
 
@@ -503,6 +573,13 @@ impl FcParser {
 
     fn peek_prev_nth(&self, minus_n: usize) -> &Token {
         self.tokens.get(self.pos.saturating_sub(minus_n)).unwrap()
+    }
+
+    fn peek_is(&self, tok: Tok) -> bool {
+        if let Some(v) = self.peek() {
+            return v.tok == tok;
+        } 
+        false
     }
 
     /// Pratt binding powers: (left_bp, right_bp)
@@ -632,9 +709,12 @@ impl FcParser {
     }
 
     fn parse_func(&mut self, externed: bool) -> (AstNode, String) {
-        let name = self.expect_idt().unwrap_or_else(|| {
-            panic!("{}: expected function name identifier", self.line)
-        }); 
+        let name_start = self.expect_idt().unwrap_or_else(|| {
+            panic!("{}: Expected function name", self.line)
+        });
+        let name_start_mod = format!("{}::{}", self.curmod, name_start);
+
+        let name = self.parse_path(name_start_mod); 
 
         let args = self.parse_func_args();
 
@@ -644,19 +724,19 @@ impl FcParser {
             let body = self.parse_expr(0);
 
             (AstNode::Function { 
-                name: name.clone(), 
+                name: Box::new(name.clone()), 
                 args: args, 
                 ret_type: ret_type, 
                 body: Box::new(body.node),
                 public: self.prev_flags.contains(&ParseFlags::Public) 
-            }, name)
+            }, name.path_to_string())
         } else {
             (AstNode::ExternedFunc { 
-                name: name.clone(),
+                name: Box::new(AstNode::string_to_path(&name_start)),
                 args: args, 
                 ret_type: ret_type,
                 public: self.prev_flags.contains(&ParseFlags::Public) 
-            }, name)
+            }, name.path_to_string())
         }
     }
 
@@ -759,6 +839,10 @@ pub enum AstNode {
         exprs: Vec<AstRoot>,
     },
 
+    Path {
+        segments: Vec<String>
+    },
+
     BinaryOp {
         op: BinaryOp,
         left: Box<AstNode>,
@@ -771,7 +855,7 @@ pub enum AstNode {
     },
 
     Function {
-        name: String,
+        name: Box<AstNode>, // astnode::path
         args: Vec<FuncArg>,
         ret_type: FType,
         body: Box<AstNode>,
@@ -779,7 +863,7 @@ pub enum AstNode {
     },
 
     ExternedFunc {
-        name: String,
+        name: Box<AstNode>,
         args: Vec<FuncArg>,
         ret_type: FType,
         public: bool,
@@ -796,7 +880,7 @@ pub enum AstNode {
     },
 
     Call {
-        func_name: String,
+        func_name: Box<AstNode>,
         args: Vec<AstRoot>,
         idx: usize, // call id
     },
@@ -848,7 +932,42 @@ pub enum AstNode {
         iter_cond: Box<AstRoot>, // e.g. a < 10
         body: Box<AstRoot>,
     },
-    
+   
+    Module {
+        name: String,
+        node: Box<AstRoot>
+    }
+}
+
+impl AstNode {
+    /// Get path segments, 
+    /// panic if its not a path node.
+    pub fn path_to_segs(&self) -> Vec<String> {
+        match self {
+            AstNode::Path { segments } => {
+                segments.clone()
+            }
+            other => panic!("Expected Path node, got {:?}", other)
+        }
+    }
+
+    /// Joins path into one string, with :: sep
+    pub fn path_to_string(&self) -> String {
+        let segs = self.path_to_segs();
+        segs.join("::")
+    }
+
+    pub fn segs_to_path(segs: &Vec<String>) -> AstNode {
+        AstNode::Path { segments: segs.clone() }
+    }
+
+    pub fn string_to_path(st: &str) -> AstNode {
+        let segs: Vec<String> = st.
+            split("::")
+            .map(|s| s.to_owned())
+            .collect();
+        AstNode::segs_to_path(&segs)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -931,26 +1050,44 @@ impl FuncArg {
 
 #[derive(Debug, Clone)]
 pub struct FuncDat {
-    pub name: String,
+    pub name: AstNode,
     pub args: Vec<FuncArg>,
     pub ret_type: FType,
     pub externed: bool,
+    pub public: bool,
 }
 
 impl FuncDat {
-    pub fn new(nm: String, ar: Vec<FuncArg>, ret: FType, ext: bool) -> FuncDat {
-        FuncDat { name: nm, 
+    pub fn new(nm: AstNode, ar: Vec<FuncArg>, ret: FType, ext: bool) -> FuncDat {
+        FuncDat { 
+            name: nm, 
             args: ar, 
             ret_type: ret,
             externed: ext,
+            public: false,
         }
     }
 
-    pub fn new_from_astn(node: AstNode) -> Option<FuncDat> {
+    pub fn new_from_astn(node: &AstNode) -> Option<FuncDat> {
         let res = match node {
             AstNode::Function { name, args, ret_type, body, public } => {
-                // TODO: add public
-                Some(FuncDat::new(name, args, ret_type, false))
+                let mut fdat = FuncDat::new(
+                    *name.clone(), args.clone(), *ret_type, false
+                );
+                fdat.public = *public;
+                Some(fdat)
+            }
+            AstNode::FunctionOverload { func, idx, public } => {
+                let mut fdat = Self::new_from_astn(&func).unwrap();
+                fdat.public = fdat.public || *public;
+                Some(fdat)
+            }
+            AstNode::ExternedFunc { name, args, ret_type, public } => {
+                let mut fdat = FuncDat::new(
+                    *name.clone(), args.clone(), *ret_type, false
+                );
+                fdat.public = *public;
+                Some(fdat)
             }
             _ => None,
         };
@@ -960,6 +1097,7 @@ impl FuncDat {
 
 #[derive(Debug, Clone)]
 pub struct FuncTable {
+    // function name
     ft: HashMap<String, Vec<FuncDat>>
 }
 
@@ -968,11 +1106,24 @@ impl FuncTable {
         FuncTable { ft: HashMap::new() }
     }
 
+    pub fn from_several(fts: &mut Vec<FuncTable>) -> FuncTable {
+        let mut ft = FuncTable::new();
+
+        for v in fts.drain(..) {
+            ft.ft.extend(v.ft);
+        }
+
+        ft
+    }
+
     pub fn push_func(&mut self, fndat: FuncDat) {
-        if let Some(f) = self.ft.get_mut(&fndat.name) {
+        if let Some(f) = self.ft.get_mut(&fndat.name.path_to_string()) {
             f.push(fndat);
         } else {
-            self.ft.insert(fndat.name.clone(), vec![fndat]);
+            self.ft.insert(
+                fndat.name.path_to_string(),
+                vec![fndat]
+            );
         }
     }
 

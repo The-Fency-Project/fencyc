@@ -1,0 +1,15 @@
+export function w $main() {
+@start
+	call $main_main_0()
+	ret 0
+}
+function $main_main_0() {
+@start
+	call $other_print_hello_0()
+	call $other_submod_print_bye_0()
+	ret
+}
+data $fmt_uint = { b "%lu\n" }
+data $fmt_int = { b "%ld\n" }
+data $fmt_float = { b "%f\n" }
+data $fmt_str = { b "%s\n" }

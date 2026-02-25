@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{process::exit, sync::mpsc::{Receiver, Sender}, thread::{JoinHandle, spawn}, time::Instant};
 
 use colored::Colorize;
 
@@ -21,6 +21,50 @@ impl Logger {
         self.time = Instant::now();
     }
 
+    pub fn handle_messages(&mut self, rx: Receiver<LogMessage>, tx:
+        Sender<LogMessage>) {
+        loop {
+            match rx.recv() { 
+                Ok(m) => {
+                    match m.query {
+                        Some(v) => {
+                            match v {
+                                LoggerQuery::Stop => {
+                                    break;
+                                }
+                                LoggerQuery::Status => {
+                                    tx.send(LogMessage::from_query(LoggerQuery::StatusResp(
+                                        self.errc > 0
+                                    )));
+                                    continue;
+                                }
+                                other => todo!("{:?}", other)
+                            }
+                        }
+                        other => {}
+                    }
+
+                    println!("In {}:", m.filename);
+                    self.emit(m.level, m.line);
+                }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    break;
+                }
+            }
+        }
+       
+        let _ = self.finalize();
+        let mut resp = LogMessage::new(
+            LogLevel::Info("".to_owned()), 
+            0, 
+            "".to_owned()
+        );
+        resp.brk = self.errc > 0;
+
+        let res = tx.send(resp);
+    }
+
     pub fn emit(&mut self, l: LogLevel, line: usize) {
         match l {
             LogLevel::Error(ek) => {
@@ -32,6 +76,10 @@ impl Logger {
                 println!("{} at line {}: {}", "Warning".yellow(), line, 
                     Logger::get_err_msg(LogLevel::Warning(wk)));
                 self.warnc += 1;
+            }
+            LogLevel::Info(s) => {
+                println!("{}: {}", "Info".bright_blue(), 
+                    Logger::get_err_msg(LogLevel::Info(s)));
             }
         } 
     }
@@ -191,6 +239,12 @@ impl Logger {
                             {}: consider converting explicitly, e.g. {}[(expr)$uint]",
                         arr_name, got, help, arr_name)
                     }
+                    ErrKind::NotPub(fname) => {
+                        format!("Needed {} function overload isn't public\n\
+                            {}: consider declaring it publicly, e.g. \
+                            `pub {}(...) -> ... ..`",
+                        fname.clone(), help, fname)
+                    }
                     ErrKind::Internal(e) => {
                         format!("Internal error: {}", e)
                     }
@@ -214,22 +268,65 @@ impl Logger {
                             {}: remove type convertion",
                         ft, help)
                     }
+                    WarnKind::Internal => {"".to_string()}
                 }
+            }
+            LogLevel::Info(s) => {
+                s
             }
         }
     }
 }
 
+pub fn spawn_logger_thread(log_rx: Receiver<LogMessage>, resp: Sender<LogMessage>)
+    -> JoinHandle<()> {
+    spawn(|| {
+        let mut logger = Logger::new();
+        logger.start_timer();
+
+        logger.handle_messages(log_rx, resp);
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct LogMessage {
     pub level: LogLevel,
-    pub kind: ErrKind,
+    pub line: usize,
+    pub filename: String,
+    pub brk: bool,
+    pub query: Option<LoggerQuery>,
+}
+
+impl LogMessage {
+    pub fn new(lvl: LogLevel, line: usize, fname: String) -> LogMessage {
+        LogMessage { 
+            level: lvl, 
+            line, 
+            filename: fname, 
+            brk: false,
+            query: None
+        }
+    } 
+    
+    pub fn from_query(q: LoggerQuery) -> LogMessage {
+        let mut res = Self::new(LogLevel::Info(String::new()), 0, String::new());
+        res.query = Some(q.clone());
+        res
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum LoggerQuery {
+    Stop,
+    Status,
+    StatusResp(bool), // err or no
 }
 
 #[derive(Debug, Clone)]
 pub enum LogLevel {
     Error(ErrKind),
     Warning(WarnKind),
+    Info(String),
 }
 
 #[derive(Debug, Clone)]
@@ -259,10 +356,12 @@ pub enum ErrKind {
     IncompatArrType(FType, FType, usize), // expected, got, idx
     ArrIdxType(String, FType), // name, got 
     Internal(String), // msg
+    NotPub(String), // func name
 }
 
 #[derive(Debug, Clone)]
 pub enum WarnKind {
+    Internal,
     IfStmtNotBool,
     WhileLoopNotBool,
     ConvSame(FType),

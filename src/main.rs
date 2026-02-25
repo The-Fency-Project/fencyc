@@ -1,6 +1,6 @@
 #[cfg(not(debug_assertions))]
 use std::fs;
-use std::{fs::File, io::BufReader, process::{exit, Command}, time::Instant};
+use std::{fs::File, io::BufReader, process::{Command, exit}, sync::mpsc::{self, Sender}, time::Instant};
 
 use clap::{Parser, Subcommand, Args};
 
@@ -10,7 +10,7 @@ mod lexer {pub mod lexer;}
 mod seman {pub mod seman;}
 mod logger {pub mod logger;}
 mod tests;
-use crate::{codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstNode, AstRoot}, lexer::lexer as lex, logger::logger::{self as log, Logger}, seman::seman as Seman, seman::seman as sem};
+use crate::{codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstNode, AstRoot, FuncTable}, lexer::lexer as lex, logger::logger::{self as log, LogMessage, Logger, LoggerQuery, spawn_logger_thread}, seman::seman as Seman, seman::seman as sem};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -65,20 +65,22 @@ fn main() {
 
 fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     ldflags: Vec<String>) -> Result<(), CompilationError> {
-     
-    let mut nat_fnames = Vec::new();
+    let (log_tx, log_rx) = mpsc::channel::<LogMessage>();
+    let (log_resp, resp_get) = mpsc::channel::<LogMessage>();
+    let handle = spawn_logger_thread(log_rx, log_resp);
 
-    for (idx, file) in files.iter().enumerate() {
-        let is_first = idx == 0;
-        let name = match compile_file(
-            file.to_owned(), None, flags, &ldflags, is_first) {
 
-            Ok(s) => s,
-            Err(e) => {
-                return Err(e);
-            }
-        };
-        nat_fnames.push(name);
+    let mut asts      = Vec::new();
+    let mut func_tabs = Vec::new();
+
+    for file in files.iter() {
+        let (ast, func_tab) = build_ast(
+            file, 
+            log_tx.clone()
+        );
+
+        asts.push(ast);
+        func_tabs.push(func_tab);
     }
 
     let out = match output {
@@ -86,75 +88,149 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         None => String::from("program")
     };
 
+    let functab = FuncTable::from_several(&mut func_tabs);
+    let mut nat_fnames = Vec::new();
+    let mut fin_msg = LogMessage::from_query(LoggerQuery::Stop);
+    let int_msg = LogMessage::from_query(LoggerQuery::Status);
+
+    // TODO: extract these into a function
+    for (idx, ast) in asts.drain(..).enumerate() {
+        let fname = files[idx].clone(); // todo: map asts with filenames instead
+
+        let mut seman = Seman::SemAn::new(
+            flags.permissive, functab.clone(), fname.clone()
+        );
+        seman.analyze(&ast, &log_tx);
+
+        log_tx.send(int_msg.clone());
+
+        match resp_get.recv() {
+            Ok(m) => {
+                match m.query {
+                    Some(v) => match v {
+                        LoggerQuery::StatusResp(b) => {
+                            if b {
+                                log_tx.send(fin_msg);
+                                handle.join().unwrap();
+                                return Err(CompilationError::Compilation);
+                            }
+                        }
+                        other => unreachable!()
+                    }
+                    None => unreachable!()
+                }
+            }
+            Err(e) => {
+            }
+        }
+        let matched_overloads = seman.matched_overloads.clone();
+
+        let mut gene = cgen::CodeGen::new(ast, matched_overloads, idx == 0);
+        gene.gen_everything();
+        if cfg!(debug_assertions) { 
+            println!("{}", gene.module);
+        }
+
+        let temp_fname = format!("{}_temp.ssa", fname.replace(".fcy", ""));
+
+        if let Err(e) = gene.write_file(&temp_fname) {
+            panic!("Error writing temp into file: {}", e.to_string());
+        }; 
+
+        let nname = match assemble(&temp_fname) {
+            CompilationError::OkFile(f) => {f},
+            other => {
+                //logger.extrn_err = other; TODO: send 
+                String::from("")
+            }
+        };
+        nat_fnames.push(nname);
+    }
+
     let strs = nat_fnames.iter()
         .map(String::as_str)
         .collect();
     link(&strs, &out, &ldflags)?;
 
+    log_tx.send(fin_msg);
+
+    handle.join().unwrap();
     Ok(())
 }
 
-fn compile_file(input: String, output: Option<String>, flags: InputFlags,
-    ldflags: &Vec<String>, is_first: bool) -> Result<String, CompilationError> {
-    let output_name = match output {
-        Some(v) => v,
-        None => {
-            if cfg!(target_os = "windows") {
-                input.replace(".fcy", ".exe")
-            } else {
-                input.replace(".fcy", "")
-            }
-        },
-    };
-
-    let mut logger: log::Logger = Logger::new();
-    logger.start_timer();
-
-    let toks = lex::tokenize(&input.clone());
+fn build_ast(input: &str, log_tx: Sender<LogMessage>)
+    -> (Vec<AstRoot>, FuncTable) {
+    let toks = lex::tokenize(&input);
 
     let mut parser = fparser::FcParser::new(toks);
     let parsing_res = parser.parse_everything();
     let ast = parsing_res.0;
     let func_tab = parsing_res.1;
-
-    let mut seman = Seman::SemAn::new(flags.permissive, func_tab);
-    seman.analyze(&ast, &mut logger);
-    let matched_overloads = seman.matched_overloads.clone();
-
-    if logger.should_interrupt() {
-        logger.finalize();
-        return Err(CompilationError::Compilation);
-    }
-
-    let mut gene = cgen::CodeGen::new(ast, matched_overloads, is_first);
-    gene.gen_everything();
-    if cfg!(debug_assertions) { 
-        println!("{}", gene.module);
-    }
-
-    let temp_fname = format!("{}_temp.ssa", input.replace(".fcy", ""));
-
-    if let Err(e) = gene.write_file(&temp_fname) {
-        panic!("Error writing temp into file: {}", e.to_string());
-    }; 
-
-    let nname = match assemble(&temp_fname, &output_name, ldflags) {
-        CompilationError::OkFile(f) => {f},
-        other => {
-            logger.extrn_err = other;
-            String::from("")
-        }
-    };
-
-    match logger.finalize() {
-        Ok(_) => {
-            Ok(nname)
-        }
-        Err(_) => {
-            Err(CompilationError::QBEError())
-        }
-    }
+    
+    (ast, func_tab)
 }
+
+// fn compile_file(input: String, output: Option<String>, flags: InputFlags,
+//     ldflags: &Vec<String>, is_first: bool) -> Result<String, CompilationError> {
+//     let output_name = match output {
+//         Some(v) => v,
+//         None => {
+//             if cfg!(target_os = "windows") {
+//                 input.replace(".fcy", ".exe")
+//             } else {
+//                 input.replace(".fcy", "")
+//             }
+//         },
+//     };
+//
+//     let mut logger: log::Logger = Logger::new();
+//     logger.start_timer();
+//
+//     let toks = lex::tokenize(&input.clone());
+//
+//     let mut parser = fparser::FcParser::new(toks);
+//     let parsing_res = parser.parse_everything();
+//     let ast = parsing_res.0;
+//     let func_tab = parsing_res.1;
+//
+//     let mut seman = Seman::SemAn::new(flags.permissive, func_tab);
+//     seman.analyze(&ast, &mut logger);
+//     let matched_overloads = seman.matched_overloads.clone();
+//
+//     if logger.should_interrupt() {
+//         logger.finalize();
+//         return Err(CompilationError::Compilation);
+//     }
+//
+//     let mut gene = cgen::CodeGen::new(ast, matched_overloads, is_first);
+//     gene.gen_everything();
+//     if cfg!(debug_assertions) { 
+//         println!("{}", gene.module);
+//     }
+//
+//     let temp_fname = format!("{}_temp.ssa", input.replace(".fcy", ""));
+//
+//     if let Err(e) = gene.write_file(&temp_fname) {
+//         panic!("Error writing temp into file: {}", e.to_string());
+//     }; 
+//
+//     let nname = match assemble(&temp_fname, &output_name, ldflags) {
+//         CompilationError::OkFile(f) => {f},
+//         other => {
+//             logger.extrn_err = other;
+//             String::from("")
+//         }
+//     };
+//
+//     match logger.finalize() {
+//         Ok(_) => {
+//             Ok(nname)
+//         }
+//         Err(_) => {
+//             Err(CompilationError::QBEError())
+//         }
+//     }
+// }
 
 #[derive(Debug)]
 enum CompilationError {
@@ -166,7 +242,7 @@ enum CompilationError {
     Unknown,
 }
 
-fn assemble(input_name: &str, output_name: &str, ldflags: &Vec<String>)
+fn assemble(input_name: &str)
         -> CompilationError {
     let nat_fname = input_name.replace(".ssa", ".s");
     

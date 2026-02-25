@@ -97,7 +97,7 @@ impl CodeGen {
 
         mainf.add_block("start");
         mainf.add_instr(
-            Instr::Call("main_0".into(), Vec::new(), None)
+            Instr::Call("main_main_0".into(), Vec::new(), None)
         );
         mainf.add_instr(Instr::Ret(Some(Value::Const(0))));
 
@@ -109,7 +109,7 @@ impl CodeGen {
         let mut res = GenData::new();
         match node {
             AstNode::Function { name, args, ret_type, body, public } => {
-                self.gen_func(name, args, ret_type, body, 0, public); 
+                self.gen_func(&name, args, ret_type, body, 0, public); 
             }
             AstNode::FunctionOverload { func, idx, public } => {
                 let (name, args, ret_type, body) = match *func {
@@ -119,7 +119,7 @@ impl CodeGen {
                     other => unreachable!()
                 };
 
-                self.gen_func(name, args, ret_type, body, idx, public); 
+                self.gen_func(&name, args, ret_type, body, idx, public); 
             }
             AstNode::ReturnVal { val } => {
                 let rightd = self.gen_expr(val.node);
@@ -154,10 +154,11 @@ impl CodeGen {
                         panic!("Can't get ret type for func call")
                     }
                 };
-
+                
+                let mname = func_name.path_to_segs().join("_");
                 let name = match ov_idx {
-                    Some(v) => format!("{}_{}", func_name, v),
-                    None => format!("{}", func_name)
+                    Some(v) => format!("{}_{}", mname, v),
+                    None => format!("{}", mname)
                 };
 
                 let instr = Instr::Call(
@@ -787,6 +788,9 @@ impl CodeGen {
                 self.fbuild.add_block(blk_name); // making qbe stfu
             }
             AstNode::ExternedFunc { name, args, ret_type, public } => {}
+            AstNode::Module { name, node } => {
+                self.gen_expr(node.node);
+            }
             AstNode::none => {}
             other => {
                 panic!("can't generate yet for {:?}", other);
@@ -803,7 +807,7 @@ impl CodeGen {
         return res;
     }
 
-    fn gen_func(&mut self, name: String, args: Vec<FuncArg>, 
+    fn gen_func(&mut self, name: &AstNode, args: Vec<FuncArg>, 
             ret_type: FType, body: Box<AstNode>, over_idx: usize, public: bool)  {
         self.symb_table.push_funcargs(args.clone());
 
@@ -825,9 +829,10 @@ impl CodeGen {
             false => Linkage::private(),
         };
 
+        let mname = name.path_to_segs().join("_");
         let mut func = Function::new(
             linkage, 
-            format!("{}_{}", name, over_idx),
+            format!("{}_{}", mname, over_idx),
             args_qbe, 
             ret_t_qbe
         );
