@@ -125,7 +125,8 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         }
         let matched_overloads = seman.matched_overloads.clone();
 
-        let mut gene = cgen::CodeGen::new(ast, matched_overloads, idx == 0);
+        let mut gene = cgen::CodeGen::new(ast, matched_overloads, 
+            idx == 0, functab.clone());
         gene.gen_everything();
         if cfg!(debug_assertions) { 
             println!("{}", gene.module);
@@ -169,68 +170,6 @@ fn build_ast(input: &str, log_tx: Sender<LogMessage>)
     
     (ast, func_tab)
 }
-
-// fn compile_file(input: String, output: Option<String>, flags: InputFlags,
-//     ldflags: &Vec<String>, is_first: bool) -> Result<String, CompilationError> {
-//     let output_name = match output {
-//         Some(v) => v,
-//         None => {
-//             if cfg!(target_os = "windows") {
-//                 input.replace(".fcy", ".exe")
-//             } else {
-//                 input.replace(".fcy", "")
-//             }
-//         },
-//     };
-//
-//     let mut logger: log::Logger = Logger::new();
-//     logger.start_timer();
-//
-//     let toks = lex::tokenize(&input.clone());
-//
-//     let mut parser = fparser::FcParser::new(toks);
-//     let parsing_res = parser.parse_everything();
-//     let ast = parsing_res.0;
-//     let func_tab = parsing_res.1;
-//
-//     let mut seman = Seman::SemAn::new(flags.permissive, func_tab);
-//     seman.analyze(&ast, &mut logger);
-//     let matched_overloads = seman.matched_overloads.clone();
-//
-//     if logger.should_interrupt() {
-//         logger.finalize();
-//         return Err(CompilationError::Compilation);
-//     }
-//
-//     let mut gene = cgen::CodeGen::new(ast, matched_overloads, is_first);
-//     gene.gen_everything();
-//     if cfg!(debug_assertions) { 
-//         println!("{}", gene.module);
-//     }
-//
-//     let temp_fname = format!("{}_temp.ssa", input.replace(".fcy", ""));
-//
-//     if let Err(e) = gene.write_file(&temp_fname) {
-//         panic!("Error writing temp into file: {}", e.to_string());
-//     }; 
-//
-//     let nname = match assemble(&temp_fname, &output_name, ldflags) {
-//         CompilationError::OkFile(f) => {f},
-//         other => {
-//             logger.extrn_err = other;
-//             String::from("")
-//         }
-//     };
-//
-//     match logger.finalize() {
-//         Ok(_) => {
-//             Ok(nname)
-//         }
-//         Err(_) => {
-//             Err(CompilationError::QBEError())
-//         }
-//     }
-// }
 
 #[derive(Debug)]
 enum CompilationError {

@@ -732,10 +732,11 @@ impl FcParser {
             }, name.path_to_string())
         } else {
             (AstNode::ExternedFunc { 
-                name: Box::new(AstNode::string_to_path(&name_start)),
+                name: Box::new(name.clone()),
                 args: args, 
                 ret_type: ret_type,
-                public: self.prev_flags.contains(&ParseFlags::Public) 
+                public: self.prev_flags.contains(&ParseFlags::Public),
+                real_name: Box::new(AstNode::string_to_path(&name_start)),
             }, name.path_to_string())
         }
     }
@@ -864,6 +865,7 @@ pub enum AstNode {
 
     ExternedFunc {
         name: Box<AstNode>,
+        real_name: Box<AstNode>, 
         args: Vec<FuncArg>,
         ret_type: FType,
         public: bool,
@@ -1055,6 +1057,7 @@ pub struct FuncDat {
     pub ret_type: FType,
     pub externed: bool,
     pub public: bool,
+    pub real_name: Option<String>,
 }
 
 impl FuncDat {
@@ -1065,6 +1068,7 @@ impl FuncDat {
             ret_type: ret,
             externed: ext,
             public: false,
+            real_name: None,
         }
     }
 
@@ -1082,11 +1086,12 @@ impl FuncDat {
                 fdat.public = fdat.public || *public;
                 Some(fdat)
             }
-            AstNode::ExternedFunc { name, args, ret_type, public } => {
+            AstNode::ExternedFunc { name, args, ret_type, public, real_name } => {
                 let mut fdat = FuncDat::new(
                     *name.clone(), args.clone(), *ret_type, false
                 );
                 fdat.public = *public;
+                fdat.real_name = Some(real_name.path_to_string());
                 Some(fdat)
             }
             _ => None,

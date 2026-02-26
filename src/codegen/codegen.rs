@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::format, rc::Rc};
 
 use crate::{
-    fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, CmpOp, FuncArg, UnaryOp},
+    fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, CmpOp, FuncArg, FuncTable, UnaryOp},
     lexer::lexer::Intrinsic,
     seman::seman::{self as sem, FSymbol, FType, OverloadTable, SemAn, SymbolTable, VarPosition, ftype_to_idx, idx_to_ftype},
 }; // AstNode;
@@ -33,6 +33,7 @@ pub struct CodeGen {
     pub module: Module,
     pub fbuild: FuncBuilder,
     pub symb_table: SymbolTable,
+    func_tab: FuncTable,
     should_push: bool,
     tmp_ctr: usize,
     dslbl_ctr: usize,
@@ -45,13 +46,15 @@ pub struct CodeGen {
 }
 
 impl CodeGen {
-    pub fn new(ast: Vec<AstRoot>, mo: OverloadTable, first: bool) -> CodeGen {
+    pub fn new(ast: Vec<AstRoot>, mo: OverloadTable, 
+        first: bool, fnctb: FuncTable) -> CodeGen {
         CodeGen {
             ast: ast,
             cur_ast: 0,
             sbuf: String::new(),
             module: Module::new(),
             fbuild: FuncBuilder::new(),
+            func_tab: fnctb,
             should_push: true,
             symb_table: SymbolTable::new(),
             tmp_ctr: 0,
@@ -154,11 +157,32 @@ impl CodeGen {
                         panic!("Can't get ret type for func call")
                     }
                 };
-                
-                let mname = func_name.path_to_segs().join("_");
+
+                let mut has_rn = false;
+                let mname: String = match self.func_tab
+                        .get_func(&func_name.path_to_string()) {
+                    Some(v) => {
+                        if ov_idx.is_none() {
+                            func_name.path_to_segs().join("_")
+                        } else {
+                            let f = v.get(ov_idx.unwrap());
+                            let unf = f.unwrap();
+                            has_rn = unf.real_name.is_some();
+                            unf.real_name.
+                                clone().
+                                unwrap_or(
+                                    func_name.path_to_segs().join("_")
+                                )
+                        }
+                    }  
+                    None => {
+                        func_name.path_to_segs().join("_")
+                    }
+                };
+
                 let name = match ov_idx {
-                    Some(v) => format!("{}_{}", mname, v),
-                    None => format!("{}", mname)
+                    Some(v) if !has_rn => format!("{}_{}", mname, v),
+                    other => format!("{}", mname)
                 };
 
                 let instr = Instr::Call(
@@ -787,7 +811,9 @@ impl CodeGen {
                 let blk_name = self.alloc_label();
                 self.fbuild.add_block(blk_name); // making qbe stfu
             }
-            AstNode::ExternedFunc { name, args, ret_type, public } => {}
+            AstNode::ExternedFunc { name, args, ret_type, public, real_name } => {
+
+            }
             AstNode::Module { name, node } => {
                 self.gen_expr(node.node);
             }

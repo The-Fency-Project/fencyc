@@ -1,6 +1,7 @@
 func main() {
     other::print_hello();
     other::submod::print_bye();
+    other::submod::print_bye(5);
 
     return;
 }

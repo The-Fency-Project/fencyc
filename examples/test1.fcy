@@ -9,5 +9,11 @@ module other {
             printintrin "Goodbye!";
             return;
         }
+
+        pub overload func print_bye(i: int) {
+            printintrin "Goodbye!";
+            printintrin i;
+            return;
+        }
     }
 }

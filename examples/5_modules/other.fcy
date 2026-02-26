@@ -9,5 +9,17 @@ module other {
             printintrin "Goodbye!";
             return;
         }
+
+        pub overload func print_bye(i: int) {
+            printintrin "Goodbye!";
+            // Private function is available from the same module
+            let val: int = add1(i);
+            printintrin val;
+            return;
+        }
+
+        func add1(i: int) -> int {
+            return i + 1;
+        }
     }
 }

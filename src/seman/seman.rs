@@ -557,7 +557,8 @@ impl SemAn {
                 name,
                 args,
                 ret_type,
-                public
+                public,
+                real_name,
             } => {
                 let mut override_flag = false;
                 if let Some(v) = &self.parsing_func {

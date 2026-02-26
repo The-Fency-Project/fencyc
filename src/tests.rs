@@ -217,7 +217,9 @@ fn test_modules_example() {
 
     let expected = "\
 Hello, modules!
-Goodbye!";
+Goodbye!
+Goodbye!
+6";
 
     assert_eq!(stdout, expected, "Program output did not match expected");
 }
