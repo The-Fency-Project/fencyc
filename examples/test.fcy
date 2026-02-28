@@ -1,26 +1,27 @@
-// Compile with:
-// fencyc input examples/etc_raylib.fcy -o testbins/etc_raylib \
-//                                       --ldflags lraylib
-
-module externs {
-    pub extern func InitWindow(width: int, height: int, title: str);
-    pub extern func CloseWindow();
-    pub extern func WindowShouldClose() -> bool;
-    pub extern func SetTargetFPS(fps: int);
-    pub extern func BeginDrawing();
-    pub extern func EndDrawing();
+struct first {
+    a: bool
+    b: int 
 }
 
+struct second {
+    a: int
+    b: int
+    c: int
+}
+
+extern func print_both(s: *second);
+extern func print_both_pass(v: s_second);
+
 func main() {
-    externs::InitWindow(640, 480, "Fency raylib!");
-    externs::SetTargetFPS(60);
+    let test: *second = second {
+        a: 5;
+        b: 4;
+        c: 11; 
+    };
 
-    while (!externs::WindowShouldClose()) {
-        externs::BeginDrawing();
+    print_both(test);
 
-        externs::EndDrawing();
-    }
-    
-    externs::CloseWindow();
+    print_both_pass(test);
+
     return;
 }

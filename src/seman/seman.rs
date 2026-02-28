@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Binary;
 use std::sync::mpsc::Sender;
 
-use crate::codegen::codegen::FuncData;
+use crate::codegen;
+use crate::codegen::codegen::{CodeGen, FuncData};
 use crate::fcparse::fcparse::AstNode;
 use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, FuncArg, 
     FuncTable, UnaryOp};
@@ -44,6 +45,35 @@ pub enum FType {
     none = 7,                       // No ftype!
     nil = 8,                        // real voxvm thing!
     Array(usize, usize, usize) = 9, // typeid, count, arridx
+    Struct(&'static str) = 10, // idx in structs table
+    StructPtr(&'static str) = 11,
+}
+
+impl Into<qbe::Type> for FType {
+    fn into(self) -> qbe::Type {
+        match self {
+            FType::int | FType::uint  => qbe::Type::Long,
+            FType::double             => qbe::Type::Double,
+            FType::bool               => qbe::Type::Word, // qbe assignment rule
+            FType::Array(el, _, _)    => {
+                idx_to_ftype(el).unwrap().into()
+            },
+            FType::strconst | FType::StructPtr(_) => qbe::Type::Long, // ptr
+            other => todo!("Match ft qbf for {:?}", self)
+        }
+    }
+}
+
+impl FType {
+    fn is_compatible_with(&self, other: &FType) -> bool {
+        match (self, other) {
+            (FType::Struct(s1), FType::Struct(s2))
+            | (FType::StructPtr(s1), FType::StructPtr(s2))
+            | (FType::Struct(s1), FType::StructPtr(s2))
+            | (FType::StructPtr(s1), FType::Struct(s2)) => s1 == s2,
+            _ => self == other,
+        }
+    }
 }
 
 pub fn idx_to_ftype(idx: usize) -> Option<FType> {
@@ -56,13 +86,11 @@ pub fn idx_to_ftype(idx: usize) -> Option<FType> {
         5 => Some(FType::dsptr),
         6 => Some(FType::heapptr),
         7 => Some(FType::none), // No ftype!
-        8 => Some(FType::nil),  // real voxvm thing!
+        8 => Some(FType::nil),  // real voxvm thing! (obsolute since fencyc 0.5 though) 
         _ => None,
     }
 }
 
-/// Rust's ADTs implementation is bullshit. Thus fency should have `enum as uint`
-/// from the box
 pub fn ftype_to_idx(ft: &FType) -> usize {
     match ft {
         FType::uint => 0,
@@ -173,11 +201,13 @@ pub struct SemAn {
     parsing_func: Option<(String, usize)>, // currently parsing function name and overload idx
     pub matched_overloads: OverloadTable, // call idx -> overload idx, ret type
     expect_type: FType,                    // for overloads matching and generics (in future)
+    struct_tab: StructTable,
 }
 
 impl SemAn {
     /// Inits semantic analyzer struct. Permissive flag for less type checks
-    pub fn new(permissive: bool, functab: FuncTable, fname: String) -> SemAn {
+    pub fn new(permissive: bool, functab: FuncTable, fname: String, 
+        struct_tab: StructTable) -> SemAn {
         SemAn {
             symb_table: SymbolTable::new(),
             cur_scope: 0,
@@ -189,7 +219,8 @@ impl SemAn {
             parsing_func: None,
             matched_overloads: HashMap::new(),
             expect_type: FType::none,
-            module: "main".to_owned()
+            module: "main".to_owned(),
+            struct_tab: struct_tab
         }
     }
 
@@ -618,10 +649,10 @@ impl SemAn {
                     }
 
                     for (idx, arg) in args.iter().enumerate() {
-                        let argdat = self.analyze_expr(arg, logger); // TODO: get this invariant
-                                                                     // out of loop
-                        if (overload.args.len() != args.len()) 
-                                || argdat.ftype != overload.args[idx].ftype {
+                        let argdat = self.analyze_expr(arg, logger); 
+                                                                     
+                        if overload.args.len() != args.len() || !argdat.ftype
+                                .is_compatible_with(&overload.args[idx].ftype) {
                             flag = false;
                             break;
                         }
@@ -775,6 +806,41 @@ impl SemAn {
                 self.module = old_mod;
 
             }
+            AstNode::StructCreate { name, field_vals } => {
+                exprdat.ftype = FType::StructPtr(Box::leak(
+                    name.path_to_string().into_boxed_str()
+                ));
+
+                let struct_data = match self.struct_tab.tab
+                    .get(&name.path_to_string()) {
+                    Some(v) => v,
+                    None => {
+                        logger.send(LogMessage::new(
+                                LogLevel::Error(ErrKind::UnknownStruct(
+                                    name.path_to_string()
+                                )), 
+                                line, 
+                                self.fname.clone()
+                        ));
+                        return exprdat;
+                    }
+                };
+                if struct_data.fields.len() != field_vals.len() {
+                    logger.send(LogMessage::new(
+                        LogLevel::Error(ErrKind::MismatchFieldsCount(
+                            struct_data.fields.len(),
+                            field_vals.len()
+                        )), 
+                        line, 
+                        self.fname.clone()
+                    ));
+                    return exprdat;
+                }
+
+                for v in field_vals {
+                     
+                }
+            }
             _ => {}
         }
         exprdat
@@ -808,5 +874,120 @@ pub struct ExprDat {
 impl ExprDat {
     pub fn new(ftype: FType) -> ExprDat {
         ExprDat { ftype: ftype }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StructInfo {
+    pub name: String,
+    pub fields: HashMap<String, StructField>,
+    pub size: usize, 
+    pub max_alignment: usize,
+}
+
+impl StructInfo {
+    pub fn from_astn(astn: &AstNode) -> StructInfo {
+        match astn {
+            AstNode::Structure { name, fields } => {
+                let (parsed_fields, size, max_al) = Self::parse_ast_fields(fields);
+                StructInfo { 
+                    name: name.path_to_string(), 
+                    fields: parsed_fields,
+                    size,
+                    max_alignment: max_al
+                }
+            }
+            other => panic!("Internal: expected struct, found {:?}", other)
+        }
+    }
+
+    /// Returns fields and struct size, with alignment + max alignment 
+    fn parse_ast_fields(fields: &Vec<AstNode>) 
+        -> (HashMap<String, StructField>, usize, usize) {
+        let mut res: HashMap<String, StructField> = HashMap::new();
+        let mut tot_size: usize = 0;
+        let mut max_alignment = 1;
+        for v in fields {
+            match v {
+                AstNode::StructField { name, ftype } => {
+                    let alignment = Self::alignment_of(*ftype);
+                    if alignment > max_alignment {
+                        max_alignment = alignment;
+                    }
+                    let offset = Self::align_up(tot_size, alignment);
+                    tot_size += CodeGen::sizeof(*ftype) as usize;
+
+                    let entry = StructField {
+                        name: name.clone(), 
+                        offset: offset,
+                        ftype: *ftype
+                    };
+                    res.insert(name.clone(), entry);
+                }
+                other => panic!("Internal: expected struct, found {:?}", other)
+            }
+        }
+        // tail padding 
+        let struct_size = Self::align_up(tot_size, max_alignment);
+        (res, struct_size, max_alignment)
+    }
+
+    fn align_up(offset: usize, align: usize) -> usize {
+        (offset + align - 1) & !(align - 1)
+    }
+
+    fn alignment_of(ft: FType) -> usize {
+        match ft {
+            FType::strconst | FType::int | FType::uint | FType::double => {
+                8
+            }
+            FType::Array(el_ft_idx, ctr, _) => {
+                let el_ft = idx_to_ftype(el_ft_idx).unwrap();
+                Self::alignment_of(el_ft)
+            }
+            FType::Struct(usize) => {
+                todo!()
+            }
+            FType::bool => 1,
+            other => unimplemented!("alignment_of for {:?}", other)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StructField {
+    pub name: String,
+    pub offset: usize,
+    pub ftype: FType
+}
+
+#[derive(Debug, Clone)]
+pub struct StructTable {
+    pub tab: HashMap<String, StructInfo>,
+}
+
+impl StructTable {
+    pub fn new() -> StructTable {
+        StructTable { 
+            tab: HashMap::new()
+        }
+    }
+
+    pub fn from_several(tabs: &Vec<StructTable>) -> StructTable {
+        let mut res = StructTable::new();
+        for v in tabs {
+            res.tab.extend(v.tab.clone());
+        }
+        res
+    }
+
+    pub fn push_from_astn(&mut self, astn: &AstNode) {
+        match astn {
+            AstNode::Structure { name, fields } => {
+                let _struct = StructInfo::from_astn(astn);
+                self.tab.insert(_struct.name.clone(), _struct);
+            }
+            other => panic!("Internal: ast node {:?} isnt struct", other)
+        }
     }
 }

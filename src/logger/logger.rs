@@ -245,6 +245,28 @@ impl Logger {
                             `pub {}(...) -> ... ..`",
                         fname.clone(), help, fname)
                     }
+                    ErrKind::MismatchFieldsCount(expected, found) => {
+                        if expected > found {
+                            format!("Insufficient fields! Expected {}, found {}\n\
+                                {}: this structure has {} fields",
+                            expected, found, help, expected)
+                        } else {
+                            format!("Too much fields! Expected {}, found {}\n\
+                                {}: this structure has {} fields",
+                            expected, found, help, expected)
+                       }
+                    }
+                    ErrKind::MismatchFieldsTypes(name, expected, found) => {
+                        format!("Mismatched field type \n\
+                            \tthe field {} has type {:?}, but {:?} was provided\n\
+                            {}: consider converting types explicitly, e.g. val${:?}\
+                                (where applicable)",
+                            name, expected, found, help, expected)
+                    }
+                    ErrKind::UnknownStruct(name) => {
+                        format!("Unknown structure: {:?}",
+                            name)
+                    }
                     ErrKind::Internal(e) => {
                         format!("Internal error: {}", e)
                     }
@@ -357,6 +379,9 @@ pub enum ErrKind {
     ArrIdxType(String, FType), // name, got 
     Internal(String), // msg
     NotPub(String), // func name
+    MismatchFieldsCount(usize, usize), // expected count, found
+    MismatchFieldsTypes(String, FType, FType), // name, expected, found
+    UnknownStruct(String),
 }
 
 #[derive(Debug, Clone)]

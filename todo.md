@@ -1,13 +1,17 @@
 ## Current:
-- fix externs
-- structures, traits
-- refactor src/main.rs?
+- field addresing 
+- `ubyte` type 
+- `u32`, `i32`, `single` types
+- struct methods
+- ability to compile as library
+- `6_structs` example
 ### Future:
 Small:
 - iterators for `for`
 - default args values in funcs
 - auto type inference for lets
 - make error if trying to override func that wasnt declared
+- importing libs from `~/.fency/libs`
 Major:
 - structures
 - traits

@@ -3,10 +3,10 @@ use std::{collections::HashMap, fmt::format, rc::Rc};
 use crate::{
     fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, CmpOp, FuncArg, FuncTable, UnaryOp},
     lexer::lexer::Intrinsic,
-    seman::seman::{self as sem, FSymbol, FType, OverloadTable, SemAn, SymbolTable, VarPosition, ftype_to_idx, idx_to_ftype},
+    seman::seman::{self as sem, FSymbol, FType, OverloadTable, SemAn, StructTable, SymbolTable, VarPosition, ftype_to_idx, idx_to_ftype},
 }; // AstNode;
 use fparse::AstNode;
-use qbe::{Block, DataDef, DataItem, Function, Instr, Linkage, Module, Type, Value};
+use qbe::{Block, DataDef, DataItem, Function, Instr, Linkage, Module, Type, TypeDef, Value};
 
 #[derive(Debug, Clone)]
 pub enum ValDat {
@@ -34,6 +34,7 @@ pub struct CodeGen {
     pub fbuild: FuncBuilder,
     pub symb_table: SymbolTable,
     func_tab: FuncTable,
+    struct_tab: StructTable,
     should_push: bool,
     tmp_ctr: usize,
     dslbl_ctr: usize,
@@ -46,8 +47,8 @@ pub struct CodeGen {
 }
 
 impl CodeGen {
-    pub fn new(ast: Vec<AstRoot>, mo: OverloadTable, 
-        first: bool, fnctb: FuncTable) -> CodeGen {
+    pub fn new(ast: Vec<AstRoot>, mo: OverloadTable, first: bool,
+        fnctb: FuncTable, struct_tab: StructTable) -> CodeGen {
         CodeGen {
             ast: ast,
             cur_ast: 0,
@@ -55,6 +56,7 @@ impl CodeGen {
             module: Module::new(),
             fbuild: FuncBuilder::new(),
             func_tab: fnctb,
+            struct_tab: struct_tab,
             should_push: true,
             symb_table: SymbolTable::new(),
             tmp_ctr: 0,
@@ -131,23 +133,6 @@ impl CodeGen {
                 self.fbuild.add_instr(Instr::Ret(rightd.val));
             }
             AstNode::Call { func_name, args, idx } => {
-                // call idx
-                let mut gends: Vec<GenData> = Vec::new();
-                for arg in args {
-                    let gd = self.gen_expr(arg.node);
-                    gends.push(gd);
-                }
-
-                let mut args_qbe = Vec::new();
-                for gd in gends {
-                    args_qbe.push((
-                        Self::match_ft_qbf(gd.ftype),
-                        gd.val.unwrap_or_else(|| {
-                            panic!("args incomplete val")
-                        })
-                    ));
-                }
-
                 let (ov_idx, ret_type) = match self
                         .matched_overloads.get(&idx) {
                     Some(f) => {
@@ -157,6 +142,45 @@ impl CodeGen {
                         panic!("Can't get ret type for func call")
                     }
                 };
+
+
+                let func_dat = self.func_tab
+                    .get_func(&func_name.path_to_string())
+                    .unwrap()
+                    .get(ov_idx.unwrap())
+                    .unwrap()
+                    .clone();
+
+                let mut args_qbe = Vec::new();
+
+                for (idx, arg) in args.iter().enumerate() {
+                    let mut gd = self.gen_expr(arg.node.clone());
+
+                    let mut qtype = Self::match_ft_qbf(gd.ftype);
+                    if let Some(a) = func_dat.args.get(idx) {
+                        match a.ftype {
+                            FType::Struct(name) => {
+                                // we would need only name here so other 
+                                // fields doesnt matter
+                                qtype = Type::Aggregate(TypeDef {
+                                    name: name.to_owned().replace("::", "_"), 
+                                    align: None, 
+                                    items: Vec::new()
+                                });
+                            },
+                            other => {}
+                        }
+                    };
+
+                    args_qbe.push((
+                        qtype,
+                        gd.val.unwrap_or_else(|| {
+                            panic!("args incomplete val")
+                        })
+                    ));
+                }
+
+                
 
                 let mut has_rn = false;
                 let mname: String = match self.func_tab
@@ -817,6 +841,72 @@ impl CodeGen {
             AstNode::Module { name, node } => {
                 self.gen_expr(node.node);
             }
+            AstNode::Structure { name, fields } => {
+                let name_st = name.path_to_string();
+                let struct_dat = self.struct_tab.tab.get(&name_st)
+                    .expect("Can't get struct info");
+
+                let typedef = TypeDef {
+                    name: name.path_to_segs().join("_"),
+                    align: Some(struct_dat.max_alignment as u64),
+                    items: struct_dat.fields.iter()
+                        .map(|f| (
+                                CodeGen::match_ft_qbf_t(f.1.ftype, true), 
+                                CodeGen::match_ft_qbf_t(f.1.ftype, true)
+                                    .size() as usize,
+                            ))
+                        .collect(),
+                }; 
+                self.module.add_type(typedef);
+            }
+            AstNode::StructCreate { name, field_vals } => {
+                let name_st = name.path_to_string();
+                
+                let res_tmp = self.new_temp();
+                let field_tmp = self.new_temp();
+
+                let struct_dat = self.struct_tab.tab.get(&name_st)
+                    .expect("Can't get struct info")
+                    .clone();
+
+                let alloc_instr = match struct_dat.max_alignment {
+                    4 => Instr::Alloc4(struct_dat.size as u32),
+                    8 => Instr::Alloc8(struct_dat.size as u64),
+                    16 => Instr::Alloc16(struct_dat.size as u128),
+                    other => unimplemented!("struct Alignment for {}", other)
+                };
+                
+                res.val = Some(res_tmp.clone());
+                res.ftype = FType::uint;
+                self.fbuild.assign_instr(
+                    res_tmp.clone(),
+                    Type::Long, // ptr 
+                    alloc_instr
+                ); 
+                
+                for (k, v) in field_vals {
+                    let field_info = struct_dat.fields
+                        .get(&k)
+                        .unwrap();
+
+                    self.fbuild.assign_instr(
+                        field_tmp.clone(),
+                        Type::Long,
+                        Instr::Add(
+                            res_tmp.clone(), 
+                            Value::Const(field_info.offset as u64)
+                        )
+                    );   
+
+                    let gd = self.gen_expr(*v);
+                    // type dst val 
+                    self.fbuild.add_instr(Instr::Store(
+                        CodeGen::match_ft_qbf_t(gd.ftype, true),
+                        field_tmp.clone(),
+                        gd.val.unwrap()
+                    ));
+                }
+            }
             AstNode::none => {}
             other => {
                 panic!("can't generate yet for {:?}", other);
@@ -990,7 +1080,21 @@ impl CodeGen {
             FType::Array(el, _, _)    => {
                 Self::match_ft_qbf(idx_to_ftype(el).unwrap())
             },
-            FType::strconst         => Type::Long, // ptr
+            FType::strconst | FType::StructPtr(_) => Type::Long, // ptr
+            other => todo!("Match ft qbf for {:?}", ft)
+        }
+    }
+
+    pub fn match_ft_qbf_t(ft: FType, straight: bool) -> Type {
+        match ft {
+            FType::int | FType::uint  => Type::Long,
+            FType::double             => Type::Double,
+            FType::Array(el, _, _)    => {
+                Self::match_ft_qbf(idx_to_ftype(el).unwrap())
+            },
+            FType::strconst | FType::StructPtr(_) => Type::Long, // ptr 
+            FType::bool if straight   => Type::Byte, 
+            FType::bool               => Type::Word, 
             other => todo!("Match ft qbf for {:?}", ft)
         }
     }

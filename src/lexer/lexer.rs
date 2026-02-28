@@ -270,6 +270,7 @@ pub enum Kword {
     Extern,
     Pub,
     Module,
+    Struct,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -297,6 +298,7 @@ fn match_symb_tok(word: &str) -> Tok {
         "extern" => Tok::Keyword(Kword::Extern),
         "pub" => Tok::Keyword(Kword::Pub),
         "module" => Tok::Keyword(Kword::Module),
+        "struct" => Tok::Keyword(Kword::Struct),
         "_len" => Tok::Intrin(Intrinsic::Len),
         other => Tok::Identifier(other.to_string()),
     }

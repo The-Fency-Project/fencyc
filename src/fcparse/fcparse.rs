@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet}, fs::File, io::{self, BufRead, BufReader}, mem};
 
-use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::{ftype_to_idx, FType}};
+use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::{FType, StructTable, ftype_to_idx}};
 
 pub struct FcParser {
     tokens: Vec<Token>,
@@ -13,6 +13,8 @@ pub struct FcParser {
     prev_flags: HashSet<ParseFlags>,
     curmod: String, // cur module name
     funcs: FuncTable,
+    pub structs: StructTable,
+    nm_interner: NameInterner,
 }
 
 /// Parser based on Pratt parsing algorithm
@@ -27,6 +29,8 @@ impl FcParser {
             prev_flags: HashSet::new(),
             curmod: "main".to_owned(),
             funcs: FuncTable::new(),
+            structs: StructTable::new(),
+            nm_interner: NameInterner { map: HashMap::new() }
         }
     }
 
@@ -152,7 +156,8 @@ impl FcParser {
                         let typename = self.expect_idt().unwrap_or_else(|| {
                             panic!("{}: expected typename", self.line);
                         }); 
-                        let tgt_ftype = match_ftype(&typename).unwrap_or_else(|| {
+                        let tgt_ftype = match_ftype(&typename, &mut self.nm_interner)
+                            .unwrap_or_else(|| {
                             panic!("{}: unknown type {}", self.line, &typename);
 });
 
@@ -193,7 +198,8 @@ impl FcParser {
                 let typename = self.expect_idt().unwrap_or_else(|| {
                     panic!("{}: expected typename after array end (e.g. [1, 2]int)", self.line);
                 }); 
-                let ft = match_ftype(&typename).unwrap_or(FType::none);
+                let ft = match_ftype(&typename, &mut self.nm_interner)
+                    .unwrap_or(FType::none);
 
                 AstNode::Array(ft, vals)
             }
@@ -223,6 +229,8 @@ impl FcParser {
                                     
                                     if self.peek_is(Tok::LPar) {
                                         return self.parse_call(&path);
+                                    } else if self.peek_is(Tok::LCurBr) {
+                                        return self.parse_struct_create(&path);
                                     }
                                 }
                                 (_, Tok::Equals) => {
@@ -255,14 +263,15 @@ impl FcParser {
                                 panic!("\n{}: expected typename for {}", line_n, idt);
                             });
                             let type_idt = match &type_token.tok {
-                                Tok::Identifier(i) => i,
+                                Tok::Identifier(i) => i.clone(),
                                 other => {
                                     panic!("\n{}: expected typename, found {:?}", 
                                         line_n, other);
                                 }
                             };
 
-                            let ftype = match_ftype(&type_idt).unwrap_or_else(|| {
+                            let ftype = match_ftype(&type_idt, &mut self.nm_interner)
+                                .unwrap_or_else(|| {
                                 panic!("\n{}: {} is invalid type", line_n, type_idt);
                             });
 
@@ -285,6 +294,11 @@ impl FcParser {
                             el_idx = Some(Box::new(idx_ast.clone()));
 
                             let n = AstNode::ArrayElem(idt.clone(), Box::new(idx_ast));
+                            buf.push(n);
+                        }
+                        Tok::LCurBr => {
+                            let path = self.parse_path(idt_cl.clone()).clone();
+                            let n = self.parse_struct_create(&path);
                             buf.push(n);
                         }
                         other => {break;}
@@ -447,6 +461,12 @@ impl FcParser {
                 }
             }
 
+            Tok::Keyword(Kword::Struct) => {
+                let res = self.parse_struct();
+                self.structs.push_from_astn(&res);
+                res
+            }
+
             other => {
                 if Some(other) == self.allowed_tok.as_ref() {
                     return self.parse_expr(255).node;
@@ -460,8 +480,32 @@ impl FcParser {
         let mut ftype = FType::none;
 
         let ftype_tok = match self.consume() {
-            Some(v) => v,
-            None => {return ftype;}
+            Some(v) => {
+                let cl = v.clone();
+                match &cl.tok {
+                    Tok::Identifier(idt) => {
+                        if idt.starts_with("s_") {
+                            return self.parse_path_type(idt.to_owned(), 2); 
+                        } 
+                    }
+                    Tok::Star => {
+                        let idt = self.expect_idt().expect(&format!(
+                            "{}: expected typename after asterrisk",
+                            self.line
+                        ));
+                        return self.parse_path_type(
+                            format!("ptr_{}", idt), 
+                            4
+                        ); 
+                    }
+                    other => {
+                    }
+                }
+                cl
+            },
+            None => {
+                return ftype;
+            }
         };
         let ftype_name = match &ftype_tok.tok {
             Tok::Identifier(nm) => nm,
@@ -469,7 +513,8 @@ impl FcParser {
                 let ftn = self.expect_idt();
                 if let Some(name) = ftn {
                     self.expect(Tok::RBr);
-                    let ft = match_ftype(&name).unwrap_or_else(|| {panic!("{}: unknown type {}", self.line, name)});
+                    let ft = match_ftype(&name, &mut self.nm_interner)
+                        .unwrap_or_else(|| {panic!("{}: unknown type {}", self.line, name)});
                     ftype = FType::Array(ftype_to_idx(&ft), 0, 0);
                 } 
                 return ftype;
@@ -478,11 +523,32 @@ impl FcParser {
                     return ftype;
                 }
             };
-        if let Some(ft) = match_ftype(&ftype_name) {
+        if let Some(ft) = match_ftype(&ftype_name, &mut self.nm_interner) {
             ftype = ft;
         };
 
         ftype
+    }
+
+    fn parse_path_type(&mut self, idt: String, idx: usize) -> FType {
+        let mut ftype = FType::none;
+
+        let parsed = self.parse_path(idt.clone());
+        let mut st = parsed.path_to_string();
+        let path = match st.contains("::") {
+            true => st,
+            false => {
+                st.insert_str(idx, 
+                    &format!("{}::", self.curmod)
+                );
+                st
+            }
+        };
+        if let Some(ft) = match_ftype(&path, 
+            &mut self.nm_interner) {
+            ftype = ft;
+        };
+        return ftype;
     }
 
     fn parse_path(&mut self, first: String) -> AstNode {
@@ -766,7 +832,8 @@ impl FcParser {
                     let arg_typename = self.expect_idt().unwrap_or_else(|| {
                         panic!("{}: expected typename for arg", self.line)}
                     );
-                    let el_ft = match_ftype(&arg_typename).unwrap_or_else(|| {
+                    let el_ft = match_ftype(&arg_typename, &mut self.nm_interner)
+                        .unwrap_or_else(|| {
                         panic!("{}: unknown type {}", self.line, arg_typename)}
                     );
                     let ft = FType::Array(ftype_to_idx(&el_ft), 0, 0);
@@ -777,10 +844,40 @@ impl FcParser {
                 }
             };
 
-            let arg_typename = self.expect_idt().unwrap_or_else(|| {
+            let mut is_ptr = false;
+            if self.peek_is(Tok::Star) {
+                self.consume();
+                is_ptr = true;
+            }
+
+            let arg_typename_start = self.expect_idt().unwrap_or_else(|| {
                 panic!("{}: expected typename for arg", self.line)}
             );
-            let ft = match_ftype(&arg_typename).unwrap_or_else(|| {
+
+            let arg_typename = match (arg_typename_start.starts_with("s_"), is_ptr) {
+                (true, false) => {
+                    let path_start = arg_typename_start;
+                    let path = self.parse_path(path_start);
+                    format!("{}", path
+                        .prep_module_at(&self.curmod, 2)
+                        .path_to_string())
+                } 
+                (false, true) => {
+                    let path = self.parse_path(arg_typename_start);
+                    format!("ptr_{}", path
+                        .prep_module_at(&self.curmod, 0)
+                        .path_to_string())
+                }
+                (false, false) => {
+                    arg_typename_start
+                }
+                (true, true) => {
+                    unreachable!()
+                }
+            };
+
+            let ft = match_ftype(&arg_typename, &mut self.nm_interner)
+                .unwrap_or_else(|| {
                 panic!("{}: unknown type {}", self.line, arg_typename)}
             );
 
@@ -801,7 +898,8 @@ impl FcParser {
                 {panic!("{}: expected typename for return type", self.line);}
             );
 
-            match_ftype(&ftype_name).unwrap_or_else(|| 
+            match_ftype(&ftype_name, &mut self.nm_interner)
+                .unwrap_or_else(|| 
                 {panic!("{}: invalid typename {}", self.line, &ftype_name);}
             )
         } else {
@@ -817,6 +915,96 @@ impl FcParser {
             },
             None => None //panic!("{}: expected function name identifier, found None", self.line)
         }   
+    }
+
+    fn parse_struct(&mut self) -> AstNode {
+        let name_start = self.expect_idt().unwrap_or_else(|| {
+            panic!("{}: Expected function name", self.line)
+        });
+        let name_start_mod = format!("{}::{}", self.curmod, name_start);
+
+        let name = self.parse_path(name_start_mod);
+
+        let fields = self.parse_struct_fields();
+
+        AstNode::Structure { 
+            name: Box::new(name), 
+            fields: fields 
+        }
+    }
+
+    fn parse_struct_fields(&mut self) -> Vec<AstNode> {
+        let mut res: Vec<AstNode> = Vec::new();
+
+        self.expect(Tok::LCurBr);
+        loop {
+            let line = self.line;
+            let nexttok = self.consume()
+                .expect(&format!("{}: Expected struct field", line))
+                .clone();
+
+            match &nexttok.tok {
+                Tok::RCurBr => {
+                    break;
+                }
+                Tok::Identifier(idt) => {
+                    self.expect(Tok::Colon);
+                    let typename = self.expect_idt()
+                        .expect(&format!("{}: expected tyypename", line));
+                    let ft = match_ftype(&typename, &mut self.nm_interner)
+                        .expect(&format!("{}: unknown type {}", line, typename));
+                    res.push(AstNode::StructField { 
+                        name: idt.clone(), 
+                        ftype: ft
+                    });
+                }
+                other => panic!("{}: unexpected {:?}", line, other)
+            }
+        }
+
+        res
+    }
+
+    pub fn parse_struct_create(&mut self, path: &AstNode) -> AstNode {
+        let mut st = path.path_to_string();
+        let fin_path = match st.contains("::") {
+            true => path.clone(),
+            false => {
+                st.insert_str(0, &format!("{}::", self.curmod));
+                AstNode::string_to_path(&st)
+            }
+        };
+
+        self.expect(Tok::LCurBr);
+        let fieldvals = self.parse_field_vals();
+
+        AstNode::StructCreate { 
+            name: Box::new(fin_path), 
+            field_vals: fieldvals 
+        }
+    }
+
+    fn parse_field_vals(&mut self) -> HashMap<String, Box<AstNode>> {
+        let mut res = HashMap::new();
+        
+        loop {
+            if self.peek_is(Tok::RCurBr) {
+                self.consume();
+                break;
+            }    
+
+            let name = self.expect_idt().expect(
+                &format!("{}: expected field name", self.line)
+            );
+
+            self.expect(Tok::Colon);
+
+            let val = self.parse_expr(0).node;
+
+            res.insert(name, Box::new(val));
+        }
+
+        res
     }
 }
 
@@ -938,7 +1126,24 @@ pub enum AstNode {
     Module {
         name: String,
         node: Box<AstRoot>
-    }
+    },
+
+
+    Structure {
+        name: Box<AstNode>, // astnode path 
+        fields: Vec<AstNode>,
+
+    },
+
+    StructField {
+        name: String,
+        ftype: FType,
+    },
+
+    StructCreate {
+        name: Box<AstNode>, // astnode::path 
+        field_vals: HashMap<String, Box<AstNode>>,
+    },
 }
 
 impl AstNode {
@@ -969,6 +1174,19 @@ impl AstNode {
             .map(|s| s.to_owned())
             .collect();
         AstNode::segs_to_path(&segs)
+    }
+
+    pub fn prep_module_at(&self, module: &str, idx: usize) -> AstNode {
+        let mut st = self.path_to_string();
+        match st.contains("::") {
+            true => {},
+            false => {
+                st.insert_str(idx, 
+                    &format!("{}::", module)
+                ); 
+            }
+        }
+        Self::string_to_path(&st)
     }
 }
 
@@ -1010,15 +1228,36 @@ pub enum ParseFlags {
     Public,
 }
 
-pub fn match_ftype(lit: &str) -> Option<FType> {
+/// for more memory efficiency
+struct NameInterner {
+    map: HashMap<String, &'static str>,
+}
+
+impl NameInterner {
+    fn intern(&mut self, s: &str) -> &'static str {
+        if let Some(&existing) = self.map.get(s) {
+            return existing;
+        }
+        let static_ref = Box::leak(s.to_owned().into_boxed_str());
+        self.map.insert(s.to_owned(), static_ref);
+        static_ref
+    }
+}
+
+pub fn match_ftype(lit: &str, interner: &mut NameInterner) -> Option<FType> {
     match lit {
         "uint" => Some(FType::uint),
         "int" => Some(FType::int),
         "double" => Some(FType::double),
         "bool" => Some(FType::bool),
         "str" => Some(FType::strconst),
+        other if lit.starts_with("s_") => Some(
+            FType::Struct(interner.intern(&lit[2..]))
+        ),
+        other if lit.starts_with("ptr_") => Some(
+            FType::StructPtr(interner.intern(&lit[4..]))
+        ),
         other => None,
-        // TODO: add support for objects and str
     }
 }
 

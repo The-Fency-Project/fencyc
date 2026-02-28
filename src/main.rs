@@ -1,6 +1,4 @@
-#[cfg(not(debug_assertions))]
-use std::fs;
-use std::{fs::File, io::BufReader, process::{Command, exit}, sync::mpsc::{self, Sender}, time::Instant};
+use std::{fs::{self, File}, io::BufReader, path::PathBuf, process::{Command, exit}, sync::mpsc::{self, Sender}, time::Instant};
 
 use clap::{Parser, Subcommand, Args};
 
@@ -10,7 +8,7 @@ mod lexer {pub mod lexer;}
 mod seman {pub mod seman;}
 mod logger {pub mod logger;}
 mod tests;
-use crate::{codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstNode, AstRoot, FuncTable}, lexer::lexer as lex, logger::logger::{self as log, LogMessage, Logger, LoggerQuery, spawn_logger_thread}, seman::seman as Seman, seman::seman as sem};
+use crate::{codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstNode, AstRoot, FuncTable}, lexer::lexer as lex, logger::logger::{self as log, LogMessage, Logger, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, StructTable}};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -33,7 +31,7 @@ enum Commands {
         #[command(flatten)]
         flags: InputFlags,
 
-        #[arg(long = "ldflags")]
+        #[arg(long = "ldflags", num_args=1..)]
         ldflags: Vec<String>,
     },
 }
@@ -47,7 +45,25 @@ struct InputFlags {
     permissive: bool,
 }
 
+// prepend home here 
+const FENCY_DIR: &str = ".fency";
+
 fn main() {
+    let fency_root = get_homedpath(FENCY_DIR);
+    if let Ok(r) = fency_root {
+        let runtime_dir = r.join("runtime");
+        let libs_dir = r.join("libs");
+
+        if !runtime_dir.exists() {
+            std::fs::create_dir_all(&libs_dir)
+                .expect("Failed to create libs directory");
+            std::fs::create_dir_all(&runtime_dir)
+                .expect("Failed to create runtime directory");
+    }
+    } else {
+        println!("Can't get HOME path. Some functions may be unavailable");
+    }
+
     let cli = CliArgs::parse();
     
     match cli.command {
@@ -72,15 +88,17 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
 
     let mut asts      = Vec::new();
     let mut func_tabs = Vec::new();
+    let mut struct_tabs = Vec::new();
 
     for file in files.iter() {
-        let (ast, func_tab) = build_ast(
+        let (ast, func_tab, struct_tab) = build_ast(
             file, 
             log_tx.clone()
         );
 
         asts.push(ast);
         func_tabs.push(func_tab);
+        struct_tabs.push(struct_tab);
     }
 
     let out = match output {
@@ -89,6 +107,8 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     };
 
     let functab = FuncTable::from_several(&mut func_tabs);
+    let struct_tab = StructTable::from_several(&struct_tabs);
+
     let mut nat_fnames = Vec::new();
     let mut fin_msg = LogMessage::from_query(LoggerQuery::Stop);
     let int_msg = LogMessage::from_query(LoggerQuery::Status);
@@ -98,7 +118,10 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         let fname = files[idx].clone(); // todo: map asts with filenames instead
 
         let mut seman = Seman::SemAn::new(
-            flags.permissive, functab.clone(), fname.clone()
+            flags.permissive, 
+            functab.clone(), 
+            fname.clone(),
+            struct_tab.clone()
         );
         seman.analyze(&ast, &log_tx);
 
@@ -126,7 +149,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         let matched_overloads = seman.matched_overloads.clone();
 
         let mut gene = cgen::CodeGen::new(ast, matched_overloads, 
-            idx == 0, functab.clone());
+            idx == 0, functab.clone(), struct_tab.clone());
         gene.gen_everything();
         if cfg!(debug_assertions) { 
             println!("{}", gene.module);
@@ -160,7 +183,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
 }
 
 fn build_ast(input: &str, log_tx: Sender<LogMessage>)
-    -> (Vec<AstRoot>, FuncTable) {
+    -> (Vec<AstRoot>, FuncTable, StructTable) {
     let toks = lex::tokenize(&input);
 
     let mut parser = fparser::FcParser::new(toks);
@@ -168,7 +191,7 @@ fn build_ast(input: &str, log_tx: Sender<LogMessage>)
     let ast = parsing_res.0;
     let func_tab = parsing_res.1;
     
-    (ast, func_tab)
+    (ast, func_tab, parser.structs)
 }
 
 #[derive(Debug)]
@@ -282,3 +305,14 @@ fn run_command(cmd: &str, args: &[&str]) -> Result<Vec<String>, ()> {
 
     Ok(res)
 }
+
+pub fn get_homedpath(append: &str) -> Result<PathBuf, ()> {
+    if let Some(path) = std::env::home_dir() {
+        let res = path.join(PathBuf::from(append));
+        
+        Ok(res)
+    } else {
+        Err(())
+    }
+}
+
