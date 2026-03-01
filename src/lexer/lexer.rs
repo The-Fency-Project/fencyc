@@ -5,8 +5,13 @@ use crate::seman::seman::FType;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     Int(i64),
-    Float(f64),
+    Double(f64),
     Uint(u64),
+    I32(i32),
+    Single(f32),
+    U32(u32),
+    Ubyte(u8),
+    Ibyte(i8), 
     strlit(String),
     Plus,
     Minus,
@@ -70,11 +75,39 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '0'..='9' => {
                 let mut num_st = String::new();
                 let mut ftyp = FType::int;
-                while let Some('0'..='9' | '.' | 'u') = chars.peek() {
+                while let Some('0'..='9' | '.' | 'u' | 'i' | 'f' | 'w' | 'b') 
+                    = chars.peek() {
                     let chn = chars.next().unwrap();
-                    if chn == '.' {ftyp = FType::double};
-                    if chn == 'u' {ftyp = FType::uint; continue;}
-                    num_st.push(chn);
+                    let peek = chars.peek();
+
+                    match (chn, peek.copied()) {
+                        ('.', any) => {
+                            ftyp = FType::double;
+                            num_st.push('.');
+                        }
+                        ('f', any) => { // f is expected to be in end
+                            ftyp = FType::single;
+                        }
+                        ('u', Some('w')) => {
+                            ftyp = FType::u32;
+                        }
+                        ('u', Some('b')) => {
+                            ftyp = FType::ubyte;
+                        }       
+                        ('u', any) => {
+                            ftyp = FType::uint;
+                        }
+                        ('i', Some('b')) => {
+                            ftyp = FType::ibyte;
+                        }
+                        ('i', any) => {
+                            ftyp = FType::i32;
+                        }
+                        other => { // int64, no suffix
+                            num_st.push(chn);
+                            continue;
+                        }
+                    }
                 };
 
                 match ftyp {
@@ -88,12 +121,30 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                     }
                     FType::double => {
                         let nval: f64 = num_st.parse().unwrap();
-                        res.push(Token::new(Tok::Float(nval), line));
+                        res.push(Token::new(Tok::Double(nval), line));
                     }
-                    other => {
-                        // wont get here anyway
-                        panic!("Unexpected type lexing error at {}", line);
+                    FType::single => {
+                        let nval: f32 = num_st.parse().unwrap();
+                        res.push(Token::new(Tok::Single(nval), line));
                     }
+                    FType::i32 => {
+                        let nval: i32 = num_st.parse().unwrap();
+                        res.push(Token::new(Tok::I32(nval), line));
+                    }
+                    FType::u32 => {
+                        let nval: u32 = num_st.parse().unwrap();
+                        res.push(Token::new(Tok::U32(nval), line));
+                    }
+                    FType::ibyte => {
+                        let nval: i8 = num_st.parse().unwrap();
+                        res.push(Token::new(Tok::Ibyte(nval), line));
+                    }
+                    FType::ubyte => {
+                        let nval: u8 = num_st.parse().unwrap();
+                        res.push(Token::new(Tok::Ubyte(nval), line));
+                    }
+                    other => unreachable!("Unexpected lexing error at line {}:\
+                        got ftype {:?}", line, other)
                 }
             }
             '+' | '-' | '*' | '^' | '&' | '|' | ':' => {

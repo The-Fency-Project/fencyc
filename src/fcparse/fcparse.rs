@@ -96,8 +96,13 @@ impl FcParser {
         match &token.tok {
             Tok::Int(iv) => AstNode::Int(*iv),
             Tok::Uint(uv) => AstNode::Uint(*uv),
-            Tok::Float(fv) => AstNode::Double(*fv),
+            Tok::Double(fv) => AstNode::Double(*fv),
             Tok::strlit(s) => AstNode::StringLiteral(s.to_owned()),
+            Tok::I32(iwv) => AstNode::I32(*iwv),
+            Tok::Single(sv) => AstNode::Single(*sv),
+            Tok::U32(uwv) => AstNode::U32(*uwv),
+            Tok::Ibyte(ibv) => AstNode::Ibyte(*ibv),
+            Tok::Ubyte(ubv) => AstNode::Ubyte(*ubv),
 
             Tok::Keyword(Kword::True) => AstNode::boolVal(true),
             Tok::Keyword(Kword::False) => AstNode::boolVal(false),
@@ -216,8 +221,10 @@ impl FcParser {
                         }
                         Tok::Equals => {
                             self.consume();
+                            let nameval = Box::new(buf.get(0).cloned()
+                                    .unwrap_or(AstNode::Variable(idt_cl)));
                             return AstNode::Reassignment { 
-                                name: idt_cl, 
+                                name: nameval, 
                                 idx: el_idx,
                                 newval: Box::new(self.parse_expr(0))
                             }
@@ -247,7 +254,7 @@ impl FcParser {
                                         right: Box::new(right.node) 
                                     };
                                     return AstNode::Reassignment { 
-                                        name: idt_cl,
+                                        name: Box::new(AstNode::Variable(idt_cl)),
                                         idx: el_idx,
                                         newval: Box::new(
                                             AstRoot::new(new_val_node, self.line)
@@ -300,6 +307,15 @@ impl FcParser {
                             let path = self.parse_path(idt_cl.clone()).clone();
                             let n = self.parse_struct_create(&path);
                             buf.push(n);
+                        }
+                        Tok::Dot => {
+                            self.consume();
+                            let field_name = self.expect_idt()
+                                .expect(&format!("{}: expected field name", self.line));
+                            buf.push(AstNode::StructFieldAddr { 
+                                var_name: idt.clone(), 
+                                field_name 
+                            });
                         }
                         other => {break;}
                     }
@@ -450,7 +466,7 @@ impl FcParser {
                         };
 
                         AstNode::Reassignment { 
-                            name: var_name,
+                            name: Box::new(AstNode::Variable(var_name)),
                             idx: None,
                             newval: Box::new(AstRoot::new(new_val_node, line))
                         } 
@@ -1017,6 +1033,11 @@ pub enum AstNode {
     Int(i64),
     Double(f64),
     Uint(u64),
+    I32(i32),
+    Single(f32),
+    U32(u32),
+    Ibyte(i8),
+    Ubyte(u8),
     boolVal(bool),
     StringLiteral(String),
     Variable(String),
@@ -1087,7 +1108,7 @@ pub enum AstNode {
     },
 
     Reassignment {
-        name: String,
+        name: Box<AstNode>,
         idx: Option<Box<AstRoot>>,
         newval: Box<AstRoot>,
     },
@@ -1143,6 +1164,11 @@ pub enum AstNode {
     StructCreate {
         name: Box<AstNode>, // astnode::path 
         field_vals: HashMap<String, Box<AstNode>>,
+    },
+
+    StructFieldAddr {
+        var_name: String,
+        field_name: String,
     },
 }
 
@@ -1251,6 +1277,11 @@ pub fn match_ftype(lit: &str, interner: &mut NameInterner) -> Option<FType> {
         "double" => Some(FType::double),
         "bool" => Some(FType::bool),
         "str" => Some(FType::strconst),
+        "single" => Some(FType::single),
+        "u32" => Some(FType::u32),
+        "i32" => Some(FType::i32),
+        "ubyte" => Some(FType::ubyte),
+        "ibyte" => Some(FType::ibyte),
         other if lit.starts_with("s_") => Some(
             FType::Struct(interner.intern(&lit[2..]))
         ),

@@ -2,19 +2,37 @@
 // fencyc input examples/etc_raylib.fcy -o testbins/etc_raylib \
 //                                       --ldflags lraylib
 
+struct Color {
+    r: ubyte
+    g: ubyte 
+    b: ubyte
+    a: ubyte
+}
+
 extern func InitWindow(width: int, height: int, title: str);
 extern func CloseWindow();
 extern func WindowShouldClose() -> bool;
 extern func SetTargetFPS(fps: int);
 extern func BeginDrawing();
 extern func EndDrawing();
+extern func ClearBackground(color: s_Color);
+extern func DrawFPS(posX: int, posY: int);
 
 func main() {
     InitWindow(640, 480, "Fency raylib!");
     SetTargetFPS(60);
+    let black: *Color = Color {
+        r: 0ub;
+        g: 255ub;
+        b: 0ub;
+        a: 255ub;
+    };
 
     while (!WindowShouldClose()) {
         BeginDrawing();
+            
+            ClearBackground(black);
+            DrawFPS(0, 0);
 
         EndDrawing();
     }

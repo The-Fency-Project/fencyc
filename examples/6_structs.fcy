@@ -1,7 +1,5 @@
-struct first {
-    a: ubyte
-    b: int 
-}
+// Structures example.
+// Fency structures are represented in memory like C structs.
 
 struct second {
     a: int
@@ -22,18 +20,18 @@ func print_both(s: *second) {
 // Pass struct as value (copy)
 // Basically like in C
 func print_both_pass(v: s_second) {
+    // if we change field of struct that was 
+    // passed by value (like here), we only change this copy 
+    // so original struct wont be affected
+    v.a = 99;
     printintrin v.c;
 
     return;
 }
 
 func main() {
-    let iwv: i32 = -15i;
-    let uwv: u32 = 16uw;
-    let ubv: ubyte = 255ub;
-    let ibv: ibyte = -120ib;
-    let ext: uint = ubv$uint;
-
+    // This assignment (with struct {..})
+    // will place structure on stack
     let test: *second = second {
         a: 5;
         b: 4;

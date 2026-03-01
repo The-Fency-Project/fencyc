@@ -1,7 +1,6 @@
 ## Current:
-- field addresing 
-- `ubyte` type 
-- `u32`, `i32`, `single` types
+- heap structs
+- pub/priv structs
 - struct methods
 - ability to compile as library
 - `6_structs` example

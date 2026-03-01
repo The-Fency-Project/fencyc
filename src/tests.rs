@@ -223,3 +223,53 @@ Goodbye!
 
     assert_eq!(stdout, expected, "Program output did not match expected");
 }
+
+#[test]
+fn test_structs_example() {
+    use std::process::Command;
+    use std::str;
+
+    let input_files = vec!["examples/6_structs.fcy"];
+    let output_bin = "testbins/6_structs";
+
+    let mut cmd = vec!["run", "--", "input"];
+        cmd.extend(input_files.iter().map(|s| *s));
+        cmd.push("-o");
+        cmd.push(output_bin);
+    println!("Running compiler command: cargo {:?}", cmd);
+
+    let compile_output = Command::new("cargo")
+        .args(cmd)
+        .output()
+        .expect("Failed to run compiler command");
+
+    assert!(
+        compile_output.status.success(),
+        "Compilation failed for {}",
+        output_bin
+    );
+
+    let run_output = Command::new(output_bin)
+        .output()
+        .expect("Failed to run compiled binary");
+
+    assert!(
+        run_output.status.success(),
+        "Compiled program crashed"
+    );
+
+    let stdout = str::from_utf8(&run_output.stdout)
+        .expect("Output is not valid UTF-8")
+        .trim(); 
+
+    let expected = "\
+5
+289
+12
+5
+289
+12";
+
+    assert_eq!(stdout, expected, "Program output did not match expected");
+}
+

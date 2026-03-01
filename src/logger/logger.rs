@@ -267,6 +267,17 @@ impl Logger {
                         format!("Unknown structure: {:?}",
                             name)
                     }
+                    ErrKind::NonStructField(name, found) => {
+                        format!("Attempting to address field for non-struct \
+                            variable\n\
+                            {}: variable {} has type {:?}",
+                            help, name, found)
+                    }
+                    ErrKind::NoField(structn, field) => {
+                        format!("Attempting to address unknown field {}\n\
+                            {}: structure {} has no field {}",
+                            field, help, structn, field)
+                    }
                     ErrKind::Internal(e) => {
                         format!("Internal error: {}", e)
                     }
@@ -382,6 +393,8 @@ pub enum ErrKind {
     MismatchFieldsCount(usize, usize), // expected count, found
     MismatchFieldsTypes(String, FType, FType), // name, expected, found
     UnknownStruct(String),
+    NonStructField(String, FType), // var name, found type
+    NoField(String, String), // struct name, field name
 }
 
 #[derive(Debug, Clone)]
