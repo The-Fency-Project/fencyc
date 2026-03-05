@@ -968,7 +968,8 @@ impl FcParser {
 
         AstNode::Structure { 
             name: Box::new(name), 
-            fields: fields 
+            fields: fields,
+            public: self.prev_flags.contains(&ParseFlags::Public) 
         }
     }
 
@@ -1173,7 +1174,7 @@ pub enum AstNode {
     Structure {
         name: Box<AstNode>, // astnode path 
         fields: Vec<AstNode>,
-
+        public: bool,
     },
 
     StructField {

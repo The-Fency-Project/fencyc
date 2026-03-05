@@ -267,6 +267,7 @@ pub struct SemAn {
     pub matched_overloads: OverloadTable, // call idx -> overload idx, ret type
     expect_type: FType,                    // for overloads matching and generics (in future)
     struct_tab: StructTable,
+    line: usize,
 }
 
 impl SemAn {
@@ -285,7 +286,8 @@ impl SemAn {
             matched_overloads: HashMap::new(),
             expect_type: FType::none,
             module: "main".to_owned(),
-            struct_tab: struct_tab
+            struct_tab: struct_tab,
+            line: 0,
         }
     }
 
@@ -316,6 +318,7 @@ impl SemAn {
     fn analyze_expr(&mut self, node: &AstRoot, logger: &Sender<LogMessage>) -> ExprDat {
         let mut exprdat = ExprDat::new(FType::none);
         let line = node.line;
+        self.line = line;
         match &node.node {
             AstNode::Assignment { name, val, ft } => {
                 self.expect_type = *ft;
@@ -330,20 +333,39 @@ impl SemAn {
                     ));
                 };
 
-                if *ft == FType::none {
-                    logger.send(LogMessage::new(
-                        LogLevel::Error(ErrKind::NoneTypeAssign(name.clone(), rightdat.ftype)),
-                        line,
-                        self.fname.clone()
-                    ));
+                match ft {
+                    FType::none => {
+                        logger.send(LogMessage::new(
+                            LogLevel::Error(ErrKind::NoneTypeAssign(name.clone(), rightdat.ftype)),
+                            line,
+                            self.fname.clone()
+                        ));
+                    }
+                    ft if ft.if_struct().is_some() => {
+                        let name = ft.if_struct().unwrap();
+                        if let Some(si) = self.struct_tab.tab.get(name) {
+                            if !si.public && !name.contains(&self.module) {
+                                logger.send(LogMessage::new(
+                                    LogLevel::Error(ErrKind::NotPubStruct(name.to_owned())),
+                                    line,
+                                    self.fname.clone()
+                                ));                                
+                            }
+                        } else {
+                            logger.send(LogMessage::new(
+                                LogLevel::Error(ErrKind::UnknownStruct(name.to_owned())),
+                                line,
+                                self.fname.clone()
+                            ));
+                        }
+                    }
+                    other => {}
                 }
 
                 match (*ft, rightdat.ftype) {
-                    // TODO
                     //// Array(usize, usize, usize) = 9, // typeid, count, arridx
                     (FType::Array(fti1, c1, _), FType::Array(fti2, c2, _)) => {
                        if fti1 != fti2 {
-                            println!("here");
                            logger.send(LogMessage::new(
                                 LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)),
                                 line,
@@ -560,7 +582,7 @@ impl SemAn {
                             self.fname.clone()
                         ));
                     }
-                    Self::chk_cast(var.1.ftype, *target_type, logger.clone());
+                    self.chk_cast(var.1.ftype, *target_type, logger.clone());
                 } else {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::UndeclaredVar(name.to_owned())),
@@ -682,6 +704,30 @@ impl SemAn {
                     }
                 } else {
                     self.declared_parse.insert(name.path_to_string(), line);
+                }
+
+                for arg in args {
+                    match arg.ftype {
+                        ft if ft.if_struct().is_some() => {
+                            let name = ft.if_struct().unwrap();
+                            if let Some(si) = self.struct_tab.tab.get(name) {
+                                if !si.public && !name.contains(&self.module) {
+                                    logger.send(LogMessage::new(
+                                        LogLevel::Error(ErrKind::NotPubStruct(name.to_owned())),
+                                        line,
+                                        self.fname.clone()
+                                    ));                                
+                                }
+                            } else {
+                                logger.send(LogMessage::new(
+                                    LogLevel::Error(ErrKind::UnknownStruct(name.to_owned())),
+                                    line,
+                                    self.fname.clone()
+                                ));
+                            }
+                        }
+                        other => {}
+                    }
                 }
 
                 self.symb_table.enter_scope();
@@ -855,7 +901,7 @@ impl SemAn {
             }
             AstNode::ExprCast { expr, target_type } => {
                 let expr = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
-                Self::chk_cast(expr.ftype, *target_type, logger.clone());
+                self.chk_cast(expr.ftype, *target_type, logger.clone());
                 if expr.ftype == *target_type {
                     logger.send(LogMessage::new(
                         LogLevel::Warning(WarnKind::ConvSame(expr.ftype)), 
@@ -1058,8 +1104,23 @@ impl SemAn {
         matches!(*op, BinaryOp::Compare(_))
     }
 
-    pub fn chk_cast(from: FType, to: FType, logger: Sender<LogMessage>) {
-        // TODO
+    pub fn chk_cast(&mut self, from: FType, to: FType, logger: Sender<LogMessage>) {
+        match (from, to) {
+            (FType::Struct(st1), FType::Struct(st2)) |
+            (FType::StructPtr(st1), FType::StructPtr(st2)) |
+            (FType::StructHeapPtr(st1), FType::StructHeapPtr(st2)) | 
+            (FType::StructPtr(st1), FType::StructHeapPtr(st2)) |
+            (FType::StructHeapPtr(st1), FType::StructHeapPtr(st2))
+            if st1 != st2 => {
+                logger.send(LogMessage::new(
+                    LogLevel::Error(ErrKind::IllegalCast(from, to)),
+                    self.line,
+                    self.fname.clone(),
+                ));
+            }
+            other => {}
+            
+        }
     }
 }
 
@@ -1085,12 +1146,13 @@ pub struct StructInfo {
     pub size: usize, 
     pub max_alignment: usize,
     pub static_name: &'static str,
+    pub public: bool,
 }
 
 impl StructInfo {
     pub fn from_astn(astn: &AstNode) -> StructInfo {
         match astn {
-            AstNode::Structure { name, fields } => {
+            AstNode::Structure { name, fields, public } => {
                 let (parsed_fields, size, max_al) = Self::parse_ast_fields(fields);
                 let leaked = Box::leak(name.path_to_string().into_boxed_str());
                 StructInfo { 
@@ -1099,6 +1161,7 @@ impl StructInfo {
                     size,
                     max_alignment: max_al,
                     static_name: leaked,
+                    public: *public,
                 }
             }
             other => panic!("Internal: expected struct, found {:?}", other)
@@ -1111,9 +1174,17 @@ impl StructInfo {
         let mut res: HashMap<String, StructField> = HashMap::new();
         let mut tot_size: usize = 0;
         let mut max_alignment = 1;
+
         for v in fields {
             match v {
                 AstNode::StructField { name, ftype } => {
+                    match ftype {
+                        FType::Struct(_) => {
+                            unimplemented!("Embedded structs; use pointers/refs instead")
+                        }
+                        other => {}
+                    }
+
                     let alignment = Self::alignment_of(*ftype);
                     if alignment > max_alignment {
                         max_alignment = alignment;
@@ -1190,7 +1261,7 @@ impl StructTable {
 
     pub fn push_from_astn(&mut self, astn: &AstNode) {
         match astn {
-            AstNode::Structure { name, fields } => {
+            AstNode::Structure { name, fields, public } => {
                 let _struct = StructInfo::from_astn(astn);
                 self.tab.insert(_struct.name.clone(), _struct);
             }

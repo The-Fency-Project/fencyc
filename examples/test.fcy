@@ -8,12 +8,11 @@ struct second {
     c: int
 }
 
-// TODO
-//struct third {
-//    s: s_second
-//}
-
 extern func malloc(n: uint) -> ptr;
+
+func abc(t: *etc::third) {
+    return;
+}
 
 func print_h(s: h_second) {
     printintrin s.b;

@@ -1,8 +1,7 @@
-v0.8.3:
-- `--target` cli arg, so cross compiling is possible now
-- now you may use `--ldas` arg to specify command used for assembling and linking.
-by default its `gcc`
-- `ci-bin/qbe` updated to build from `winabi` branch for windows support
-- added `list-targets` command
-- `sizeof` intrinsic
-- updated example `6_structs`
+v0.8.4:
+- cast checks
+- some small refactor in logger
+- seman detects unknown types
+- `pub` for structs
+- i thought i would also add embedded structs here and thats why I commited prev ver,
+but now I will do something else

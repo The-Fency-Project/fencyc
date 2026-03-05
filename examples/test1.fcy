@@ -1,0 +1,5 @@
+module etc {
+    pub struct third {
+        a: ubyte
+    }
+}

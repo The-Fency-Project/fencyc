@@ -117,11 +117,11 @@ impl Logger {
                         format!("Redeclaration of variable {}", rdc_name)
                     }
                     ErrKind::MismatchedTypes(ft1, ft2) => {
-                        format!("Mismatched types: expected {:?}, found {:?}", ft1, ft2)
+                        format!("Mismatched types: expected {}, found {}", ft1, ft2)
                     }
                     ErrKind::BinOpDifTypes(bop, ft1, ft2) => {
-                        format!("Binary op {:?} can't be applied to different types {:?} and {:?}\n\
-                            {}: consider explicitly converting types, e.g. var${:?}",
+                        format!("Binary op {:?} can't be applied to different types {} and {}\n\
+                            {}: consider explicitly converting types, e.g. var${}",
                             bop, ft1, ft2, help, ft1)
                     }
                     ErrKind::BoolBounds(bop) => {
@@ -130,7 +130,7 @@ impl Logger {
                         bop, help)
                     }
                     ErrKind::NegateBounds(ft) => {
-                        format!("Binary op Negate can only be applied to ints and floats, not {:?}\n\
+                        format!("Binary op Negate can only be applied to ints and floats, not {}\n\
                             {}: consider converting value into int/float if you meant it, e.g. var$int",
                             ft, help)
                     }
@@ -140,26 +140,26 @@ impl Logger {
                         &name, help, name)
                     }
                     ErrKind::IncompatTypes(ft1, ft2) => {
-                        format!("Incompatible types: left hand statement has type {:?}, \
-                            but the right hand is {:?}.\n\
-                            {}: consider explicitly converting types, e.g. var${:?} (where applicable)",
+                        format!("Incompatible types: left hand statement has type {}, \
+                            but the right hand is {}.\n\
+                            {}: consider explicitly converting types, e.g. var${} (where applicable)",
                         ft1, ft2, help, ft1)
                     }
                     ErrKind::IfStmtNotBool(ft1) => {
-                        format!("Condition is not bool, found {:?};\n\
+                        format!("Condition is not bool, found {};\n\
                             {}: consider explicitly converting, e.g. var$bool\n\
                             {}: try using `--fpermissive` flag to avoid type pedantism",
                         ft1, help, help)
                     }
                     ErrKind::BitShiftRHSType(op, ft) => {
                         format!("Binary op {:?} requires right hand statement type to be uint or ptr, \
-                            found {:?}.\n\
+                            found {}.\n\
                             {}: consider explicitly converting types, e.g. var$uint",
                             op, ft, help
                     )
                     }
                     ErrKind::WhileLoopNotBool(ft) => {
-                       format!("Loop condition is not bool, found {:?};\n\
+                       format!("Loop condition is not bool, found {};\n\
                             {}: consider explicitly converting, e.g. var$bool or var == 1\n\
                            {}: run fencyc with `--fpermissive` flag to avoid compiler's type pedantism",
                         ft, help, help)
@@ -182,8 +182,8 @@ impl Logger {
                     }
                     ErrKind::NoneTypeAssign(name, rft) => {
                         format!("Variable {} has no annotated type\n\
-                            {}: right hand statement has type {:?}, try annotating, e.g.:\n\
-                            let {}: {:?} = ...;",
+                            {}: right hand statement has type {}, try annotating, e.g.:\n\
+                            let {}: {} = ...;",
                         &name, help, rft, &name, rft)
                     }
                     ErrKind::FuncRedecl(name, first_occ_line) => {
@@ -215,8 +215,8 @@ impl Logger {
                         name, help)
                     }
                     ErrKind::IncompatReturn(name, expected, got) => {
-                        format!("Function {} has return type {:?} but {:?} were returned\n\
-                            {}: try converting explicitly, e.g. var${:?}",
+                        format!("Function {} has return type {} but {} were returned\n\
+                            {}: try converting explicitly, e.g. var${}",
                         name, expected, got, help, expected)
                     }
                     ErrKind::ReturnOutOfFunc => {
@@ -229,12 +229,12 @@ impl Logger {
                         help, count)
                     }
                     ErrKind::IncompatArrType(expected, got, idx) => {
-                        format!("Array has type {:?}[] but {}th element is {:?}\n\
-                            {}: consider explicitly converting where possible, e.g. (expr)${:?}",
+                        format!("Array has type {}[] but {}th element is {}\n\
+                            {}: consider explicitly converting where possible, e.g. (expr)${}",
                         expected, idx, got, help, expected)
                     }
                     ErrKind::ArrIdxType(arr_name, got) => {
-                        format!("Array {} was indexed with type {:?}\n\
+                        format!("Array {} was indexed with type {}\n\
                             arrays has to be indexed with uint values\n\
                             {}: consider converting explicitly, e.g. {}[(expr)$uint]",
                         arr_name, got, help, arr_name)
@@ -258,19 +258,19 @@ impl Logger {
                     }
                     ErrKind::MismatchFieldsTypes(name, expected, found) => {
                         format!("Mismatched field type \n\
-                            \tthe field {} has type {:?}, but {:?} was provided\n\
-                            {}: consider converting types explicitly, e.g. val${:?}\
+                            \tthe field {} has type {}, but {} was provided\n\
+                            {}: consider converting types explicitly, e.g. val${}\
                                 (where applicable)",
                             name, expected, found, help, expected)
                     }
                     ErrKind::UnknownStruct(name) => {
-                        format!("Unknown structure: {:?}",
+                        format!("Unknown structure: {}",
                             name)
                     }
                     ErrKind::NonStructField(found) => {
                         format!("Attempting to address field for non-struct \
                             variable\n\
-                            {}: value has type {:?}",
+                            {}: value has type {}",
                             help, found)
                     }
                     ErrKind::NoField(structn, field) => {
@@ -279,7 +279,7 @@ impl Logger {
                             field, help, structn, field)
                     }
                     ErrKind::NoStructAddress(opname, found) => {
-                        format!("Couldn't use operation {} on type {:?}\n\
+                        format!("Couldn't use operation {} on type {}\n\
                             {}: this operation is only possible for structs",
                             opname, found, help)
                     }
@@ -290,10 +290,21 @@ impl Logger {
                     }
                     ErrKind::SizeofNonStruct(ft) => {
                         format!("Attempting to get size of non-struct type \
-                            {:?}\n\
+                            {}\n\
                             {}: `sizeof` is meant for getting the size of struct in bytes",
                             ft, help)
                     }
+                    ErrKind::IllegalCast(from, to) => {
+                        format!("Illegal cast: {} -> {}",
+                            from, to)
+                    }
+                    ErrKind::NotPubStruct(name) => {
+                        format!("Attempting to use structure type {} outside \
+                        of its module; struct isn't public\n\
+                        {}: consider declaring this struct as public, \
+                        e.g. `pub struct {} {{..}}`",
+                        name, help, name)
+                    },
                     ErrKind::Internal(e) => {
                         format!("Internal error: {}", e)
                     }
@@ -313,12 +324,12 @@ impl Logger {
                     }
                     WarnKind::ConvSame(ft) => {
                         format!("Expression was converted to the same type\n\
-                            expression already has type {:?}\n\
+                            expression already has type {}\n\
                             {}: remove type convertion",
                         ft, help)
                     }
                     WarnKind::RawPtrRet(ft) => {
-                        format!("Raw pointer of type `{:?}` was returned from function \n\
+                        format!("Raw pointer of type `{}` was returned from function \n\
                             if it was localy allocated on stack (e.g. through s = struct {{..}};),\
                             then this return could be unsafe.\n\
                             {}: consider using heap structs for complex scenarios.",
@@ -422,6 +433,8 @@ pub enum ErrKind {
     NoStructAddress(String, FType), // opname, found type
     NoReturn(),
     SizeofNonStruct(FType), // found
+    IllegalCast(FType, FType), // from, to
+    NotPubStruct(String),
 }
 
 #[derive(Debug, Clone)]

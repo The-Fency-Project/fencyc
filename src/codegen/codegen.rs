@@ -947,7 +947,7 @@ impl CodeGen {
             AstNode::Module { name, node } => {
                 self.gen_expr(node.node);
             }
-            AstNode::Structure { name, fields } => {
+            AstNode::Structure { name, fields, public } => {
                 let name_st = name.path_to_string();
                 let struct_dat = self.struct_tab.tab.get(&name_st)
                     .expect("Can't get struct info");

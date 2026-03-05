@@ -1,6 +1,4 @@
 ## Current:
-- embedded structs
-- pub/priv structs
 ### Future:
 Small:
 - ability to compile fency code as library
