@@ -333,6 +333,8 @@ pub enum Kword {
 pub enum Intrinsic {
     Print,
     Len,
+    Sizeof,
+    Typeof,
 }
 
 fn match_symb_tok(word: &str) -> Tok {
@@ -343,6 +345,8 @@ fn match_symb_tok(word: &str) -> Tok {
         "if" => Tok::Keyword(Kword::If),
         "else" => Tok::Keyword(Kword::Else),
         "printintrin" => Tok::Intrin(Intrinsic::Print),
+        "sizeof" => Tok::Intrin(Intrinsic::Sizeof),
+        "typeof" => Tok::Intrin(Intrinsic::Typeof),
         "while" => Tok::Keyword(Kword::While),
         "for" => Tok::Keyword(Kword::For),
         "in" => Tok::Keyword(Kword::In),

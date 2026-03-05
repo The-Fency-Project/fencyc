@@ -27,9 +27,11 @@ Then just:
 ## External dependencies
 To actually compile something with fencyc, you would also need:
 1. `qbe` - QBE (quick backend) binary to generate native assemblies from SSA.
-Get those from your package manager (apt/pacman/homebrew/etc) / install 
-manually; You may also use the provided linux binary from 
-`ci-bin/` repository directory or visit [QBE website](https://c9x.me/compile/).    
+It's highly recommended to use qbe build from `winabi` branch (build like this for linux 
+is in `ci-bin/` directory of repo, you may grab one for yourself). This branch adds windows 
+target support without removing other arches. 
+For info about qbe and building it, visit [QBE website](https://c9x.me/compile/).    
+Without win target you may get QBE from your package manager (apt/pacman/homebrew/etc) 
 2. `gcc` - to assemble and link native assemblies. Preinstalled on most linux 
 distributions, but for others/macos/windows you would likely need to 
 install this, also has to be in the PATH. 
@@ -48,6 +50,9 @@ Flags:
 `--fpermissive`: enables permissive mode, which leads to less type system errors, but still warns.
 `-o name`: determines output program name    
 `--ldflags flags`: linker flags, e.g. `--ldflags lm lraylib`, etc.    
+`-t` / `--target`: specify target
+`--list-targets`: list available targets 
+`--ldas`: specify command used for assembling and linking, `gcc` by default
 
 ## Docs
 Soon. For now, consider learning from `examples/` directory in numerical order (1_*, 2_*, ..)

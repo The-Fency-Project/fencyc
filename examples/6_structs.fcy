@@ -1,6 +1,10 @@
 // Structures example.
 // Fency structures are represented in memory like C structs.
 
+// libc
+extern func malloc(n: uint) -> ptr;
+extern func free(p: ptr);
+
 struct second {
     a: int
     b: int
@@ -29,6 +33,14 @@ func print_both_pass(v: s_second) {
     return;
 }
 
+// passing by heap pointer
+func print_h(s: h_second) {
+    printintrin s.b;
+
+    return;
+}
+
+
 func main() {
     // This assignment (with struct {..})
     // will place structure on stack
@@ -49,6 +61,22 @@ func main() {
     printintrin test.a;
     printintrin test.b;
     printintrin test.c;
+
+    // Use this intrinsic with @ to get size of type;
+    // without @ - size of variable
+    let len: uint = sizeof @s_second;
+    // allocate memory on heap for new struct 
+    let test3_ptr: ptr = malloc(len);
+    // cast ptr to heap ptr (safer)
+    let test3: h_second = test3_ptr$h_second;
+    
+    test3.a = 15;
+    test3.b = 16;
+    test3.c = 17;
+
+    print_h(test3);
+    // dont forget to free after raw alloc
+    free(test3_ptr);
 
     return;
 }

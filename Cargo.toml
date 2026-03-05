@@ -1,6 +1,6 @@
 [package]
 name = "fencyc"
-version = "0.8.2"
+version = "0.8.3"
 edition = "2024"
 
 [dependencies]
@@ -9,4 +9,6 @@ colored = "3.0.0"
 indexmap = "2.13.0"
 itertools = "0.14.0"
 qbe = { git = "https://github.com/Freemorger/qbe-rs.git" }
+strum = "0.28.0"
+strum_macros = "0.28.0"
 # voxvm = { git = "https://github.com/Freemorger/voxvm.git" } # good old times

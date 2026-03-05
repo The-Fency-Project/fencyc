@@ -363,6 +363,21 @@ impl FcParser {
             }
 
             Tok::Intrin(intr) => {
+                // TODO
+                match intr {
+                    Intrinsic::Sizeof => {
+                        if self.peek_is(Tok::At) {
+                            self.consume();
+                            let ft = self.parse_ftype();
+                            let s = ft.to_string().replace("s_", "");
+                            return AstNode::Intrinsic { 
+                                intr: *intr, 
+                                val: Box::new(AstNode::Variable(s))
+                            };
+                        }
+                    }
+                    other => {}
+                }
                 let val = self.parse_expr(0);
 
                 AstNode::Intrinsic { intr: *intr, val: Box::new(val.node) }

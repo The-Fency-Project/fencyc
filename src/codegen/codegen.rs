@@ -621,6 +621,13 @@ impl CodeGen {
                 res.val = ind.val;
             }
             AstNode::Variable(var) => { // var name
+                if let Some(v) = self.struct_tab.tab.get(&var) {
+                    res.ftype = FType::Struct(v.static_name);
+                    return res;
+                };
+
+                // TODO: func ptrs
+
                 let var_dat = self.symb_table.get(var.clone()).unwrap_or_else(|| {
                     panic!("Internal: Can't get variable {}", var)
                 });
@@ -635,7 +642,8 @@ impl CodeGen {
 
                 match (symb.1.ftype, target_type) {
                     (FType::Ptr, FType::StructPtr(_)) | (FType::Ptr, FType::Struct(_)) |
-                        (FType::Ptr, FType::StructHeapPtr(_)) => {
+                        (FType::Ptr, FType::StructHeapPtr(_)) | 
+                        (FType::StructHeapPtr(_), FType::StructPtr(_)) => {
                         self.fbuild.assign_instr(
                             tmp.clone(),
                             Type::Long,
@@ -675,7 +683,8 @@ impl CodeGen {
                 let mut gd = self.gen_expr(*expr);
                 match (gd.ftype, target_type) {
                     (FType::Ptr, FType::StructPtr(_)) | (FType::Ptr, FType::Struct(_)) |
-                        (FType::Ptr, FType::StructHeapPtr(_)) => {
+                        (FType::Ptr, FType::StructHeapPtr(_)) |
+                        (FType::StructHeapPtr(_), FType::StructPtr(_)) => {
                         res.val = gd.val.clone();
                         return res;
                     }
@@ -1425,6 +1434,32 @@ impl CodeGen {
                     }
                     other => unimplemented!("{:#?}", other)
                 }
+            }
+            Intrinsic::Sizeof => {
+                let tmp = self.new_temp();
+                let s = match rightdat.ftype {
+                    FType::Struct(st) => {
+                        let struct_info = self.struct_tab.tab.get(st)
+                            .expect(&format!(
+                                    "Internal: can't get struct {}",
+                                    st)
+                            );
+                        struct_info.size as u64 
+                    }
+                    other => rightdat.ftype.size()
+                };
+
+                self.fbuild.assign_instr(
+                    tmp.clone(),
+                    Type::Long,
+                    Instr::Copy(
+                        Value::Const(s)
+                    )
+                );
+                resd.val = Some(tmp);
+            }
+            Intrinsic::Typeof => {
+                resd.ftype = rightdat.ftype;
             }
         }
         resd

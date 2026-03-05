@@ -1,6 +1,5 @@
 ## Current:
 - embedded structs
-- destructors
 - pub/priv structs
 ### Future:
 Small:
@@ -13,6 +12,6 @@ Small:
 - function pointers
 - block return
 Major:
-- structures methods
+- structures methods + destructors
 - traits
-- github wiki
+- wiki

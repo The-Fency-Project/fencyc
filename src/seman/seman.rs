@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::Binary;
+use std::fmt::{Binary, Display};
 use std::mem::discriminant;
 use std::sync::mpsc::Sender;
 
@@ -85,6 +85,37 @@ impl PartialEq for FType {
 
     fn ne(&self, other: &Self) -> bool {
         !self.eq(other)
+    }
+}
+
+use std::fmt;
+
+impl fmt::Display for FType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FType::uint => write!(f, "uint"),
+            FType::int => write!(f, "int"),
+            FType::double => write!(f, "double"),
+            FType::bool => write!(f, "bool"),
+            FType::strconst => write!(f, "strconst"),
+            FType::dsptr => write!(f, "dsptr"),
+            FType::heapptr => write!(f, "heapptr"),
+            FType::none => write!(f, "none"),
+            FType::nil => write!(f, "nil"),
+            FType::Array(typeid, count, arridx) => {
+                write!(f, "Array(typeid={}, count={}, arridx={})", typeid, count, arridx)
+            }
+            FType::Struct(name) => write!(f, "s_{}", name),
+            FType::StructPtr(name) => write!(f, "ptr_{}", name),
+            FType::StructHeapPtr(name) => write!(f, "h_{}", name),
+            FType::ubyte => write!(f, "ubyte"),
+            FType::ibyte => write!(f, "ibyte"),
+            FType::u32 => write!(f, "u32"),
+            FType::i32 => write!(f, "i32"),
+            FType::single => write!(f, "single"),
+            FType::any => write!(f, "any"),
+            FType::Ptr => write!(f, "Ptr"),
+        }
     }
 }
 
@@ -461,6 +492,16 @@ impl SemAn {
                 }
             }
             AstNode::Variable(var) => {
+                if let Some(v) = self.struct_tab.tab.get(var) {
+                    exprdat.ftype = FType::Struct("");
+                    return exprdat;
+                }
+
+                if self.func_table.get_func(var).is_some() {
+                    // TODO: func type
+                    return exprdat;
+                }
+
                 exprdat.ftype = match self.symb_table.get(var.clone()) {
                     Some(v) => v.1.ftype,
                     None => {
@@ -511,7 +552,6 @@ impl SemAn {
                 }
             }
             AstNode::VariableCast { name, target_type } => {
-                // TODO: add some meaningful type checks here
                 if let Some(var) = self.symb_table.get(name.clone()) {
                     if var.1.ftype == *target_type {
                         logger.send(LogMessage::new(
@@ -520,6 +560,7 @@ impl SemAn {
                             self.fname.clone()
                         ));
                     }
+                    Self::chk_cast(var.1.ftype, *target_type, logger.clone());
                 } else {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::UndeclaredVar(name.to_owned())),
@@ -549,6 +590,9 @@ impl SemAn {
                         }
                         exprdat.ftype = FType::uint; 
                     },
+                    Intrinsic::Sizeof => {
+                        exprdat.ftype = FType::uint;
+                    }
                     other => {}
                 }
             }
@@ -811,6 +855,7 @@ impl SemAn {
             }
             AstNode::ExprCast { expr, target_type } => {
                 let expr = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
+                Self::chk_cast(expr.ftype, *target_type, logger.clone());
                 if expr.ftype == *target_type {
                     logger.send(LogMessage::new(
                         LogLevel::Warning(WarnKind::ConvSame(expr.ftype)), 
@@ -1012,6 +1057,10 @@ impl SemAn {
     pub fn is_cmp_op(op: &BinaryOp) -> bool {
         matches!(*op, BinaryOp::Compare(_))
     }
+
+    pub fn chk_cast(from: FType, to: FType, logger: Sender<LogMessage>) {
+        // TODO
+    }
 }
 
 #[derive(Debug)]
@@ -1035,6 +1084,7 @@ pub struct StructInfo {
     pub fields: HashMap<String, StructField>,
     pub size: usize, 
     pub max_alignment: usize,
+    pub static_name: &'static str,
 }
 
 impl StructInfo {
@@ -1042,11 +1092,13 @@ impl StructInfo {
         match astn {
             AstNode::Structure { name, fields } => {
                 let (parsed_fields, size, max_al) = Self::parse_ast_fields(fields);
+                let leaked = Box::leak(name.path_to_string().into_boxed_str());
                 StructInfo { 
                     name: name.path_to_string(), 
                     fields: parsed_fields,
                     size,
-                    max_alignment: max_al
+                    max_alignment: max_al,
+                    static_name: leaked,
                 }
             }
             other => panic!("Internal: expected struct, found {:?}", other)

@@ -8,17 +8,13 @@ struct second {
     c: int
 }
 
-// Pass struct by pointer 
-// So you may modify original struct here
-func print_both(s: *second) -> *second {
-    printintrin s.a;
-    s.b = 289;
-    printintrin s.b;
-
-    return s;
-}
+// TODO
+//struct third {
+//    s: s_second
+//}
 
 extern func malloc(n: uint) -> ptr;
+
 func print_h(s: h_second) {
     printintrin s.b;
 
@@ -32,22 +28,18 @@ func main() {
         c: 11; 
     };
 
-    test.c = 12;
-
-    print_both(&test); // would change b to 289 btw
-
     let test2: *first = &first {
         ptr: &test;
     };
 
-    printintrin test2.ptr.a;
-
-    // TODO: sizeof intrin
-    let test3_ptr: ptr = malloc(24u);
+    let len: uint = sizeof @s_second;
+    let test3_ptr: ptr = malloc(len);
     let test3: h_second = test3_ptr$h_second;
+    
     test3.a = 15;
     test3.b = 16;
     test3.c = 17;
+
     print_h(test3);
 
     return;

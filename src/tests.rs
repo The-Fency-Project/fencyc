@@ -268,7 +268,8 @@ fn test_structs_example() {
 12
 5
 289
-12";
+12
+16";
 
     assert_eq!(stdout, expected, "Program output did not match expected");
 }

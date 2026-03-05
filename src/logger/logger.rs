@@ -288,6 +288,12 @@ impl Logger {
                             {}: add a `return val;` at the end",
                             help)
                     }
+                    ErrKind::SizeofNonStruct(ft) => {
+                        format!("Attempting to get size of non-struct type \
+                            {:?}\n\
+                            {}: `sizeof` is meant for getting the size of struct in bytes",
+                            ft, help)
+                    }
                     ErrKind::Internal(e) => {
                         format!("Internal error: {}", e)
                     }
@@ -415,6 +421,7 @@ pub enum ErrKind {
     NoField(String, String), // struct name, field name
     NoStructAddress(String, FType), // opname, found type
     NoReturn(),
+    SizeofNonStruct(FType), // found
 }
 
 #[derive(Debug, Clone)]

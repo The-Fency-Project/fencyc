@@ -1,6 +1,6 @@
 use std::{fs::{self, File}, io::BufReader, path::PathBuf, process::{Command, exit}, sync::mpsc::{self, Sender}, time::Instant};
 
-use clap::{Parser, Subcommand, Args};
+use clap::{Parser, Subcommand, Args, ValueEnum};
 
 mod fcparse {pub mod fcparse;}
 mod codegen {pub mod codegen;}
@@ -8,48 +8,8 @@ mod lexer {pub mod lexer;}
 mod seman {pub mod seman;}
 mod logger {pub mod logger;}
 mod tests;
-use crate::{codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstNode, AstRoot, FuncTable}, lexer::lexer as lex, logger::logger::{self as log, LogMessage, Logger, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, StructTable}};
-
-#[derive(Parser)]
-#[command(version, about, long_about = None)]
-pub struct CliArgs {
-    #[arg(short, long)]
-    verbose: bool,
-
-    #[command(subcommand)]
-    command: Option<Commands>,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    Input {
-        files: Vec<String>,
-
-        #[arg(short, long)]
-        output: Option<String>,
-
-        #[command(flatten)]
-        flags: InputFlags,
-
-        #[arg(long = "ldflags", num_args=1..)]
-        ldflags: Vec<String>,
-    },
-}
-
-#[derive(Args, Debug, Default, Clone, Copy)]
-struct InputFlags {
-    #[arg(short, long)]
-    verbose: bool,
-
-    // a bit less type checks
-    #[arg(long = "fpermissive")]
-    permissive: bool,
-
-    // Runs in check-only mode 
-    // (so binaries wouldnt be generated)
-    #[arg(long = "check")]
-    check: bool,
-}
+mod cli;
+use crate::{cli::{Commands, InputFlags, Target}, codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstNode, AstRoot, FuncTable}, lexer::lexer as lex, logger::logger::{self as log, LogMessage, Logger, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, StructTable}};
 
 // prepend home here 
 const FENCY_DIR: &str = ".fency";
@@ -70,7 +30,7 @@ fn main() {
         println!("Can't get HOME path. Some functions may be unavailable");
     }
 
-    let cli = CliArgs::parse();
+    let cli = cli::CliArgs::parse();
     
     match cli.command {
         Some(Commands::Input { files, output, flags, ldflags } ) => {
@@ -78,6 +38,9 @@ fn main() {
                 Ok(_) => {return;}
                 Err(_) => {exit(1);}
             }
+        }
+        Some(Commands::ListTargets) => {
+            Target::list(); 
         }
         None => {
             eprintln!("Please, specify command or try fencyc --help.");
@@ -171,7 +134,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
             panic!("Error writing temp into file: {}", e.to_string());
         }; 
 
-        let nname = match assemble(&temp_fname) {
+        let nname = match assemble(&temp_fname, flags.target) {
             CompilationError::OkFile(f) => {f},
             other => {
                 //logger.extrn_err = other; TODO: send 
@@ -185,7 +148,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         let strs = nat_fnames.iter()
             .map(String::as_str)
             .collect();
-        link(&strs, &out, &ldflags)?;
+        link(&strs, &out, &ldflags, &flags)?;
     }
 
     log_tx.send(fin_msg);
@@ -216,11 +179,12 @@ enum CompilationError {
     Unknown,
 }
 
-fn assemble(input_name: &str)
+fn assemble(input_name: &str, t: Target)
         -> CompilationError {
     let nat_fname = input_name.replace(".ssa", ".s");
     
-    let out1 = match run_command("qbe", &["-o", &nat_fname, input_name]) {
+    let out1 = match run_command("qbe", &["-t", &t.into_qbe_name(),
+    "-o", &nat_fname, input_name]) {
         Ok(sv) => sv,
         Err(()) => {
             return CompilationError::QBEError();
@@ -234,7 +198,8 @@ fn assemble(input_name: &str)
     CompilationError::OkFile(nat_fname.clone())
 }
 
-fn link(nat_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>)
+fn link(nat_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>, 
+    flags: &InputFlags)
     -> Result<(), CompilationError> {
     let mut args: Vec<&str> = Vec::new();
     args.extend(nat_fnames);
@@ -245,7 +210,7 @@ fn link(nat_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>)
         .collect();
     args.extend(dash_flags.iter().map(|s| s.as_str()));  
 
-    let out2 = match run_command("gcc", &args) {
+    let out2 = match run_command(&flags.ldas, &args) {
         Ok(sv) => sv,
         Err(()) => {
             return Err(CompilationError::LinkError());
