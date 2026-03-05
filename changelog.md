@@ -1,7 +1,7 @@
-v0.8.1:
-- added types `single`, `u32`, `i32`, `ubyte`, `ibyte`
-- seman: fields type mismatch
-- fixes
-- updated `examples/etc_raylib.fcy` example
-- conv ops for new types
-- address by struct field 
+v0.8.2:
+- added `--check` compilation flag, with which binaries generation will be avoided
+- deref/addressof 
+- `Ptr` type 
+- struct fields works better
+- noreturn error
+- heap ptrs

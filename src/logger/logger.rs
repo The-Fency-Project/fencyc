@@ -267,16 +267,26 @@ impl Logger {
                         format!("Unknown structure: {:?}",
                             name)
                     }
-                    ErrKind::NonStructField(name, found) => {
+                    ErrKind::NonStructField(found) => {
                         format!("Attempting to address field for non-struct \
                             variable\n\
-                            {}: variable {} has type {:?}",
-                            help, name, found)
+                            {}: value has type {:?}",
+                            help, found)
                     }
                     ErrKind::NoField(structn, field) => {
                         format!("Attempting to address unknown field {}\n\
                             {}: structure {} has no field {}",
                             field, help, structn, field)
+                    }
+                    ErrKind::NoStructAddress(opname, found) => {
+                        format!("Couldn't use operation {} on type {:?}\n\
+                            {}: this operation is only possible for structs",
+                            opname, found, help)
+                    }
+                    ErrKind::NoReturn() => {
+                        format!("Function does not have a return\n\
+                            {}: add a `return val;` at the end",
+                            help)
                     }
                     ErrKind::Internal(e) => {
                         format!("Internal error: {}", e)
@@ -300,6 +310,14 @@ impl Logger {
                             expression already has type {:?}\n\
                             {}: remove type convertion",
                         ft, help)
+                    }
+                    WarnKind::RawPtrRet(ft) => {
+                        format!("Raw pointer of type `{:?}` was returned from function \n\
+                            if it was localy allocated on stack (e.g. through s = struct {{..}};),\
+                            then this return could be unsafe.\n\
+                            {}: consider using heap structs for complex scenarios.",
+                            ft, help
+                            )
                     }
                     WarnKind::Internal => {"".to_string()}
                 }
@@ -393,8 +411,10 @@ pub enum ErrKind {
     MismatchFieldsCount(usize, usize), // expected count, found
     MismatchFieldsTypes(String, FType, FType), // name, expected, found
     UnknownStruct(String),
-    NonStructField(String, FType), // var name, found type
+    NonStructField(FType), // found type
     NoField(String, String), // struct name, field name
+    NoStructAddress(String, FType), // opname, found type
+    NoReturn(),
 }
 
 #[derive(Debug, Clone)]
@@ -403,4 +423,5 @@ pub enum WarnKind {
     IfStmtNotBool,
     WhileLoopNotBool,
     ConvSame(FType),
+    RawPtrRet(FType),
 }

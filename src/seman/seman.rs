@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Binary;
+use std::mem::discriminant;
 use std::sync::mpsc::Sender;
 
 
@@ -33,7 +34,7 @@ impl FSymbol {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 #[repr(usize)]
 pub enum FType {
     uint = 0,
@@ -48,11 +49,14 @@ pub enum FType {
     Array(usize, usize, usize) = 9, // typeid, count, arridx
     Struct(&'static str) = 10, // idx in structs table
     StructPtr(&'static str) = 11,
+    StructHeapPtr(&'static str),
     ubyte,
     ibyte,
     u32,
     i32,
     single,
+    any, // some kind of wildcard for seman 
+    Ptr, // ftype id 
 }
 
 impl Into<qbe::Type> for FType {
@@ -65,60 +69,77 @@ impl Into<qbe::Type> for FType {
             FType::bool | FType::ubyte | FType::ibyte 
                 => qbe::Type::Word, // qbe assignment rule
             FType::Array(el, _, _)    => {
-                idx_to_ftype(el).unwrap().into()
+                Self::from_idx(el).unwrap().into()
             },
-            FType::strconst | FType::StructPtr(_) => qbe::Type::Long, // ptr
+            FType::strconst | FType::StructPtr(_) | FType::StructHeapPtr(_) 
+                => qbe::Type::Long, // ptr
             other => todo!("Match ft qbf for {:?}", self)
         }
+    }
+}
+
+impl PartialEq for FType {
+    fn eq(&self, other: &Self) -> bool {
+        self.is_compatible_with(other)
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        !self.eq(other)
     }
 }
 
 impl FType {
     fn is_compatible_with(&self, other: &FType) -> bool {
         match (self, other) {
-            (FType::Struct(s1), FType::Struct(s2))
-            | (FType::StructPtr(s1), FType::StructPtr(s2))
-            | (FType::Struct(s1), FType::StructPtr(s2))
-            | (FType::StructPtr(s1), FType::Struct(s2)) => s1 == s2,
-            _ => self == other,
+            (_, FType::any) | (FType::any, _) => true,
+            _ => discriminant(self) == discriminant(other),
         }
     }
 
     pub fn size(&self) -> u64 {
         CodeGen::match_ft_qbf_t(*self, true).size()
     }
-}
 
-pub fn idx_to_ftype(idx: usize) -> Option<FType> {
-    match idx {
-        0 => Some(FType::uint),
-        1 => Some(FType::int),
-        2 => Some(FType::double),
-        3 => Some(FType::bool),
-        4 => Some(FType::strconst),
-        5 => Some(FType::dsptr),
-        6 => Some(FType::heapptr),
-        7 => Some(FType::none), // No ftype!
-        8 => Some(FType::nil),  // real voxvm thing! (obsolute since fencyc 0.5 though) 
-        _ => None,
+    pub fn from_idx(idx: usize) -> Option<FType> {
+        match idx {
+            0 => Some(FType::uint),
+            1 => Some(FType::int),
+            2 => Some(FType::double),
+            3 => Some(FType::bool),
+            4 => Some(FType::strconst),
+            5 => Some(FType::dsptr),
+            6 => Some(FType::heapptr),
+            7 => Some(FType::none), // No ftype!
+            8 => Some(FType::nil),  // real voxvm thing! (obsolute since fencyc 0.5 though) 
+            _ => None,
+        }
+    }
+
+    pub fn to_idx(&self) -> usize {
+        match self {
+            FType::uint => 0,
+            FType::int => 1,
+            FType::double => 2,
+            FType::bool => 3,
+            FType::strconst => 4,
+            FType::dsptr => 5,
+            FType::heapptr => 6,
+            FType::none => 7,
+            FType::nil => 8,
+            other => unimplemented!(),
+            // FType::Array(_, _) => 9, 
+        }
+    }
+
+    pub fn if_struct(&self) -> Option<&'static str> {
+        match self {
+            FType::Struct(st) | FType::StructPtr(st) | FType::StructHeapPtr(st) 
+                => Some(st),
+            other => None,
+        }
     }
 }
 
-pub fn ftype_to_idx(ft: &FType) -> usize {
-    match ft {
-        FType::uint => 0,
-        FType::int => 1,
-        FType::double => 2,
-        FType::bool => 3,
-        FType::strconst => 4,
-        FType::dsptr => 5,
-        FType::heapptr => 6,
-        FType::none => 7,
-        FType::nil => 8,
-        other => unimplemented!(),
-        // FType::Array(_, _) => 9, 
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum VarPosition {
@@ -344,8 +365,8 @@ impl SemAn {
             AstNode::Ibyte(_) => {
                 exprdat.ftype = FType::ibyte;
             }
-            AstNode::Array(fti, nodes) => {
-                exprdat.ftype = FType::Array(ftype_to_idx(fti), nodes.len(), 0);
+            AstNode::Array(ft, nodes) => {
+                exprdat.ftype = FType::Array(ft.to_idx(), nodes.len(), 0);
             }
             AstNode::BinaryOp { op, left, right } => {
                 let leftd = self.analyze_expr(&AstRoot::new(*left.clone(), line), logger);
@@ -402,16 +423,41 @@ impl SemAn {
                 let rdat = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
                 exprdat.ftype = rdat.ftype;
 
-                if (*op == UnaryOp::Negate)
-                    && !((exprdat.ftype == FType::double) || (exprdat.ftype == FType::int)
-                        || (exprdat.ftype == FType::single) || (exprdat.ftype == FType::i32) ||
-                        (exprdat.ftype == FType::ibyte))
+                if *op == UnaryOp::Negate
+                    && !matches!(
+                        exprdat.ftype,
+                        FType::double | FType::int | FType::single | FType::i32 | FType::ibyte
+                    )
                 {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::NegateBounds(exprdat.ftype)),
                         line,
-                        self.fname.clone()
+                        self.fname.clone(),
                     ));
+                }
+
+                match *op {
+                    UnaryOp::AddressOf => match rdat.ftype {
+                        FType::Struct(s) => exprdat.ftype = FType::StructPtr(s),
+                        other => {
+                            logger.send(LogMessage::new(
+                                LogLevel::Error(ErrKind::NoStructAddress("Address Of".to_owned(), other)),
+                                line,
+                                self.fname.clone(),
+                            ));
+                        }
+                    },
+                    UnaryOp::Deref => match rdat.ftype {
+                        FType::StructPtr(s) => exprdat.ftype = FType::Struct(s),
+                        other => {
+                            logger.send(LogMessage::new(
+                                LogLevel::Error(ErrKind::NoStructAddress("Dereference".to_owned(), other)),
+                                line,
+                                self.fname.clone(),
+                            ));
+                        }
+                    },
+                    _ => {} 
                 }
             }
             AstNode::Variable(var) => {
@@ -431,11 +477,11 @@ impl SemAn {
                 let val = self.analyze_expr(
                     &AstRoot::new(*name.clone(), line), 
                     &logger.clone()
-                ); 
+                );
                 let newval_data = self.analyze_expr(&newval, logger);
                 let res_type: FType = match val.ftype {
                     FType::Array(el_ft, _, _) if idx.is_some() => {
-                        idx_to_ftype(el_ft).unwrap_or(FType::nil)
+                        FType::from_idx(el_ft).unwrap_or(FType::nil)
                     }
                     other => other
                 };
@@ -509,7 +555,8 @@ impl SemAn {
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
                 for expr in exprs {
-                    self.analyze_expr(expr, logger);
+                    let ed = self.analyze_expr(expr, logger);
+                    exprdat.has_returned = ed.has_returned;
                 }
                 self.symb_table.exit_scope();
             }
@@ -596,10 +643,19 @@ impl SemAn {
                 self.symb_table.enter_scope();
                 self.symb_table.push_funcargs(args.to_vec());
 
-                self.analyze_expr(&AstRoot::new(*body.clone(), line), logger);
+                let fdat = self
+                    .analyze_expr(&AstRoot::new(*body.clone(), line), logger);
 
                 self.symb_table.exit_scope();
                 self.parsing_func = None;
+
+                if !fdat.has_returned {
+                    logger.send(LogMessage::new(
+                        LogLevel::Error(ErrKind::NoReturn()),
+                        line,
+                        self.fname.clone()
+                    ));
+                }
             }
             AstNode::ExternedFunc {
                 name,
@@ -733,7 +789,18 @@ impl SemAn {
                                 self.fname.clone()
                             ));
                         }
+                        match retval.ftype {
+                            FType::StructPtr(_) => {
+                                logger.send(LogMessage::new(
+                                    LogLevel::Warning(WarnKind::RawPtrRet(retval.ftype)),
+                                    line,
+                                    self.fname.clone()
+                                ));
+                            },
+                            other => {}
+                        }
                     };
+                    exprdat.has_returned = true;
                 } else {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::ReturnOutOfFunc), 
@@ -765,7 +832,7 @@ impl SemAn {
                         ));
                     }
                 }
-                let ft_idx = ftype_to_idx(ft);
+                let ft_idx = ft.to_idx();
 
                 // TODO
                 //// Array(usize, usize, usize) = 9, // typeid, count, arridx
@@ -784,9 +851,8 @@ impl SemAn {
                     }
                 };
 
-                // TODO
                 let elem_type = match array_symb.ftype {
-                    FType::Array(fti, _, _) => idx_to_ftype(fti),
+                    FType::Array(fti, _, _) => FType::from_idx(fti),
                     other => unreachable!(),
                 };
 
@@ -824,7 +890,7 @@ impl SemAn {
 
             }
             AstNode::StructCreate { name, field_vals } => {
-                exprdat.ftype = FType::StructPtr(Box::leak(
+                exprdat.ftype = FType::Struct(Box::leak(
                     name.path_to_string().into_boxed_str()
                 ));
 
@@ -874,25 +940,15 @@ impl SemAn {
                     }
                 }
             }
-            AstNode::StructFieldAddr { var_name, field_name } => {
-                let var = match self.symb_table.get(var_name.clone()) {
-                    Some(v) => v,
-                    None => {
-                        logger.send(LogMessage::new(
-                            LogLevel::Error(ErrKind::UndeclaredVar(var_name.clone())),
-                            line,
-                            self.fname.clone()
-                        ));
-                        return exprdat;
-                    }
-                };
+            AstNode::StructFieldAddr { val, field_name } => {
+                let expr = self.analyze_expr(val, &logger.clone());
 
-                let struct_name = match var.1.ftype {
-                    FType::Struct(st) | FType::StructPtr(st) => st.to_owned(),
-other => {
+                let struct_name = match expr.ftype {
+                    FType::Struct(st) | FType::StructPtr(st) | FType::StructHeapPtr(st) 
+                        => st.to_owned(),
+                    other => {
                         logger.send(LogMessage::new(
                             LogLevel::Error(ErrKind::NonStructField(
-                                var_name.clone(),
                                 other
                             )),
                             line,
@@ -961,11 +1017,15 @@ other => {
 #[derive(Debug)]
 pub struct ExprDat {
     ftype: FType,
+    has_returned: bool,
 }
 
 impl ExprDat {
     pub fn new(ftype: FType) -> ExprDat {
-        ExprDat { ftype: ftype }
+        ExprDat { 
+            ftype: ftype,
+            has_returned: false,
+        }
     }
 }
 
@@ -1031,12 +1091,13 @@ impl StructInfo {
 
     fn alignment_of(ft: FType) -> usize {
         match ft {
-            FType::strconst | FType::int | FType::uint | FType::double => {
+            FType::strconst | FType::int | FType::uint | FType::double 
+                | FType::StructPtr(_) | FType::StructHeapPtr(_) => {
                 8
             }
             FType::i32 | FType::u32 | FType::single => 4,
             FType::Array(el_ft_idx, ctr, _) => {
-                let el_ft = idx_to_ftype(el_ft_idx).unwrap();
+                let el_ft = FType::from_idx(el_ft_idx).unwrap();
                 Self::alignment_of(el_ft)
             }
             FType::Struct(usize) => {

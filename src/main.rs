@@ -41,8 +41,14 @@ struct InputFlags {
     #[arg(short, long)]
     verbose: bool,
 
+    // a bit less type checks
     #[arg(long = "fpermissive")]
     permissive: bool,
+
+    // Runs in check-only mode 
+    // (so binaries wouldnt be generated)
+    #[arg(long = "check")]
+    check: bool,
 }
 
 // prepend home here 
@@ -85,7 +91,6 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     let (log_resp, resp_get) = mpsc::channel::<LogMessage>();
     let handle = spawn_logger_thread(log_rx, log_resp);
 
-
     let mut asts      = Vec::new();
     let mut func_tabs = Vec::new();
     let mut struct_tabs = Vec::new();
@@ -113,7 +118,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     let mut fin_msg = LogMessage::from_query(LoggerQuery::Stop);
     let int_msg = LogMessage::from_query(LoggerQuery::Status);
 
-    // TODO: extract these into a function
+    // TODO: extract this into a function
     for (idx, ast) in asts.drain(..).enumerate() {
         let fname = files[idx].clone(); // todo: map asts with filenames instead
 
@@ -146,6 +151,11 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
             Err(e) => {
             }
         }
+
+        if flags.check {
+            continue;
+        }
+
         let matched_overloads = seman.matched_overloads.clone();
 
         let mut gene = cgen::CodeGen::new(ast, matched_overloads, 
@@ -171,10 +181,12 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         nat_fnames.push(nname);
     }
 
-    let strs = nat_fnames.iter()
-        .map(String::as_str)
-        .collect();
-    link(&strs, &out, &ldflags)?;
+    if !flags.check {
+        let strs = nat_fnames.iter()
+            .map(String::as_str)
+            .collect();
+        link(&strs, &out, &ldflags)?;
+    }
 
     log_tx.send(fin_msg);
 

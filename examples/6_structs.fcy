@@ -32,7 +32,9 @@ func print_both_pass(v: s_second) {
 func main() {
     // This assignment (with struct {..})
     // will place structure on stack
-    let test: *second = second {
+    // and the `s_` prefix before typename means
+    // struct on stack by value
+    let test: s_second = second {
         a: 5;
         b: 4;
         c: 11; 
@@ -40,7 +42,7 @@ func main() {
 
     test.c = 12;
 
-    print_both(test); // would change b to 289 btw
+    print_both(&test); // would change b to 289 btw
 
     print_both_pass(test);
 

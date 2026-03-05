@@ -1,9 +1,9 @@
-use std::{collections::HashMap, fmt::format, rc::Rc};
+use std::{collections::HashMap, fmt::format, mem::swap, rc::Rc};
 
 use crate::{
     fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, CmpOp, FuncArg, FuncTable, UnaryOp},
     lexer::lexer::Intrinsic,
-    seman::seman::{self as sem, FSymbol, FType, OverloadTable, SemAn, StructTable, SymbolTable, VarPosition, ftype_to_idx, idx_to_ftype},
+    seman::seman::{self as sem, FSymbol, FType, OverloadTable, SemAn, StructTable, SymbolTable, VarPosition},
 }; // AstNode;
 use fparse::AstNode;
 use qbe::{Block, DataDef, DataItem, Function, Instr, Linkage, Module, Type, TypeDef, Value};
@@ -45,6 +45,7 @@ pub struct CodeGen {
     matched_overloads: OverloadTable, // call idx -> overload idx, ret type
     first: bool, // is cur file first
     need_addr: bool,
+    expected_type: FType,
 }
 
 impl CodeGen {
@@ -69,6 +70,7 @@ impl CodeGen {
             funcs: HashMap::new(),
             first: first,
             need_addr: false,
+            expected_type: FType::none,
         }
     }
 
@@ -156,8 +158,14 @@ impl CodeGen {
                 let mut args_qbe = Vec::new();
 
                 for (idx, arg) in args.iter().enumerate() {
-                    let mut gd = self.gen_expr(arg.node.clone());
+                    self.expected_type = func_dat.args
+                        .get(idx)
+                        .unwrap()
+                        .ftype;
 
+                    let mut gd = self.gen_expr(arg.node.clone());
+                    self.expected_type = FType::none;
+                    
                     let mut qtype = Self::match_ft_qbf(gd.ftype);
                     if let Some(a) = func_dat.args.get(idx) {
                         match a.ftype {
@@ -181,7 +189,6 @@ impl CodeGen {
                         })
                     ));
                 }
-
                 
 
                 let mut has_rn = false;
@@ -242,7 +249,9 @@ impl CodeGen {
             }
             AstNode::Assignment { name, val, ft } => {
                 self.need_addr = true;
+                self.expected_type = ft;
                 let rdat = self.gen_expr(*val);
+                self.expected_type = FType::none;
                 self.need_addr = false;
 
                 let val = rdat.val.unwrap_or_else(|| {
@@ -373,7 +382,7 @@ impl CodeGen {
                 }
 
                 res.ftype = FType::Array(
-                    ftype_to_idx(&ft),
+                    ft.to_idx(),
                     vals.len(), 
                     0
                 );
@@ -412,7 +421,7 @@ impl CodeGen {
 
                 let el_ftype = match symb.1.ftype {
                     FType::Array(el, _, _) => {
-                        idx_to_ftype(el).unwrap()
+                        FType::from_idx(el).unwrap()
                     }
                     other => unreachable!()
                 };
@@ -491,6 +500,33 @@ impl CodeGen {
                         ));
                         res.val = Some(tmp);
                         res.ftype = gd.ftype;
+                    }
+                    UnaryOp::AddressOf => {
+                        // doesnt actually do anything since 
+                        // struct is already a pointer
+                        let name = match &gd.val {
+                            Some(Value::Temporary(name)) | Some(Value::Global(name))
+                                => name.clone(),
+                            other => panic!("Expected var, found {:?}", other)
+                        };
+
+                        res.ftype = gd.ftype;
+                        res.val = gd.val;
+                    }
+                    UnaryOp::Deref => {
+                        let qtype_exp = Self::match_ft_qbf_t(
+                            self.expected_type, 
+                            true
+                        );
+                        self.fbuild.assign_instr(
+                            tmp.clone(),
+                            qtype_exp.clone(),
+                            Instr::Load(
+                                qtype_exp,
+                                gd.val.unwrap()
+                            )
+                        );
+                        res.ftype = self.expected_type;
                     }
                     other => todo!("unary op {:#?}", other)
                 }
@@ -575,7 +611,10 @@ impl CodeGen {
                 }
             }
             AstNode::Intrinsic { intr, val } => {
+                let need_addr_old = self.need_addr;
+                self.need_addr = false;
                 let gend = self.gen_expr(*val);
+                self.need_addr = need_addr_old;
                 
                 let ind = self.gen_intrinsic(intr, gend);
                 res.ftype = ind.ftype;
@@ -591,10 +630,24 @@ impl CodeGen {
                 res.val = Some(Value::Temporary(var.clone()));
             }
             AstNode::VariableCast { name, target_type } => {
+                let tmp = self.new_temp();
                 let symb = self.symb_table.get(name.clone()).unwrap();
 
+                match (symb.1.ftype, target_type) {
+                    (FType::Ptr, FType::StructPtr(_)) | (FType::Ptr, FType::Struct(_)) |
+                        (FType::Ptr, FType::StructHeapPtr(_)) => {
+                        self.fbuild.assign_instr(
+                            tmp.clone(),
+                            Type::Long,
+                            Instr::Copy(Value::Temporary(name.clone()))
+                        );
+                        res.val = Some(tmp.clone());
+                        return res;
+                    }
+                    other => {}
+                };
+
                 let ft_src = symb.1.ftype;
-                let tmp = self.new_temp();
                 
                 let conv_instr = Self::get_conv(
                     ft_src, 
@@ -620,9 +673,14 @@ impl CodeGen {
             }
             AstNode::ExprCast { expr, target_type } => {
                 let mut gd = self.gen_expr(*expr);
-                res.instrs.extend(gd.instrs.extract_if(.., |x| {
-                    matches!(x, Instr::Assign(_, _, _))
-                }));
+                match (gd.ftype, target_type) {
+                    (FType::Ptr, FType::StructPtr(_)) | (FType::Ptr, FType::Struct(_)) |
+                        (FType::Ptr, FType::StructHeapPtr(_)) => {
+                        res.val = gd.val.clone();
+                        return res;
+                    }
+                    other => {}
+                };
                 let tmp = self.new_temp();
 
                 let conv = Self::get_conv(
@@ -652,9 +710,12 @@ impl CodeGen {
                 let leftdat = self.gen_expr(*name);
                 self.need_addr = false;
                 let val = leftdat.val.expect(
-                        "expected value for left side",
-                    );
+                    "expected value for left side",
+                );
+
+                self.expected_type = leftdat.ftype;
                 let gd = self.gen_expr(newval.node);
+                self.expected_type = FType::none;
 
                 match leftdat.ftype {
                     FType::Array(el_ft_idx, _, _) if idx.is_some() => {
@@ -662,7 +723,7 @@ impl CodeGen {
                         let el_idx_gd = self.gen_expr(el_idx_node.node);
 
                         let offset_tmp = self.new_temp();
-                        let el_ft = idx_to_ftype(el_ft_idx).unwrap();
+                        let el_ft = FType::from_idx(el_ft_idx).unwrap();
                         let el_size = Self::sizeof(el_ft);
 
                         self.fbuild.assign_instr(
@@ -944,14 +1005,15 @@ impl CodeGen {
                     ));
                 }
             }
-            AstNode::StructFieldAddr { var_name, field_name } => {
+            AstNode::StructFieldAddr { val, field_name } => {
                 res.by_addr = true;
+
+                let gd = self.gen_expr(val.node);
                 let tmp = self.new_temp();
-                let struct_name = match self.symb_table.get(var_name.clone())
-                    .expect("Internal: can't find variable")
-                    .1.ftype {
-                    FType::Struct(st) | FType::StructPtr(st) => st.to_owned(),
-                    other => panic!("Unexpected non-struct type {:?}", other)
+                
+                let struct_name = match gd.ftype.if_struct() {
+                    Some(s) => s.to_owned(),
+                    None => panic!("Unexpected non-struct type {:?}", gd.ftype)
                 };
 
                 let struct_info = self.struct_tab.tab.get(&struct_name)
@@ -965,7 +1027,7 @@ impl CodeGen {
                     tmp.clone(),
                     Type::Long,
                     Instr::Add(
-                        Value::Temporary(var_name.clone()),
+                        gd.val.clone().expect("Internal: expected value"),
                         Value::Const(field_info.offset as u64)
                     )
                 );
@@ -1005,7 +1067,7 @@ impl CodeGen {
         let mut args_qbe = Vec::new();
         for arg in args {
             args_qbe.push((
-                Self::match_ft_qbf(arg.ftype),
+                Self::match_ft_qbf_t(arg.ftype, true),
                 Value::Temporary(arg.name.into())
             ));
         }
@@ -1118,8 +1180,8 @@ impl CodeGen {
             (FType::single, FType::double) => {
                 Instr::Exts(src)
             }
-            (FType::single, any) | (any, FType::single) | (FType::double, any) |
-                (any, FType::double) if ft_src.size() == target_type.size() => {
+            (FType::single, other) | (other, FType::single) | (FType::double, other) |
+                (other, FType::double) if ft_src.size() == target_type.size() => {
                 Instr::Cast(src)
             }
             (FType::ubyte, FType::uint) | (FType::ibyte, FType::uint) => {
@@ -1190,13 +1252,14 @@ impl CodeGen {
             FType::single             => Type::Single,
             FType::u32 | FType::i32   => Type::Word,
             FType::Array(el, _, _)    => {
-                Self::match_ft_qbf(idx_to_ftype(el).unwrap())
+                Self::match_ft_qbf(FType::from_idx(el).unwrap())
             },
-            FType::strconst | FType::StructPtr(_) => Type::Long, // ptr 
+            FType::strconst | FType::StructPtr(_)
+                | FType::StructHeapPtr(_) | FType::Ptr => Type::Long, // ptr 
             FType::bool | FType::ubyte | FType::ibyte if straight 
                 => Type::Byte,
             FType::bool | FType::ubyte | FType::ibyte => Type::Word,
-            FType::Struct(s) => Type::Aggregate(
+            FType::Struct(s) if straight => Type::Aggregate(
                 TypeDef { 
                     name: s.to_owned().replace("::", "_"), 
                     // other fields doesnt matter 
@@ -1204,6 +1267,7 @@ impl CodeGen {
                     items: Vec::new()
                 }
             ),
+            FType::Struct(s) => Type::Long,
             other => todo!("Match ft qbf for {:?}", ft)
         }
     }
@@ -1309,7 +1373,7 @@ impl CodeGen {
                                         )
                                     );
                             }
-                            other => unimplemented!()
+                            other => unimplemented!("{:?}", other)
                         }
                     }
                     Type::Double | Type::Single => {

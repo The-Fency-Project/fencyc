@@ -21,7 +21,7 @@ extern func DrawFPS(posX: int, posY: int);
 func main() {
     InitWindow(640, 480, "Fency raylib!");
     SetTargetFPS(60);
-    let black: *Color = Color {
+    let black: s_Color = Color {
         r: 0ub;
         g: 255ub;
         b: 0ub;

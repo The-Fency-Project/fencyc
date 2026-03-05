@@ -1,17 +1,18 @@
 ## Current:
-- heap structs
+- embedded structs
+- destructors
 - pub/priv structs
-- struct methods
-- ability to compile as library
-- `6_structs` example
 ### Future:
 Small:
+- ability to compile fency code as library
 - iterators for `for`
 - default args values in funcs
 - auto type inference for lets
 - make error if trying to override func that wasnt declared
 - importing libs from `~/.fency/libs`
+- function pointers
+- block return
 Major:
-- structures
+- structures methods
 - traits
 - github wiki

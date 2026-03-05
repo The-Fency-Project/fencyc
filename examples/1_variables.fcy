@@ -3,6 +3,11 @@ func main() {
     let ivar: int = -5; // declaring signed integer (64 bit)
     let fvar: double = 3.14; // declaring floating point variable (double precision)
 
+    let iwv: i32 = -15i; // signed 32bit  integer 
+    let uwv: u32 = 16uw; // unsigned 32 bit integer 
+    let ubv: ubyte = 255ub; // unsigned byte
+    let ibv: ibyte = -120ib; // signed byte
+
     let fvar_sq: double = fvar * fvar;
     let ivar_negated: int = -ivar;
 

@@ -1,6 +1,5 @@
 struct first {
-    a: ubyte
-    b: int 
+    ptr: *second
 }
 
 struct second {
@@ -11,30 +10,23 @@ struct second {
 
 // Pass struct by pointer 
 // So you may modify original struct here
-func print_both(s: *second) {
+func print_both(s: *second) -> *second {
     printintrin s.a;
     s.b = 289;
+    printintrin s.b;
+
+    return s;
+}
+
+extern func malloc(n: uint) -> ptr;
+func print_h(s: h_second) {
     printintrin s.b;
 
     return;
 }
 
-// Pass struct as value (copy)
-// Basically like in C
-func print_both_pass(v: s_second) {
-    printintrin v.c;
-
-    return;
-}
-
 func main() {
-    let iwv: i32 = -15i;
-    let uwv: u32 = 16uw;
-    let ubv: ubyte = 255ub;
-    let ibv: ibyte = -120ib;
-    let ext: uint = ubv$uint;
-
-    let test: *second = second {
+    let test: s_second = second {
         a: 5;
         b: 4;
         c: 11; 
@@ -42,13 +34,21 @@ func main() {
 
     test.c = 12;
 
-    print_both(test); // would change b to 289 btw
+    print_both(&test); // would change b to 289 btw
 
-    print_both_pass(test);
+    let test2: *first = &first {
+        ptr: &test;
+    };
 
-    printintrin test.a;
-    printintrin test.b;
-    printintrin test.c;
+    printintrin test2.ptr.a;
+
+    // TODO: sizeof intrin
+    let test3_ptr: ptr = malloc(24u);
+    let test3: h_second = test3_ptr$h_second;
+    test3.a = 15;
+    test3.b = 16;
+    test3.c = 17;
+    print_h(test3);
 
     return;
 }

@@ -103,10 +103,12 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                         ('i', any) => {
                             ftyp = FType::i32;
                         }
-                        other => { // int64, no suffix
+                        other if other.0.is_numeric() => { 
+                            // int64, no suffix
                             num_st.push(chn);
                             continue;
                         }
+                        other => {}
                     }
                 };
 
@@ -252,7 +254,10 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                 };
             },
             ' ' | '\t' => {chars.next();},
-            '\n' => {line += 1; chars.next();}
+            '\n' => {
+                line += 1; 
+                chars.next();
+            }
             'a'..='z' | 'A'..='Z' | '_' => {
                 let mut idn = String::new();
                 while let Some(ic) = chars.peek() {

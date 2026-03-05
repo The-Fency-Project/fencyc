@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet}, fs::File, io::{self, BufRead, BufReader}, mem};
 
-use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::{FType, StructTable, ftype_to_idx}};
+use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::{FType, StructTable}};
 
 pub struct FcParser {
     tokens: Vec<Token>,
@@ -88,6 +88,7 @@ impl FcParser {
         AstRoot::new(left, line_n)
     }
 
+    const PREFIX_BP: u8 = 22;
     fn parse_prefix(&mut self) -> AstNode {
         let token: &Token = &self.consume().expect("unexpected EOF").clone();
         let line_n: usize = token.line;
@@ -144,12 +145,22 @@ impl FcParser {
 
             Tok::Minus => AstNode::UnaryOp {
                 op: UnaryOp::Negate,
-                expr: Box::new(self.parse_expr(255).node),
+                expr: Box::new(self.parse_expr(Self::PREFIX_BP).node),
             },
 
             Tok::Tilde => AstNode::UnaryOp { 
                 op: UnaryOp::Not, 
-                expr: Box::new(self.parse_expr(255).node) 
+                expr: Box::new(self.parse_expr(Self::PREFIX_BP).node) 
+            },
+
+            Tok::Ampersand => AstNode::UnaryOp { 
+                op: UnaryOp::AddressOf, 
+                expr: Box::new(self.parse_expr(Self::PREFIX_BP).node) 
+            },
+
+            Tok::Star => AstNode::UnaryOp { 
+                op: UnaryOp::Deref, 
+                expr: Box::new(self.parse_expr(Self::PREFIX_BP).node) 
             },
 
             Tok::LPar => {
@@ -158,13 +169,8 @@ impl FcParser {
                 if let Some(t) = self.peek() {
                     if t.tok == Tok::DollarSign {
                         self.consume();
-                        let typename = self.expect_idt().unwrap_or_else(|| {
-                            panic!("{}: expected typename", self.line);
-                        }); 
-                        let tgt_ftype = match_ftype(&typename, &mut self.nm_interner)
-                            .unwrap_or_else(|| {
-                            panic!("{}: unknown type {}", self.line, &typename);
-});
+                        
+                        let tgt_ftype = self.parse_ftype();
 
                         return AstNode::ExprCast { 
                             expr: Box::new(expr.node), 
@@ -213,6 +219,7 @@ impl FcParser {
                 let idt_cl                            = idt.clone();
                 let mut el_idx: Option<Box<AstRoot>>  = None;
                 let mut buf: Vec<AstNode>             = Vec::new();
+                buf.push(AstNode::Variable(idt.clone()));
 
                 while let Some(nexttok) = self.peek() {
                     match &nexttok.tok.clone() {
@@ -221,7 +228,7 @@ impl FcParser {
                         }
                         Tok::Equals => {
                             self.consume();
-                            let nameval = Box::new(buf.get(0).cloned()
+                            let nameval = Box::new(buf.last().cloned()
                                     .unwrap_or(AstNode::Variable(idt_cl)));
                             return AstNode::Reassignment { 
                                 name: nameval, 
@@ -266,21 +273,7 @@ impl FcParser {
                         }
                         Tok::DollarSign => { // variable cast
                             self.consume();
-                            let type_token = self.consume().unwrap_or_else(|| {
-                                panic!("\n{}: expected typename for {}", line_n, idt);
-                            });
-                            let type_idt = match &type_token.tok {
-                                Tok::Identifier(i) => i.clone(),
-                                other => {
-                                    panic!("\n{}: expected typename, found {:?}", 
-                                        line_n, other);
-                                }
-                            };
-
-                            let ftype = match_ftype(&type_idt, &mut self.nm_interner)
-                                .unwrap_or_else(|| {
-                                panic!("\n{}: {} is invalid type", line_n, type_idt);
-                            });
+                            let ftype = self.parse_ftype();
 
                             return AstNode::VariableCast {
                                 name: idt.to_owned(), 
@@ -312,8 +305,13 @@ impl FcParser {
                             self.consume();
                             let field_name = self.expect_idt()
                                 .expect(&format!("{}: expected field name", self.line));
+                            let astn = buf.last().expect(&format!(
+                                    "{}: Expected value of fieldaddr",
+                                    self.line,
+                                )).clone();
+                            let astr = AstRoot::new(astn, self.line);
                             buf.push(AstNode::StructFieldAddr { 
-                                var_name: idt.clone(), 
+                                val: Box::new(astr), 
                                 field_name 
                             });
                         }
@@ -321,7 +319,7 @@ impl FcParser {
                     }
                 }
 
-                match buf.get(0) {
+                match buf.last() {
                     Some(ast_r) => {return ast_r.clone();},
                     None => {
                         return AstNode::Variable(idt.clone());
@@ -500,7 +498,7 @@ impl FcParser {
                 let cl = v.clone();
                 match &cl.tok {
                     Tok::Identifier(idt) => {
-                        if idt.starts_with("s_") {
+                        if idt.starts_with("s_") || idt.starts_with("h_") {
                             return self.parse_path_type(idt.to_owned(), 2); 
                         } 
                     }
@@ -512,7 +510,8 @@ impl FcParser {
                         return self.parse_path_type(
                             format!("ptr_{}", idt), 
                             4
-                        ); 
+                        );
+                         
                     }
                     other => {
                     }
@@ -531,7 +530,7 @@ impl FcParser {
                     self.expect(Tok::RBr);
                     let ft = match_ftype(&name, &mut self.nm_interner)
                         .unwrap_or_else(|| {panic!("{}: unknown type {}", self.line, name)});
-                    ftype = FType::Array(ftype_to_idx(&ft), 0, 0);
+                    ftype = FType::Array(ft.to_idx(), 0, 0);
                 } 
                 return ftype;
             }
@@ -852,7 +851,7 @@ impl FcParser {
                         .unwrap_or_else(|| {
                         panic!("{}: unknown type {}", self.line, arg_typename)}
                     );
-                    let ft = FType::Array(ftype_to_idx(&el_ft), 0, 0);
+                    let ft = FType::Array(el_ft.to_idx(), 0, 0);
 
                     res.push(FuncArg::new(arg_name, ft));
                     self.expect(Tok::RBr);
@@ -860,47 +859,63 @@ impl FcParser {
                 }
             };
 
-            let mut is_ptr = false;
-            if self.peek_is(Tok::Star) {
-                self.consume();
-                is_ptr = true;
-            }
-
-            let arg_typename_start = self.expect_idt().unwrap_or_else(|| {
-                panic!("{}: expected typename for arg", self.line)}
-            );
-
-            let arg_typename = match (arg_typename_start.starts_with("s_"), is_ptr) {
-                (true, false) => {
-                    let path_start = arg_typename_start;
-                    let path = self.parse_path(path_start);
-                    format!("{}", path
-                        .prep_module_at(&self.curmod, 2)
-                        .path_to_string())
-                } 
-                (false, true) => {
-                    let path = self.parse_path(arg_typename_start);
-                    format!("ptr_{}", path
-                        .prep_module_at(&self.curmod, 0)
-                        .path_to_string())
-                }
-                (false, false) => {
-                    arg_typename_start
-                }
-                (true, true) => {
-                    unreachable!()
-                }
-            };
-
-            let ft = match_ftype(&arg_typename, &mut self.nm_interner)
-                .unwrap_or_else(|| {
-                panic!("{}: unknown type {}", self.line, arg_typename)}
-            );
+            let ft = self.parse_ftype(); 
 
             res.push(FuncArg::new(arg_name, ft));
         };
 
         res
+    }
+
+    fn parse_ftype(&mut self) -> FType {
+        let mut is_ptr = false;
+        if self.peek_is(Tok::Star) {
+            self.consume();
+            is_ptr = true;
+        }
+
+        let arg_typename_start = self.expect_idt().unwrap_or_else(|| {
+            panic!("{}: expected typename for arg", self.line)}
+        );
+
+        let is_h = arg_typename_start.starts_with("h_");
+        let is_s = arg_typename_start.starts_with("s_");
+        let arg_typename = match (is_s, is_ptr, is_h) {
+            (true, false, false) => {
+                let path_start = arg_typename_start;
+                let path = self.parse_path(path_start);
+                format!("{}", path
+                    .prep_module_at(&self.curmod, 2)
+                    .path_to_string())
+            } 
+            (false, true, false) => {
+                let path = self.parse_path(arg_typename_start);
+                format!("ptr_{}", path
+                    .prep_module_at(&self.curmod, 0)
+                    .path_to_string())
+            }
+            (false, false, true) => {
+                let path_start = arg_typename_start;
+                let path = self.parse_path(path_start);
+                format!("{}", path
+                    .prep_module_at(&self.curmod, 2)
+                    .path_to_string())
+
+            }
+            (false, false, false) => {
+                arg_typename_start
+            }
+            other => {
+                unreachable!()
+            }
+        };
+
+        let ft = match_ftype(&arg_typename, &mut self.nm_interner)
+            .unwrap_or_else(|| {
+            panic!("{}: unknown type {}", self.line, arg_typename)}
+        );
+
+        ft
     }
 
     fn parse_func_rettype(&mut self) -> FType {
@@ -910,14 +925,7 @@ impl FcParser {
             }
 
             self.consume();
-            let ftype_name = self.expect_idt().unwrap_or_else( ||
-                {panic!("{}: expected typename for return type", self.line);}
-            );
-
-            match_ftype(&ftype_name, &mut self.nm_interner)
-                .unwrap_or_else(|| 
-                {panic!("{}: invalid typename {}", self.line, &ftype_name);}
-            )
+            self.parse_ftype()
         } else {
             panic!("{}: unexpected EOF while parsing return type", self.line);
         }
@@ -965,10 +973,7 @@ impl FcParser {
                 }
                 Tok::Identifier(idt) => {
                     self.expect(Tok::Colon);
-                    let typename = self.expect_idt()
-                        .expect(&format!("{}: expected tyypename", line));
-                    let ft = match_ftype(&typename, &mut self.nm_interner)
-                        .expect(&format!("{}: unknown type {}", line, typename));
+                    let ft = self.parse_ftype();
                     res.push(AstNode::StructField { 
                         name: idt.clone(), 
                         ftype: ft
@@ -1167,7 +1172,7 @@ pub enum AstNode {
     },
 
     StructFieldAddr {
-        var_name: String,
+        val: Box<AstRoot>,
         field_name: String,
     },
 }
@@ -1237,6 +1242,8 @@ pub enum UnaryOp {
     Negate, 
     Not,
     LogicalNot,
+    AddressOf,
+    Deref,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -1282,12 +1289,22 @@ pub fn match_ftype(lit: &str, interner: &mut NameInterner) -> Option<FType> {
         "i32" => Some(FType::i32),
         "ubyte" => Some(FType::ubyte),
         "ibyte" => Some(FType::ibyte),
+        "ptr" => Some(FType::Ptr),
         other if lit.starts_with("s_") => Some(
             FType::Struct(interner.intern(&lit[2..]))
         ),
-        other if lit.starts_with("ptr_") => Some(
-            FType::StructPtr(interner.intern(&lit[4..]))
-        ),
+        other if lit.starts_with("ptr_") => {
+            let slice = &lit[4..];
+            Some(
+                FType::StructPtr(interner.intern(slice))
+            )
+        }
+        other if lit.starts_with("h_") => {
+            let slice = &lit[2..];
+            Some(
+                FType::StructHeapPtr(interner.intern(slice))
+            )
+        }
         other => None,
     }
 }
