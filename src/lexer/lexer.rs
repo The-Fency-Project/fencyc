@@ -327,6 +327,7 @@ pub enum Kword {
     Pub,
     Module,
     Struct,
+    Impl,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -344,9 +345,6 @@ fn match_symb_tok(word: &str) -> Tok {
         "false" => Tok::Keyword(Kword::False),
         "if" => Tok::Keyword(Kword::If),
         "else" => Tok::Keyword(Kword::Else),
-        "printintrin" => Tok::Intrin(Intrinsic::Print),
-        "sizeof" => Tok::Intrin(Intrinsic::Sizeof),
-        "typeof" => Tok::Intrin(Intrinsic::Typeof),
         "while" => Tok::Keyword(Kword::While),
         "for" => Tok::Keyword(Kword::For),
         "in" => Tok::Keyword(Kword::In),
@@ -359,7 +357,13 @@ fn match_symb_tok(word: &str) -> Tok {
         "pub" => Tok::Keyword(Kword::Pub),
         "module" => Tok::Keyword(Kword::Module),
         "struct" => Tok::Keyword(Kword::Struct),
+        "impl" => Tok::Keyword(Kword::Impl),
+
         "_len" => Tok::Intrin(Intrinsic::Len),
+        "printintrin" => Tok::Intrin(Intrinsic::Print),
+        "sizeof" => Tok::Intrin(Intrinsic::Sizeof),
+        "typeof" => Tok::Intrin(Intrinsic::Typeof),
+        
         other => Tok::Identifier(other.to_string()),
     }
 }

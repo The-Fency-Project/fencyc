@@ -333,13 +333,14 @@ impl SemAn {
                     ));
                 };
 
-                match ft {
+                let res_ft = match ft {
                     FType::none => {
-                        logger.send(LogMessage::new(
-                            LogLevel::Error(ErrKind::NoneTypeAssign(name.clone(), rightdat.ftype)),
-                            line,
-                            self.fname.clone()
-                        ));
+                        // logger.send(LogMessage::new(
+                        //     LogLevel::Error(ErrKind::NoneTypeAssign(name.clone(), rightdat.ftype)),
+                        //     line,
+                        //     self.fname.clone()
+                        // ));
+                        rightdat.ftype
                     }
                     ft if ft.if_struct().is_some() => {
                         let name = ft.if_struct().unwrap();
@@ -358,16 +359,17 @@ impl SemAn {
                                 self.fname.clone()
                             ));
                         }
+                        *ft
                     }
-                    other => {}
-                }
+                    other => {*ft}
+                };
 
-                match (*ft, rightdat.ftype) {
+                match (res_ft, rightdat.ftype) {
                     //// Array(usize, usize, usize) = 9, // typeid, count, arridx
                     (FType::Array(fti1, c1, _), FType::Array(fti2, c2, _)) => {
                        if fti1 != fti2 {
                            logger.send(LogMessage::new(
-                                LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)),
+                                LogLevel::Error(ErrKind::MismatchedTypes(res_ft, rightdat.ftype)),
                                 line,
                                 self.fname.clone()
                            ));
@@ -376,7 +378,7 @@ impl SemAn {
                     (other1, other2) => {
                         if other1 != other2 {
                             logger.send(LogMessage::new(
-                                LogLevel::Error(ErrKind::MismatchedTypes(*ft, rightdat.ftype)),
+                                LogLevel::Error(ErrKind::MismatchedTypes(res_ft, rightdat.ftype)),
                                 line,
                                 self.fname.clone()
                             ));
@@ -385,8 +387,8 @@ impl SemAn {
                 }
 
                 self.symb_table
-                    .newsymb(FSymbol::new(name.to_owned(), VarPosition::None, *ft));
-                exprdat.ftype = *ft;
+                    .newsymb(FSymbol::new(name.to_owned(), VarPosition::None, res_ft));
+                exprdat.ftype = res_ft;
             }
             AstNode::Int(iv) => {
                 exprdat.ftype = FType::int;
@@ -790,6 +792,8 @@ impl SemAn {
                 args,
                 idx,
             } => {
+                println!("Func name: {}, idx: {}", func_name.path_to_string(),
+                    idx);
                 let func_dat_vec = match self.func_table.get_func(
                     &func_name.path_to_string()) {
                     Some(v) => v.clone(),
@@ -1079,6 +1083,14 @@ impl SemAn {
                 };
 
                 exprdat.ftype = field_info.ftype;
+            }
+            AstNode::StructImpl { name, body } => {
+                let old_mod = self.module.clone();
+                self.module = name.path_to_string();
+
+                let ed = self.analyze_expr(&*body, &logger.clone());
+
+                self.module = old_mod;
             }
             _ => {}
         }

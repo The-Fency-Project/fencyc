@@ -342,7 +342,7 @@ impl FcParser {
                 if let Some(t) = self.peek() {
                     if t.tok == Tok::Colon {
                         self.consume();
-                        ftype = match self.parse_ftype_assignm() {
+                        ftype = match self.parse_ftype() {
                             FType::none => panic!("{}: typename is incorrect", self.line),
                             other => other
                         };
@@ -496,6 +496,12 @@ impl FcParser {
                 res
             }
 
+            Tok::Keyword(Kword::Impl) => {
+                let res = self.parse_impl();
+                // TODO: push methods
+                res
+            }
+
             other => {
                 if Some(other) == self.allowed_tok.as_ref() {
                     return self.parse_expr(255).node;
@@ -503,61 +509,6 @@ impl FcParser {
                 panic!("{}: FCparse unexpected token `{:?}`", line_n, other);
             }
         }
-    }
-
-    fn parse_ftype_assignm(&mut self) -> FType {
-        let mut ftype = FType::none;
-
-        let ftype_tok = match self.consume() {
-            Some(v) => {
-                let cl = v.clone();
-                match &cl.tok {
-                    Tok::Identifier(idt) => {
-                        if idt.starts_with("s_") || idt.starts_with("h_") {
-                            return self.parse_path_type(idt.to_owned(), 2); 
-                        } 
-                    }
-                    Tok::Star => {
-                        let idt = self.expect_idt().expect(&format!(
-                            "{}: expected typename after asterrisk",
-                            self.line
-                        ));
-                        return self.parse_path_type(
-                            format!("ptr_{}", idt), 
-                            4
-                        );
-                         
-                    }
-                    other => {
-                    }
-                }
-                cl
-            },
-            None => {
-                return ftype;
-            }
-        };
-        let ftype_name = match &ftype_tok.tok {
-            Tok::Identifier(nm) => nm,
-            Tok::LBr => {
-                let ftn = self.expect_idt();
-                if let Some(name) = ftn {
-                    self.expect(Tok::RBr);
-                    let ft = match_ftype(&name, &mut self.nm_interner)
-                        .unwrap_or_else(|| {panic!("{}: unknown type {}", self.line, name)});
-                    ftype = FType::Array(ft.to_idx(), 0, 0);
-                } 
-                return ftype;
-            }
-            _ => {
-                    return ftype;
-                }
-            };
-        if let Some(ft) = match_ftype(&ftype_name, &mut self.nm_interner) {
-            ftype = ft;
-        };
-
-        ftype
     }
 
     fn parse_path_type(&mut self, idt: String, idx: usize) -> FType {
@@ -884,9 +835,13 @@ impl FcParser {
 
     fn parse_ftype(&mut self) -> FType {
         let mut is_ptr = false;
+        let mut is_arr = false;
         if self.peek_is(Tok::Star) {
             self.consume();
             is_ptr = true;
+        } else if self.peek_is(Tok::LBr) {
+            self.consume();
+            is_arr = true;
         }
 
         let arg_typename_start = self.expect_idt().unwrap_or_else(|| {
@@ -930,7 +885,12 @@ impl FcParser {
             panic!("{}: unknown type {}", self.line, arg_typename)}
         );
 
-        ft
+        if is_arr {
+            self.expect(Tok::RBr);
+            FType::Array(ft.to_idx(), 0, 0)
+        } else {
+            ft
+        }
     }
 
     fn parse_func_rettype(&mut self) -> FType {
@@ -1042,6 +1002,30 @@ impl FcParser {
         }
 
         res
+    }
+
+    fn parse_impl(&mut self) -> AstNode {
+        let name_start = self.expect_idt().unwrap_or_else(|| {
+            panic!("{}: Expected function name", self.line)
+        });
+        let name_start_mod = format!("{}::{}", self.curmod, name_start);
+
+        let name = self.parse_path(name_start_mod);
+        let st_name = name.path_to_string();
+
+        self.prev_flags.insert(ParseFlags::StructImpl(st_name.clone()));
+
+        let old_mod = self.curmod.clone();
+        self.curmod = st_name.clone();
+        let body = self.parse_expr(0);
+        self.curmod = old_mod;
+        
+        self.prev_flags.remove(&ParseFlags::StructImpl(st_name));
+
+        AstNode::StructImpl {
+            name: Box::new(name),
+            body: Box::new(body),
+        }
     }
 }
 
@@ -1191,6 +1175,12 @@ pub enum AstNode {
         val: Box<AstRoot>,
         field_name: String,
     },
+
+
+    StructImpl {
+        name: Box<AstNode>,
+        body: Box<AstRoot>,
+    },
 }
 
 impl AstNode {
@@ -1225,16 +1215,34 @@ impl AstNode {
 
     pub fn prep_module_at(&self, module: &str, idx: usize) -> AstNode {
         let mut st = self.path_to_string();
-        match st.contains("::") {
-            true => {},
-            false => {
-                st.insert_str(idx, 
-                    &format!("{}::", module)
-                ); 
+
+        let (unprefixed, pref) = remove_struct_pref(&st);
+        if module.ends_with(&unprefixed) {
+            st = format!("{}{}", pref, module.to_owned());
+        } else {
+            match st.contains("::") {
+                true => {},
+                false => {
+                    st.insert_str(idx, 
+                        &format!("{}::", module)
+                    ); 
+                }
             }
         }
         Self::string_to_path(&st)
     }
+}
+
+pub fn remove_struct_pref(s: &str) -> (String, String) {
+    let prefixes = ["h_", "s_", "ptr_"];
+    
+    for prefix in prefixes {
+        if s.starts_with(prefix) {
+            return (s[prefix.len()..].to_string(), prefix.to_owned());
+        }
+    }
+    
+    (s.to_string(), String::new())
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -1272,9 +1280,10 @@ pub enum CmpOp {
     Ne, // !=
 }
 
-#[derive(Debug, Clone, PartialEq, Copy, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParseFlags {
     Public,
+    StructImpl(String),
 }
 
 /// for more memory efficiency

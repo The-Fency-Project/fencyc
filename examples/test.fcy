@@ -1,45 +1,23 @@
-struct first {
-    ptr: *second
+pub extern func malloc(n: uint) -> ptr;
+
+struct Person {
+    name: str 
 }
 
-struct second {
-    a: int
-    b: int
-    c: int
-}
-
-extern func malloc(n: uint) -> ptr;
-
-func abc(t: *etc::third) {
-    return;
-}
-
-func print_h(s: h_second) {
-    printintrin s.b;
-
-    return;
+impl Person {
+    pub func new_person(name: str) -> h_Person {
+        let s   = sizeof @s_Person;
+        let pt  = main::malloc(s);
+        let res = pt$h_Person;
+        res.name = name;
+        return res;
+    }
 }
 
 func main() {
-    let test: s_second = second {
-        a: 5;
-        b: 4;
-        c: 11; 
-    };
+    let p = main::Person::new_person("John");
 
-    let test2: *first = &first {
-        ptr: &test;
-    };
-
-    let len: uint = sizeof @s_second;
-    let test3_ptr: ptr = malloc(len);
-    let test3: h_second = test3_ptr$h_second;
-    
-    test3.a = 15;
-    test3.b = 16;
-    test3.c = 17;
-
-    print_h(test3);
+    printintrin p.name;
 
     return;
 }

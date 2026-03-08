@@ -261,22 +261,22 @@ impl CodeGen {
                 
                 let res_ft = match rdat.ftype {
                     FType::none | FType::nil => ft,
-                    other => other.clone()
+                    other => other
                 };
+                res.ftype = res_ft;
 
                 let mut symb = FSymbol::new(
                     name.clone(), 
                     VarPosition::None, // obsolete, TODO: delete  
                     res_ft
                 );
-                res.ftype = res_ft;
 
                 self.symb_table.newsymb(symb);
 
                 self.fbuild.add_instr(
                     Instr::Assign(
                         Value::Temporary(name), 
-                        Self::match_ft_qbf(ft), 
+                        Self::match_ft_qbf(res_ft), 
                         Box::new(Instr::Copy(val))
                     )
                 );
@@ -299,6 +299,11 @@ impl CodeGen {
                 res.val = Some(val);
                 res.qtype = Some(Type::Double);
                 res.ftype = FType::double;
+            }
+            AstNode::Single(sv) => {
+                let val = Value::float(sv);
+                res.val = Some(val);
+                res.ftype = FType::single;
             }
             AstNode::boolVal(bv) => {
                 let val = Value::Const(bv as u64);
@@ -637,6 +642,7 @@ impl CodeGen {
                 res.val = Some(Value::Temporary(var.clone()));
             }
             AstNode::VariableCast { name, target_type } => {
+                res.ftype = target_type;
                 let tmp = self.new_temp();
                 let symb = self.symb_table.get(name.clone()).unwrap();
 
@@ -680,6 +686,7 @@ impl CodeGen {
                 res.val = Some(tmp);
             }
             AstNode::ExprCast { expr, target_type } => {
+                res.ftype = target_type;
                 let mut gd = self.gen_expr(*expr);
                 match (gd.ftype, target_type) {
                     (FType::Ptr, FType::StructPtr(_)) | (FType::Ptr, FType::Struct(_)) |
@@ -1041,11 +1048,13 @@ impl CodeGen {
                     )
                 );
                 if !self.need_addr {
+                    let field_qtype = Self::match_ft_qbf_t(field_info.ftype, true);
+
                     self.fbuild.assign_instr(
                         tmp.clone(),
-                        Type::Long,
+                        field_qtype.clone(),
                         Instr::Load(
-                            Self::match_ft_qbf_t(field_info.ftype, true),
+                            field_qtype,
                             tmp.clone(),
                         )
                     );
@@ -1053,9 +1062,12 @@ impl CodeGen {
                 res.ftype = field_info.ftype;
                 res.val = Some(tmp);
             }
+            AstNode::StructImpl { name, body } => {
+                let gd = self.gen_expr(body.node);
+            }
             AstNode::none => {}
             other => {
-                panic!("can't generate yet for {:?}", other);
+                panic!("can't generate yet for {:#?}", other);
             }
         }
         if let Some(f) = self.fbuild.pop_func() {
@@ -1457,6 +1469,7 @@ impl CodeGen {
                     )
                 );
                 resd.val = Some(tmp);
+                resd.ftype = FType::uint;
             }
             Intrinsic::Typeof => {
                 resd.ftype = rightdat.ftype;

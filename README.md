@@ -1,6 +1,7 @@
 # fencyc
 The Fency programming language compiler - simple and modern language, aimed to be enjoyable.
-Planned to be lightweight and ~~de-appled~~ swift alternative
+Think of this like this: Rust, but without borrow checker pain, simpler C interop,
+overloads and much more.
 
 > [!WARNING]
 > The toolchain is still on very early stages. Best experience would be with 
@@ -38,7 +39,7 @@ install this, also has to be in the PATH.
 See [GNU website](https://gcc.gnu.org/install/) or get the binaries.
 
 > [!NOTE]
-> All the external dependencies binaries has to be in your PATH.
+> All the external dependencies binaries must be in your PATH.
 
 ## Usage
 Make sure everything working:

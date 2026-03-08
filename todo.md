@@ -1,4 +1,6 @@
 ## Current:
+- `self`, `*self`
+- struct destructors 
 ### Future:
 Small:
 - ability to compile fency code as library
