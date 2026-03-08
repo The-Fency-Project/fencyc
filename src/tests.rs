@@ -1,5 +1,6 @@
 use std::process::Command;
-use std::str;
+
+
 
 #[test]
 fn test_variables_example() {

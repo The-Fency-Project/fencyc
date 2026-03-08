@@ -51,9 +51,9 @@ Flags:
 `--fpermissive`: enables permissive mode, which leads to less type system errors, but still warns.
 `-o name`: determines output program name    
 `--ldflags flags`: linker flags, e.g. `--ldflags lm lraylib`, etc.    
-`-t` / `--target`: specify target
-`--list-targets`: list available targets 
-`--ldas`: specify command used for assembling and linking, `gcc` by default
+`-t` / `--target`: specify target     
+`--list-targets`: list available targets     
+`--ldas`: specify command used for assembling and linking, `gcc` by default    
 
 ## Docs
 Soon. For now, consider learning from `examples/` directory in numerical order (1_*, 2_*, ..)

@@ -1,4 +1,4 @@
-use std::{process::exit, sync::mpsc::{Receiver, Sender}, thread::{JoinHandle, spawn}, time::Instant};
+use std::{sync::mpsc::{Receiver, Sender}, thread::{JoinHandle, spawn}, time::Instant};
 
 use colored::Colorize;
 
@@ -41,7 +41,7 @@ impl Logger {
                                 other => todo!("{:?}", other)
                             }
                         }
-                        other => {}
+                        _other => {}
                     }
 
                     println!("In {}:", m.filename);
@@ -62,7 +62,7 @@ impl Logger {
         );
         resp.brk = self.errc > 0;
 
-        let res = tx.send(resp);
+        let _res = tx.send(resp);
     }
 
     pub fn emit(&mut self, l: LogLevel, line: usize) {
@@ -305,6 +305,18 @@ impl Logger {
                         e.g. `pub struct {} {{..}}`",
                         name, help, name)
                     },
+                    ErrKind::NotStructMethod(name, ft) => {
+                        format!("Attempting to call method on non-struct type\n\
+                            {}: {} has type {} but methods could only be called \
+                            for structures",
+                            help, name, ft)
+                    }
+                    ErrKind::NotPubFieldAddr(name) => {
+                        format!("Attempting to address field {} which isnt public\
+                            addressing private field possible only in `impl`\n\
+                            {}: consider doing this field public, e.g. `pub {}: ..`",
+                            name, help, name)
+                    }
                     ErrKind::Internal(e) => {
                         format!("Internal error: {}", e)
                     }
@@ -435,6 +447,8 @@ pub enum ErrKind {
     SizeofNonStruct(FType), // found
     IllegalCast(FType, FType), // from, to
     NotPubStruct(String),
+    NotStructMethod(String, FType), // name, found ftype
+    NotPubFieldAddr(String),
 }
 
 #[derive(Debug, Clone)]

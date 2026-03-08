@@ -1,17 +1,15 @@
-use std::collections::{HashMap, HashSet};
-use std::fmt::{Binary, Display};
+use std::collections::HashMap;
 use std::mem::discriminant;
 use std::sync::mpsc::Sender;
 
 
-use crate::codegen;
-use crate::codegen::codegen::{CodeGen, FuncData};
+use crate::codegen::codegen::CodeGen;
 use crate::fcparse::fcparse::AstNode;
-use crate::fcparse::fcparse::{self as fparse, AstRoot, BinaryOp, FuncArg, 
+use crate::fcparse::fcparse::{AstRoot, BinaryOp, FuncArg, 
     FuncTable, UnaryOp};
 use crate::lex::Intrinsic;
 use crate::logger::logger::{self as log, LogMessage};
-use crate::logger::logger::{ErrKind, LogLevel, Logger, WarnKind};
+use crate::logger::logger::{ErrKind, LogLevel, WarnKind};
 
 #[derive(Debug, Clone)]
 pub struct FSymbol {
@@ -73,7 +71,7 @@ impl Into<qbe::Type> for FType {
             },
             FType::strconst | FType::StructPtr(_) | FType::StructHeapPtr(_) 
                 => qbe::Type::Long, // ptr
-            other => todo!("Match ft qbf for {:?}", self)
+            _other => todo!("Match ft qbf for {:?}", self)
         }
     }
 }
@@ -157,7 +155,7 @@ impl FType {
             FType::heapptr => 6,
             FType::none => 7,
             FType::nil => 8,
-            other => unimplemented!(),
+            _other => unimplemented!(),
             // FType::Array(_, _) => 9, 
         }
     }
@@ -166,7 +164,7 @@ impl FType {
         match self {
             FType::Struct(st) | FType::StructPtr(st) | FType::StructHeapPtr(st) 
                 => Some(st),
-            other => None,
+            _other => None,
         }
     }
 }
@@ -204,7 +202,7 @@ impl SymbolTable {
         self.cur_scope -= 1;
         let mut res: Vec<VarPosition> = Vec::new();
         if let Some(poped) = self.st.pop() {
-            for (key, val) in poped.iter() {
+            for (_key, val) in poped.iter() {
                 res.push(val.cur_reg);
             }
         };
@@ -241,7 +239,7 @@ impl SymbolTable {
     }
 
     pub fn push_funcargs(&mut self, fargs: Vec<FuncArg>) {
-        for (idx, fa) in fargs.iter().enumerate() {
+        for (_idx, fa) in fargs.iter().enumerate() {
             // varposition is obsolete
             let symb = FSymbol::new(fa.name.clone(), VarPosition::None, fa.ftype);
             self.newsymb(symb);
@@ -268,6 +266,7 @@ pub struct SemAn {
     expect_type: FType,                    // for overloads matching and generics (in future)
     struct_tab: StructTable,
     line: usize,
+    in_impl: String,
 }
 
 impl SemAn {
@@ -288,6 +287,7 @@ impl SemAn {
             module: "main".to_owned(),
             struct_tab: struct_tab,
             line: 0,
+            in_impl: String::new(),
         }
     }
 
@@ -361,12 +361,12 @@ impl SemAn {
                         }
                         *ft
                     }
-                    other => {*ft}
+                    _other => {*ft}
                 };
 
                 match (res_ft, rightdat.ftype) {
                     //// Array(usize, usize, usize) = 9, // typeid, count, arridx
-                    (FType::Array(fti1, c1, _), FType::Array(fti2, c2, _)) => {
+                    (FType::Array(fti1, _c1, _), FType::Array(fti2, _c2, _)) => {
                        if fti1 != fti2 {
                            logger.send(LogMessage::new(
                                 LogLevel::Error(ErrKind::MismatchedTypes(res_ft, rightdat.ftype)),
@@ -390,19 +390,19 @@ impl SemAn {
                     .newsymb(FSymbol::new(name.to_owned(), VarPosition::None, res_ft));
                 exprdat.ftype = res_ft;
             }
-            AstNode::Int(iv) => {
+            AstNode::Int(_iv) => {
                 exprdat.ftype = FType::int;
             }
-            AstNode::Uint(uv) => {
+            AstNode::Uint(_uv) => {
                 exprdat.ftype = FType::uint;
             }
-            AstNode::Double(fv) => {
+            AstNode::Double(_fv) => {
                 exprdat.ftype = FType::double;
             }
-            AstNode::boolVal(bv) => {
+            AstNode::boolVal(_bv) => {
                 exprdat.ftype = FType::bool;
             }
-            AstNode::StringLiteral(s) => {
+            AstNode::StringLiteral(_s) => {
                 exprdat.ftype = FType::strconst;
             }
             AstNode::I32(_) => {
@@ -516,7 +516,7 @@ impl SemAn {
                 }
             }
             AstNode::Variable(var) => {
-                if let Some(v) = self.struct_tab.tab.get(var) {
+                if let Some(_v) = self.struct_tab.tab.get(var) {
                     exprdat.ftype = FType::Struct("");
                     return exprdat;
                 }
@@ -617,7 +617,7 @@ impl SemAn {
                     Intrinsic::Sizeof => {
                         exprdat.ftype = FType::uint;
                     }
-                    other => {}
+                    _other => {}
                 }
             }
             AstNode::CodeBlock { exprs } => {
@@ -683,9 +683,9 @@ impl SemAn {
             AstNode::Function {
                 name,
                 args,
-                ret_type,
+                ret_type: _,
                 body,
-                public,
+                public: _,
             } => {
                 let mut override_flag = false;
                 if let Some(v) = &self.parsing_func {
@@ -728,7 +728,7 @@ impl SemAn {
                                 ));
                             }
                         }
-                        other => {}
+                        _other => {}
                     }
                 }
 
@@ -752,9 +752,9 @@ impl SemAn {
             AstNode::ExternedFunc {
                 name,
                 args,
-                ret_type,
-                public,
-                real_name,
+                ret_type: _,
+                public: _,
+                real_name: _,
             } => {
                 let mut override_flag = false;
                 if let Some(v) = &self.parsing_func {
@@ -783,7 +783,7 @@ impl SemAn {
                 self.symb_table.exit_scope();
                 self.parsing_func = None;
             }
-            AstNode::FunctionOverload { func, idx, public } => {
+            AstNode::FunctionOverload { func, idx, public: _ } => {
                 self.parsing_func = Some(("".to_owned(), *idx));
                 self.analyze_expr(&AstRoot::new(*func.clone(), line), logger);
             }
@@ -792,8 +792,6 @@ impl SemAn {
                 args,
                 idx,
             } => {
-                println!("Func name: {}, idx: {}", func_name.path_to_string(),
-                    idx);
                 let func_dat_vec = match self.func_table.get_func(
                     &func_name.path_to_string()) {
                     Some(v) => v.clone(),
@@ -891,7 +889,7 @@ impl SemAn {
                                     self.fname.clone()
                                 ));
                             },
-                            other => {}
+                            _other => {}
                         }
                     };
                     exprdat.has_returned = true;
@@ -948,7 +946,7 @@ impl SemAn {
 
                 let elem_type = match array_symb.ftype {
                     FType::Array(fti, _, _) => FType::from_idx(fti),
-                    other => unreachable!(),
+                    _other => unreachable!(),
                 };
 
                 let idx_exprdat = self.analyze_expr(&idx, logger);
@@ -980,7 +978,7 @@ impl SemAn {
                     "main" => name.clone(),
                     other => format!("{}::{}", other, name),
                 };
-                let exprd = self.analyze_expr(node, &logger.clone());
+                let _exprd = self.analyze_expr(node, &logger.clone());
                 self.module = old_mod;
 
             }
@@ -1081,16 +1079,103 @@ impl SemAn {
                         return exprdat;
                     }
                 };
-
                 exprdat.ftype = field_info.ftype;
+
+                if !field_info.public && (self.in_impl != struct_name) {
+                    logger.send(LogMessage::new(
+                        LogLevel::Error(ErrKind::NotPubFieldAddr(field_name.to_owned())),
+                        self.line,
+                        self.fname.clone()
+                    ));
+                    return exprdat;
+                }
             }
             AstNode::StructImpl { name, body } => {
                 let old_mod = self.module.clone();
                 self.module = name.path_to_string();
-
-                let ed = self.analyze_expr(&*body, &logger.clone());
+                
+                self.in_impl = name.path_to_string();
+                let _ed = self.analyze_expr(&*body, &logger.clone());
+                self.in_impl = String::new();
 
                 self.module = old_mod;
+            }
+            AstNode::MethodCall { name, args, idx } => {
+                let first_arg = args.get(0).expect(&format!(
+                    "{}: Expected self", self.line
+                ));
+
+                let var_name = match &first_arg.node {
+                    AstNode::Variable(s) => s.clone(),
+                    other => unreachable!("{:?}", other)
+                };
+
+                let ft = match self.symb_table.get(var_name.clone()) {
+                    Some(v) => v,
+                    None => {
+                        logger.send(LogMessage::new(
+                            LogLevel::Error(ErrKind::UndeclaredVar(var_name)),
+                            self.line,
+                            self.fname.clone(),
+                        ));
+                        return exprdat;
+                    }
+                };
+
+                let self_ft = ft.1.ftype;
+                let struct_name = match self_ft.if_struct() {
+                    Some(v) => v.to_owned(),
+                    None => {
+                        logger.send(LogMessage::new(
+                            LogLevel::Error(ErrKind::NotStructMethod(
+                                    var_name.clone(), self_ft
+                            )),
+                            self.line,
+                            self.fname.clone()
+                        ));
+                        return exprdat;
+                    }
+                };
+
+                let func_name = format!("{}::{}", struct_name, name.path_to_string());
+
+                let mut res_args = Vec::new();
+                let first = match self_ft {
+                    FType::StructHeapPtr(st) => {
+                        AstRoot::new(
+                            AstNode::VariableCast { 
+                                name: var_name, 
+                                target_type: FType::StructPtr(st) 
+                            },
+                            self.line
+                        )
+                    }
+                    FType::Struct(st) => {
+                        AstRoot::new(
+                            AstNode::UnaryOp { 
+                                op: UnaryOp::AddressOf, 
+                                expr: Box::new(first_arg.node.clone())
+                            },
+                            self.line
+                        )
+                    }
+                    other => first_arg.clone()
+                };
+                res_args.push(first);
+                res_args.extend_from_slice(&args[1..]);
+
+                let call_node = AstRoot::new(
+                    AstNode::Call { 
+                        func_name: Box::new(
+                            AstNode::string_to_path(&func_name)
+                        ), 
+                        args: res_args, 
+                        idx: *idx 
+                    }, 
+                    self.line
+                );
+
+                exprdat = self.analyze_expr(&call_node, &logger.clone());
             }
             _ => {}
         }
@@ -1130,7 +1215,7 @@ impl SemAn {
                     self.fname.clone(),
                 ));
             }
-            other => {}
+            _other => {}
             
         }
     }
@@ -1189,12 +1274,12 @@ impl StructInfo {
 
         for v in fields {
             match v {
-                AstNode::StructField { name, ftype } => {
+                AstNode::StructField { name, ftype, public } => {
                     match ftype {
                         FType::Struct(_) => {
                             unimplemented!("Embedded structs; use pointers/refs instead")
                         }
-                        other => {}
+                        _other => {}
                     }
 
                     let alignment = Self::alignment_of(*ftype);
@@ -1208,7 +1293,8 @@ impl StructInfo {
                     let entry = StructField {
                         name: name.clone(), 
                         offset: offset,
-                        ftype: *ftype
+                        ftype: *ftype,
+                        public: *public,
                     };
                     res.insert(name.clone(), entry);
                 }
@@ -1231,11 +1317,11 @@ impl StructInfo {
                 8
             }
             FType::i32 | FType::u32 | FType::single => 4,
-            FType::Array(el_ft_idx, ctr, _) => {
+            FType::Array(el_ft_idx, _ctr, _) => {
                 let el_ft = FType::from_idx(el_ft_idx).unwrap();
                 Self::alignment_of(el_ft)
             }
-            FType::Struct(usize) => {
+            FType::Struct(_usize) => {
                 todo!()
             }
             FType::bool | FType::ubyte | FType::ibyte => 1,
@@ -1248,7 +1334,8 @@ impl StructInfo {
 pub struct StructField {
     pub name: String,
     pub offset: usize,
-    pub ftype: FType
+    pub ftype: FType,
+    pub public: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1273,7 +1360,7 @@ impl StructTable {
 
     pub fn push_from_astn(&mut self, astn: &AstNode) {
         match astn {
-            AstNode::Structure { name, fields, public } => {
+            AstNode::Structure { name: _, fields: _, public: _ } => {
                 let _struct = StructInfo::from_astn(astn);
                 self.tab.insert(_struct.name.clone(), _struct);
             }

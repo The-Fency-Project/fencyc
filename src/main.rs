@@ -1,6 +1,6 @@
-use std::{fs::{self, File}, io::BufReader, path::PathBuf, process::{Command, exit}, sync::mpsc::{self, Sender}, time::Instant};
+use std::{path::PathBuf, process::{Command, exit}, sync::mpsc::{self, Sender}, time::Instant};
 
-use clap::{Parser, Subcommand, Args, ValueEnum};
+use clap::Parser;
 
 mod fcparse {pub mod fcparse;}
 mod codegen {pub mod codegen;}
@@ -9,7 +9,7 @@ mod seman {pub mod seman;}
 mod logger {pub mod logger;}
 mod tests;
 mod cli;
-use crate::{cli::{Commands, InputFlags, Target}, codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstNode, AstRoot, FuncTable}, lexer::lexer as lex, logger::logger::{self as log, LogMessage, Logger, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, StructTable}};
+use crate::{cli::{Commands, InputFlags, Target}, codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstRoot, FuncTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, StructTable}};
 
 // prepend home here 
 const FENCY_DIR: &str = ".fency";
@@ -57,6 +57,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     let mut asts      = Vec::new();
     let mut func_tabs = Vec::new();
     let mut struct_tabs = Vec::new();
+    
 
     for file in files.iter() {
         let (ast, func_tab, struct_tab) = build_ast(
@@ -78,7 +79,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     let struct_tab = StructTable::from_several(&struct_tabs);
 
     let mut nat_fnames = Vec::new();
-    let mut fin_msg = LogMessage::from_query(LoggerQuery::Stop);
+    let fin_msg = LogMessage::from_query(LoggerQuery::Stop);
     let int_msg = LogMessage::from_query(LoggerQuery::Status);
 
     // TODO: extract this into a function
@@ -106,12 +107,12 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
                                 return Err(CompilationError::Compilation);
                             }
                         }
-                        other => unreachable!()
+                        _other => unreachable!()
                     }
                     None => unreachable!()
                 }
             }
-            Err(e) => {
+            Err(_e) => {
             }
         }
 
@@ -136,7 +137,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
 
         let nname = match assemble(&temp_fname, flags.target) {
             CompilationError::OkFile(f) => {f},
-            other => {
+            _other => {
                 //logger.extrn_err = other; TODO: send 
                 String::from("")
             }
@@ -157,7 +158,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     Ok(())
 }
 
-fn build_ast(input: &str, log_tx: Sender<LogMessage>)
+fn build_ast(input: &str, _log_tx: Sender<LogMessage>)
     -> (Vec<AstRoot>, FuncTable, StructTable) {
     let toks = lex::tokenize(&input);
 

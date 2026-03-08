@@ -1,4 +1,4 @@
-use std::{char, fs, io, iter::Peekable};
+use std::{char, fs};
 
 use crate::seman::seman::FType;
 
@@ -81,11 +81,11 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                     let peek = chars.peek();
 
                     match (chn, peek.copied()) {
-                        ('.', any) => {
+                        ('.', _any) => {
                             ftyp = FType::double;
                             num_st.push('.');
                         }
-                        ('f', any) => { // f is expected to be in end
+                        ('f', _any) => { // f is expected to be in end
                             ftyp = FType::single;
                         }
                         ('u', Some('w')) => {
@@ -94,13 +94,13 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                         ('u', Some('b')) => {
                             ftyp = FType::ubyte;
                         }       
-                        ('u', any) => {
+                        ('u', _any) => {
                             ftyp = FType::uint;
                         }
                         ('i', Some('b')) => {
                             ftyp = FType::ibyte;
                         }
-                        ('i', any) => {
+                        ('i', _any) => {
                             ftyp = FType::i32;
                         }
                         other if other.0.is_numeric() => { 
@@ -108,7 +108,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                             num_st.push(chn);
                             continue;
                         }
-                        other => {}
+                        _other => {}
                     }
                 };
 
@@ -164,7 +164,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                         '&' => Tok::Ampersand,
                         '|' => Tok::VerBar,
                         ':' => Tok::Colon,
-                        other => panic!("{}: internal tok match error", line)
+                        _other => panic!("{}: internal tok match error", line)
                     };
                     res.push(Token::new(tok, line));
                 }
@@ -304,7 +304,7 @@ pub fn try_combine(ch: &char, nextch: Option<char>, line: usize) -> Option<Token
         (':', Some(':')) => Some(Token::new(Tok::Combined(Box::new(Tok::Colon), Box::new(Tok::Colon)), line)),
 
 
-        other => None,
+        _other => None,
     }
 }
 

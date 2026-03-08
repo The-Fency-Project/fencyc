@@ -6,9 +6,9 @@ extern func malloc(n: uint) -> ptr;
 extern func free(p: ptr);
 
 struct second {
-    a: int
-    b: int
-    c: int
+    pub a: int
+    pub b: int
+    pub c: int
 }
 
 // Pass struct by pointer 

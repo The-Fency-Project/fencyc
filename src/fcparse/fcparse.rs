@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, fs::File, io::{self, BufRead, BufReader}, mem};
+use std::{collections::{HashMap, HashSet}, io::BufRead};
 
 use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::{FType, StructTable}};
 
@@ -255,13 +255,19 @@ impl FcParser {
                                             self.line, tok1)
                                     });
                                     let right = self.parse_expr(0);
+
+                                    let name_node = buf.last()
+                                        .expect(&format!("{}: expected name before \
+                                            compound assign", self.line));
+
                                     let new_val_node = AstNode::BinaryOp { 
                                         op: bop, 
-                                        left: Box::new(AstNode::Variable(idt_cl.clone())), 
+                                        left: Box::new(name_node.clone()), 
                                         right: Box::new(right.node) 
                                     };
+
                                     return AstNode::Reassignment { 
-                                        name: Box::new(AstNode::Variable(idt_cl)),
+                                        name: Box::new(name_node.clone()),
                                         idx: el_idx,
                                         newval: Box::new(
                                             AstRoot::new(new_val_node, self.line)
@@ -310,12 +316,25 @@ impl FcParser {
                                     self.line,
                                 )).clone();
                             let astr = AstRoot::new(astn, self.line);
-                            buf.push(AstNode::StructFieldAddr { 
-                                val: Box::new(astr), 
-                                field_name 
-                            });
+                            if self.peek_is(Tok::LPar) {
+                                let mut args = self.parse_args_call();
+                                args.insert(0, astr);
+                                let func_name = AstNode::string_to_path(&field_name);
+
+                                buf.push(AstNode::MethodCall { 
+                                    name: Box::new(func_name), 
+                                    args, 
+                                    idx: self.call_ctr 
+                                });
+                                self.call_ctr += 1;
+                            } else {
+                                buf.push(AstNode::StructFieldAddr { 
+                                    val: Box::new(astr), 
+                                    field_name 
+                                });
+                            }
                         }
-                        other => {break;}
+                        _other => {break;}
                     }
                 }
 
@@ -376,7 +395,7 @@ impl FcParser {
                             };
                         }
                     }
-                    other => {}
+                    _other => {}
                 }
                 let val = self.parse_expr(0);
 
@@ -682,7 +701,7 @@ impl FcParser {
 
     
 
-    pub fn match_bop_for_tok(&mut self, tok: &Tok, next_tok: Option<&Tok>) -> Option<BinaryOp> {
+    pub fn match_bop_for_tok(&mut self, tok: &Tok, _next_tok: Option<&Tok>) -> Option<BinaryOp> {
         match tok {
             Tok::Plus => Some(BinaryOp::Add),
             Tok::Minus => Some(BinaryOp::Substract),
@@ -875,7 +894,7 @@ impl FcParser {
             (false, false, false) => {
                 arg_typename_start
             }
-            other => {
+            _other => {
                 unreachable!()
             }
         };
@@ -938,6 +957,12 @@ impl FcParser {
 
         self.expect(Tok::LCurBr);
         loop {
+            let mut is_public = false;
+            if self.peek_is(Tok::Keyword(Kword::Pub)) {
+                self.consume();
+                is_public = true;
+            }
+
             let line = self.line;
             let nexttok = self.consume()
                 .expect(&format!("{}: Expected struct field", line))
@@ -952,7 +977,8 @@ impl FcParser {
                     let ft = self.parse_ftype();
                     res.push(AstNode::StructField { 
                         name: idt.clone(), 
-                        ftype: ft
+                        ftype: ft,
+                        public: is_public,
                     });
                 }
                 other => panic!("{}: unexpected {:?}", line, other)
@@ -1164,6 +1190,7 @@ pub enum AstNode {
     StructField {
         name: String,
         ftype: FType,
+        public: bool,
     },
 
     StructCreate {
@@ -1180,6 +1207,12 @@ pub enum AstNode {
     StructImpl {
         name: Box<AstNode>,
         body: Box<AstRoot>,
+    },
+
+    MethodCall {
+        name: Box<AstNode>,
+        args: Vec<AstRoot>,
+        idx: usize,
     },
 }
 
@@ -1330,7 +1363,7 @@ pub fn match_ftype(lit: &str, interner: &mut NameInterner) -> Option<FType> {
                 FType::StructHeapPtr(interner.intern(slice))
             )
         }
-        other => None,
+        _other => None,
     }
 }
 
@@ -1386,14 +1419,14 @@ impl FuncDat {
 
     pub fn new_from_astn(node: &AstNode) -> Option<FuncDat> {
         let res = match node {
-            AstNode::Function { name, args, ret_type, body, public } => {
+            AstNode::Function { name, args, ret_type, body: _, public } => {
                 let mut fdat = FuncDat::new(
                     *name.clone(), args.clone(), *ret_type, false
                 );
                 fdat.public = *public;
                 Some(fdat)
             }
-            AstNode::FunctionOverload { func, idx, public } => {
+            AstNode::FunctionOverload { func, idx: _, public } => {
                 let mut fdat = Self::new_from_astn(&func).unwrap();
                 fdat.public = fdat.public || *public;
                 Some(fdat)

@@ -1,7 +1,8 @@
 pub extern func malloc(n: uint) -> ptr;
 
 struct Person {
-    name: str 
+    name: str
+    pub age: uint
 }
 
 impl Person {
@@ -10,14 +11,44 @@ impl Person {
         let pt  = main::malloc(s);
         let res = pt$h_Person;
         res.name = name;
+        res.age = 67u;
         return res;
+    }
+
+    pub overload func new_person(name: str, age: uint) -> h_Person {
+        let s   = sizeof @s_Person;
+        let pt  = main::malloc(s);
+        let res = pt$h_Person;
+        res.name = name;
+        res.age = age;
+        return res;
+    }
+
+    pub func print_name(self: *Person, from: str) {
+        printintrin "Hello to ";
+        printintrin self.name;
+        printintrin self.age;
+        printintrin "from ";
+        printintrin from;
+
+        return;
+    }
+
+    pub func older(self: *Person) {
+        self.age += 1u;
+
+        return;
     }
 }
 
 func main() {
-    let p = main::Person::new_person("John");
+    let p = main::Person::new_person("John", 69u);
 
-    printintrin p.name;
+    p.print_name("SomeoneButNotJohn");
+    ////which is the same as 
+    // main::Person::print_name(p$*Person, "SomeoneButJohn");
+    p.older();
+    printintrin p.age;
 
     return;
 }

@@ -1,6 +1,8 @@
 ## Current:
-- `self`, `*self`
-- struct destructors 
+- struct destructors (+maybe a default one?)
+- better path resolving, including relative
+- update struct example
+- imports
 ### Future:
 Small:
 - ability to compile fency code as library

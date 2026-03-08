@@ -1,5 +1,5 @@
-v0.9.0:
-- basic struct methods (static ones for now)
-- fixed `single` in codegen
-- fix for field addressing
-- finally, automatic type inference!
+v0.9.1:
+- runned cargo fix
+- self and method calls works (self has to be `*T`)
+- fixed compound assignment for struct field addr
+- public and private struct fields
