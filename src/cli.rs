@@ -6,7 +6,7 @@ use strum_macros::EnumIter;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 pub struct CliArgs {
-    #[arg(short, long)]
+    #[arg(short, long, help = "Currently unused")]
     pub verbose: bool,
 
     #[command(subcommand)]
@@ -17,15 +17,16 @@ pub struct CliArgs {
 #[derive(Subcommand)]
 pub enum Commands {
     Input {
+        #[arg(help = "List input .fcy source code files")]
         files: Vec<String>,
 
-        #[arg(short, long)]
+        #[arg(short, long, help = "Specify output filename")]
         output: Option<String>,
 
         #[command(flatten)]
         flags: InputFlags,
 
-        #[arg(long = "ldflags", num_args=1..)]
+        #[arg(long = "ldflags", num_args=1.., help = "Linker flags (dashes prepended)")]
         ldflags: Vec<String>,
     },
 
@@ -34,23 +35,35 @@ pub enum Commands {
 
 #[derive(Args, Debug, Default, Clone)]
 pub struct InputFlags {
-    #[arg(short, long)]
+    #[arg(short, long, help = "Currently unused")]
     pub verbose: bool,
 
     // a bit less type checks
-    #[arg(long = "fpermissive")]
+    #[arg(long = "fpermissive", help = "Disables some type checks. Not much")]
     pub permissive: bool,
 
     // Runs in check-only mode 
     // (so binaries wouldnt be generated)
-    #[arg(long = "check")]
+    #[arg(long = "check", help = "Only check source code for errors \
+        (no binaries would be generated)")]
     pub check: bool,
 
-    #[arg(short, long, default_value_t = Target::get_def())]
-    pub target: Target,
+    #[arg(short, long, default_value_t = Target::get_def(), help = "Target ABI \
+        (see `fencyc list-targets`)")]
+    pub target: Target, 
 
-    #[arg(long, default_value_t = def_ldas())]
-    pub ldas: String,
+    #[arg(long, default_value_t = def_ldas(), help = "Default assembler + \
+        linker executable (gcc/clang by default)")]
+    pub ldas: String, // specify ldas (linker+assembler)
+
+    #[arg(long, help = "Do not link fency std and runtime libs")]
+    pub nostd: bool, // compile w/o fency runtime lib and fency std 
+
+    #[arg(long, help = "Generate only object files")]
+    pub onlyobjs: bool, // generate only obj files
+                        
+    #[arg(long, help = "Compile as shared library")]
+    pub shared: bool, // compile as shared library
 }
 
 fn def_ldas() -> String {

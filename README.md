@@ -37,9 +37,12 @@ Without win target you may get QBE from your package manager (apt/pacman/homebre
 distributions, but for others/macos/windows you would likely need to 
 install this, also has to be in the PATH. 
 See [GNU website](https://gcc.gnu.org/install/) or get the binaries.
+3. Fency runtime lib - you would have fencyc runtime C library precompiled and installed 
+as `$HOME/.fency/runtime/libfcyrt.a` (or not `.a`, depends on your OS). 
+See [runtime lib repo](https://github.com/The-Fency-Project/runtime).    
 
 > [!NOTE]
-> All the external dependencies binaries must be in your PATH.
+> All the external dependencies binaries (except libs) must be in your PATH.
 
 ## Usage
 Make sure everything working:
@@ -47,13 +50,8 @@ Make sure everything working:
 Compile some program:  
 - `fencyc input input.fcy`     
 Run as normal program.
-Flags:  
-`--fpermissive`: enables permissive mode, which leads to less type system errors, but still warns.
-`-o name`: determines output program name    
-`--ldflags flags`: linker flags, e.g. `--ldflags lm lraylib`, etc.    
-`-t` / `--target`: specify target     
-`--list-targets`: list available targets     
-`--ldas`: specify command used for assembling and linking, `gcc` by default    
+Flags: see `fencyc help` for general help or `fencyc help subcommand` to see info about 
+specific subcommand (e.g. `fencyc help input`)   
 
 ## Docs
 Soon. For now, consider learning from `examples/` directory in numerical order (1_*, 2_*, ..)

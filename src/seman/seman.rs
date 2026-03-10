@@ -18,6 +18,7 @@ pub struct FSymbol {
     pub ftype: FType,
     pub dsname: Option<String>,
     pub len: Option<usize>, // for arrays and strings
+    pub owner: bool, // for ptrs: does symbol own memory
 }
 
 impl FSymbol {
@@ -28,6 +29,7 @@ impl FSymbol {
             ftype: ft,
             dsname: None,
             len: None,
+            owner: false,
         }
     }
 }
@@ -197,13 +199,23 @@ impl SymbolTable {
         self.st.push(HashMap::new());
     }
 
-    /// Returns vec of regpositions of dropped
-    pub fn exit_scope(&mut self) -> Vec<VarPosition> {
+    /// Returns vec of dropped vals
+    pub fn exit_scope(&mut self) -> Vec<FSymbol> {
         self.cur_scope -= 1;
-        let mut res: Vec<VarPosition> = Vec::new();
-        if let Some(poped) = self.st.pop() {
-            for (_key, val) in poped.iter() {
-                res.push(val.cur_reg);
+        let mut res: Vec<FSymbol> = Vec::new();
+        if let Some(mut poped) = self.st.pop() {
+            for (_key, val) in poped.drain() {
+                res.push(val);
+            }
+        };
+        res
+    }
+
+    pub fn to_drop(&mut self) -> Vec<FSymbol> {
+        let mut res: Vec<FSymbol> = Vec::new();
+        if let Some(poped) = self.st.last() {
+            for (_key, val) in poped {
+                res.push(val.clone());
             }
         };
         res
@@ -216,9 +228,9 @@ impl SymbolTable {
             .insert(fsymb.name.clone(), fsymb);
     }
 
-    pub fn get(&self, var_name: String) -> Option<(usize, &FSymbol)> {
+    pub fn get(&self, var_name: &str) -> Option<(usize, &FSymbol)> {
         for (idx, scv) in self.st.iter().enumerate() {
-            if let Some(v) = scv.get(&var_name) {
+            if let Some(v) = scv.get(var_name) {
                 return Some((idx, v));
             };
         }
@@ -325,7 +337,7 @@ impl SemAn {
                 let rightdat = self.analyze_expr(&AstRoot::new(*val.clone(), line), logger);
                 self.expect_type = FType::none;
 
-                if self.symb_table.get(name.clone()).is_some() {
+                if self.symb_table.get(&name).is_some() {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::Redeclaration(name.to_owned())),
                         line,
@@ -526,7 +538,7 @@ impl SemAn {
                     return exprdat;
                 }
 
-                exprdat.ftype = match self.symb_table.get(var.clone()) {
+                exprdat.ftype = match self.symb_table.get(&var) {
                     Some(v) => v.1.ftype,
                     None => {
                         logger.send(LogMessage::new(
@@ -576,7 +588,7 @@ impl SemAn {
                 }
             }
             AstNode::VariableCast { name, target_type } => {
-                if let Some(var) = self.symb_table.get(name.clone()) {
+                if let Some(var) = self.symb_table.get(&name) {
                     if var.1.ftype == *target_type {
                         logger.send(LogMessage::new(
                             LogLevel::Warning(WarnKind::ConvSame(var.1.ftype)), 
@@ -932,7 +944,7 @@ impl SemAn {
                 exprdat.ftype = FType::Array(ft_idx, nodes.len(), 0 );
             }
             AstNode::ArrayElem(arr_name, idx) => {
-                let array_symb = match self.symb_table.get(arr_name.clone()) {
+                let array_symb = match self.symb_table.get(&arr_name) {
                     Some(v) => v.clone().1,
                     None => {
                         logger.send(LogMessage::new(
@@ -1110,7 +1122,7 @@ impl SemAn {
                     other => unreachable!("{:?}", other)
                 };
 
-                let ft = match self.symb_table.get(var_name.clone()) {
+                let ft = match self.symb_table.get(&var_name) {
                     Some(v) => v,
                     None => {
                         logger.send(LogMessage::new(
@@ -1313,7 +1325,7 @@ impl StructInfo {
     fn alignment_of(ft: FType) -> usize {
         match ft {
             FType::strconst | FType::int | FType::uint | FType::double 
-                | FType::StructPtr(_) | FType::StructHeapPtr(_) => {
+                | FType::StructPtr(_) | FType::StructHeapPtr(_) | FType::Ptr => {
                 8
             }
             FType::i32 | FType::u32 | FType::single => 4,

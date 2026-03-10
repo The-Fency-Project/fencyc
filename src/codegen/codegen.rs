@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ptr::hash};
 
 use crate::{
     fcparse::fcparse::{self as fparse, AstRoot, CmpOp, FuncArg, FuncTable, UnaryOp},
@@ -74,14 +74,21 @@ impl CodeGen {
         }
     }
 
-    pub fn gen_everything(&mut self) {
+    pub fn gen_everything(&mut self, nomain: bool) {
         self.gen_stddat();
-        if self.first {
-            self.gen_prologue();
-        }
+        let mut had_main = false;
        
         while let Some(r) = self.ast.get(self.cur_ast) {
-            let _gdat = self.gen_expr(r.clone().node);
+            let node_cl = r.node.clone();
+            if let AstNode::Function { name, .. } = &node_cl {
+                if (name.path_to_string() == "main::main") && (!had_main) && 
+                    (!nomain) {
+                    had_main = true;
+                    self.gen_prologue();
+                }
+            };
+            
+            let _gdat = self.gen_expr(node_cl);
             self.cur_ast += 1;
         }
         
@@ -134,7 +141,16 @@ impl CodeGen {
                 let rightd = self.gen_expr(val.node);
                 res.returned = true;
 
+                let dropped = self.symb_table.to_drop();
+                let mut except = Vec::new();
+                if let Some(ref v) = rightd.val {
+                    except.push(v.clone());
+                };
+
+                self.leave_scope_clean(&dropped, except);
+
                 self.fbuild.add_instr(Instr::Ret(rightd.val));
+                self.symb_table.exit_scope();
             }
             AstNode::Call { func_name, args, idx } => {
                 let (ov_idx, ret_type) = match self
@@ -162,9 +178,12 @@ impl CodeGen {
                         .get(idx)
                         .unwrap()
                         .ftype;
+                    let old_needaddr = self.need_addr;
+                    self.need_addr = false;
 
                     let gd = self.gen_expr(arg.node.clone());
                     self.expected_type = FType::none;
+                    self.need_addr = old_needaddr;
                     
                     let mut qtype = Self::match_ft_qbf(gd.ftype);
                     if let Some(a) = func_dat.args.get(idx) {
@@ -241,13 +260,23 @@ impl CodeGen {
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
                 for expr in exprs {
-                    let gend = self.gen_expr(expr.node);
+                    let gend = self.gen_expr(expr.node.clone());
                     res.instrs.extend(gend.instrs);
                     res.returned = gend.returned;
                 }
-                self.symb_table.exit_scope();
+               
+                if !res.returned && self.fbuild.func.is_some() {
+                    let dropped = self.symb_table.exit_scope();
+                    self.leave_scope_clean(&dropped, Vec::new());
+                }
             }
             AstNode::Assignment { name, val, ft } => {
+                let owner = match &*val {
+                    AstNode::Call { func_name, args, idx } => true,
+                    AstNode::StructCreate { name, field_vals } => true,
+                    other => false,
+                };
+
                 self.need_addr = true;
                 self.expected_type = ft;
                 let rdat = self.gen_expr(*val);
@@ -265,20 +294,19 @@ impl CodeGen {
                 };
                 res.ftype = res_ft;
 
-                let symb = FSymbol::new(
+                let mut symb = FSymbol::new(
                     name.clone(), 
                     VarPosition::None, // obsolete, TODO: delete  
                     res_ft
                 );
+                symb.owner = owner;
 
                 self.symb_table.newsymb(symb);
 
-                self.fbuild.add_instr(
-                    Instr::Assign(
-                        Value::Temporary(name), 
-                        Self::match_ft_qbf(res_ft), 
-                        Box::new(Instr::Copy(val))
-                    )
+                self.fbuild.assign_instr(
+                    Value::Temporary(name), 
+                    Self::match_ft_qbf(res_ft), 
+                    Instr::Copy(val)
                 );
             }
             
@@ -422,7 +450,7 @@ impl CodeGen {
             AstNode::ArrayElem(arr_name, idx_val) => {
                 let idx_gd   = self.gen_expr(idx_val.node);
                 let tmp = self.new_temp();
-                let symb     = self.symb_table.get(arr_name.clone()).unwrap();
+                let symb     = self.symb_table.get(&arr_name).unwrap();
 
                 let el_ftype = match symb.1.ftype {
                     FType::Array(el, _, _) => {
@@ -633,7 +661,7 @@ impl CodeGen {
 
                 // TODO: func ptrs
 
-                let var_dat = self.symb_table.get(var.clone()).unwrap_or_else(|| {
+                let var_dat = self.symb_table.get(&var).unwrap_or_else(|| {
                     panic!("Internal: Can't get variable {}", var)
                 });
 
@@ -644,7 +672,7 @@ impl CodeGen {
             AstNode::VariableCast { name, target_type } => {
                 res.ftype = target_type;
                 let tmp = self.new_temp();
-                let symb = self.symb_table.get(name.clone()).unwrap();
+                let symb = self.symb_table.get(&name).unwrap();
 
                 match (symb.1.ftype, target_type) {
                     (FType::Ptr, FType::StructPtr(_)) | (FType::Ptr, FType::Struct(_)) |
@@ -1062,7 +1090,7 @@ impl CodeGen {
                 res.ftype = field_info.ftype;
                 res.val = Some(tmp);
             }
-            AstNode::StructImpl { name: _, body } => {
+            AstNode::StructImpl { name, body } => {
                 let _gd = self.gen_expr(body.node);
             }
             AstNode::MethodCall { name, args, idx } => {
@@ -1075,7 +1103,7 @@ impl CodeGen {
                 };
 
                 let ft = self.symb_table
-                    .get(var_name.clone())
+                    .get(&var_name)
                     .expect(&format!("Can't get symbol {}",
                             var_name));
 
@@ -1141,6 +1169,7 @@ impl CodeGen {
     fn gen_func(&mut self, name: &AstNode, args: Vec<FuncArg>, 
             ret_type: FType, body: Box<AstNode>, over_idx: usize, public: bool)  {
         self.symb_table.push_funcargs(args.clone());
+        self.fbuild.args_passed = args.clone();
 
         let mut args_qbe = Vec::new();
         for arg in args {
@@ -1187,6 +1216,7 @@ impl CodeGen {
 
         self.should_push = true;
         self.fbuild.ready = true;
+        self.fbuild.args_passed.clear();
     }
 
     fn new_temp(&mut self) -> Value {
@@ -1203,6 +1233,10 @@ impl CodeGen {
 
     fn get_conv(ft_src: FType, target_type: FType, src: Value) -> Instr {
         match (ft_src, target_type) {
+            (FType::StructPtr(st), FType::Ptr) | (FType::StructHeapPtr(st), 
+                FType::Ptr) => {
+                Instr::Copy(src)
+            }
             (FType::double, FType::uint) => { // bitwise repr
                 Instr::Dtoui(
                     src
@@ -1306,9 +1340,61 @@ impl CodeGen {
         tmp
     }
 
-    fn leave_scope_clean(&mut self) {
-        let dropped = self.symb_table.exit_scope();
-        for _val in dropped.iter() {
+    /// Calls destructors for dropped structs. Doesnt drop those passed as args
+    fn leave_scope_clean(&mut self, dropped: &Vec<FSymbol>, except: Vec<Value>) {
+        let mut full_except: Vec<Value> = self.fbuild.args_passed.iter().map(|a| {
+            Value::Temporary(a.name.clone())
+        }).collect();
+
+        full_except.extend(except);
+
+        for s in dropped {
+            if !s.owner {
+                continue;
+            }     
+            if full_except.iter().any(|v| {v == &Value::Temporary(s.name.clone())}) {
+                continue;
+            }
+
+            let mut args: Vec<(Type, Value)> = Vec::new();
+
+            match s.ftype {
+                FType::Struct(st) | FType::StructPtr(st) => {
+                    let drop_funcname = format!("{}::drop::0", st);
+
+                    if self.func_tab.get_func(&drop_funcname).is_some() {
+                        args.push((Type::Long, Value::Temporary(s.name.clone())));
+
+                        self.fbuild.add_instr(Instr::Call(
+                            drop_funcname.replace("::", "_"),
+                            args,
+                            None
+                        ));
+                    }
+                }
+                // heap ptr 
+                other if other.if_struct().is_some() => {
+                    let st = other.if_struct().unwrap();
+                    let drop_funcname = format!("{}::drop", st);
+
+                    args.push((Type::Long, Value::Temporary(s.name.clone())));
+
+                    if self.func_tab.get_func(&drop_funcname).is_some() {
+                        self.fbuild.add_instr(Instr::Call(
+                            format!("{}_0", drop_funcname.replace("::", "_")),
+                            args.clone(),
+                            None
+                        ));
+                    }
+
+                    self.fbuild.add_instr(Instr::Call(
+                        "free".to_owned(),
+                        args,
+                        None
+                    ));
+                }
+                other => {}
+            }
         }
     }
 
@@ -1540,6 +1626,7 @@ impl CodeGen {
 pub struct FuncBuilder {
     pub func: Option<Function>,
     pub ready: bool,
+    pub args_passed: Vec<FuncArg>,
 }
 
 impl FuncBuilder {
@@ -1547,6 +1634,7 @@ impl FuncBuilder {
         FuncBuilder { 
             func: None,
             ready: false,
+            args_passed: Vec::new(),
         }
     }
 
@@ -1554,7 +1642,7 @@ impl FuncBuilder {
         if let Some(f) = self.func.as_mut() {
             f.add_instr(i);
         } else {
-            panic!("Can't get function in fbuild!")
+            panic!("Can't get function in fbuild!");
         }
     }
 

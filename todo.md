@@ -1,19 +1,18 @@
 ## Current:
-- struct destructors (+maybe a default one?)
 - better path resolving, including relative
 - update struct example
 - imports
+- op overload
 ### Future:
 Small:
-- ability to compile fency code as library
 - iterators for `for`
-- default args values in funcs
-- auto type inference for lets
+- default args values in funcs (maybe)
 - make error if trying to override func that wasnt declared
-- importing libs from `~/.fency/libs`
 - function pointers
 - block return
+- va args
+- stack strs
 Major:
-- structures methods + destructors
 - traits
 - wiki
+- stdlib

@@ -16,9 +16,14 @@ const FENCY_DIR: &str = ".fency";
 
 fn main() {
     let fency_root = get_homedpath(FENCY_DIR);
+    let fail_fcypath = fency_root.is_err();
+    
+    let mut runtime_dir = PathBuf::new();
+    let mut libs_dir = PathBuf::new();
+
     if let Ok(r) = fency_root {
-        let runtime_dir = r.join("runtime");
-        let libs_dir = r.join("libs");
+        runtime_dir = r.join("runtime");
+        libs_dir = r.join("libs");
 
         if !runtime_dir.exists() {
             std::fs::create_dir_all(&libs_dir)
@@ -31,10 +36,16 @@ fn main() {
     }
 
     let cli = cli::CliArgs::parse();
+    let paths = vec![runtime_dir, libs_dir];
     
     match cli.command {
-        Some(Commands::Input { files, output, flags, ldflags } ) => {
-            match compile(files, output, flags, ldflags) {
+        Some(Commands::Input { files, output, flags, mut ldflags } ) => {
+            if !(flags.nostd || fail_fcypath) {
+                //ldflags.push("Wl,--whole-archive".to_owned());
+                ldflags.push("lfcyrt".to_owned());
+            } 
+
+            match compile(files, output, flags, ldflags, paths) {
                 Ok(_) => {return;}
                 Err(_) => {exit(1);}
             }
@@ -48,8 +59,9 @@ fn main() {
     }
 }
 
+// 1st path is runtime dir, 2nd path is libs dir
 fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
-    ldflags: Vec<String>) -> Result<(), CompilationError> {
+    ldflags: Vec<String>, paths: Vec<PathBuf>) -> Result<(), CompilationError> {
     let (log_tx, log_rx) = mpsc::channel::<LogMessage>();
     let (log_resp, resp_get) = mpsc::channel::<LogMessage>();
     let handle = spawn_logger_thread(log_rx, log_resp);
@@ -124,7 +136,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
 
         let mut gene = cgen::CodeGen::new(ast, matched_overloads, 
             idx == 0, functab.clone(), struct_tab.clone());
-        gene.gen_everything();
+        gene.gen_everything(flags.shared);
         if cfg!(debug_assertions) { 
             println!("{}", gene.module);
         }
@@ -149,7 +161,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         let strs = nat_fnames.iter()
             .map(String::as_str)
             .collect();
-        link(&strs, &out, &ldflags, &flags)?;
+        link(&strs, &out, &ldflags, &flags, &paths)?;
     }
 
     log_tx.send(fin_msg);
@@ -200,16 +212,35 @@ fn assemble(input_name: &str, t: Target)
 }
 
 fn link(nat_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>, 
-    flags: &InputFlags)
+    flags: &InputFlags, fcy_paths: &Vec<PathBuf>)
     -> Result<(), CompilationError> {
     let mut args: Vec<&str> = Vec::new();
     args.extend(nat_fnames);
-    args.push("-o");
-    args.push(output_name);
+    
+    if !flags.onlyobjs {
+        if flags.shared {
+            args.push("-fPIC");
+            args.push("-shared");
+        }
+
+        args.push("-o");
+        args.push(output_name);
+    } else {
+        args.push("-c");
+    }
+
+    let mut s_v: Vec<String> = Vec::new();
+
+    for v in fcy_paths {
+        let new_arg = format!("-L{}", v.display());
+        s_v.push(new_arg);
+    }
+
+    args.extend(s_v.iter().map(|s| {s.as_str()}));
 
     let dash_flags: Vec<String> = ldflags.iter().map(|s| format!("-{}", s))
         .collect();
-    args.extend(dash_flags.iter().map(|s| s.as_str()));  
+    args.extend(dash_flags.iter().map(|s| s.as_str())); 
 
     let out2 = match run_command(&flags.ldas, &args) {
         Ok(sv) => sv,
