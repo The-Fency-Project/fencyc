@@ -41,7 +41,6 @@ fn main() {
     match cli.command {
         Some(Commands::Input { files, output, flags, mut ldflags } ) => {
             if !(flags.nostd || fail_fcypath) {
-                //ldflags.push("Wl,--whole-archive".to_owned());
                 ldflags.push("lfcyrt".to_owned());
             } 
 

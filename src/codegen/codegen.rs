@@ -46,6 +46,8 @@ pub struct CodeGen {
     first: bool, // is cur file first
     need_addr: bool,
     expected_type: FType,
+    usedmods: Vec<String>,
+    curmod: String,
 }
 
 impl CodeGen {
@@ -71,7 +73,16 @@ impl CodeGen {
             first: first,
             need_addr: false,
             expected_type: FType::none,
+            usedmods: Vec::new(),
+            curmod: "main".into(),
         }
+    }
+
+    fn get_use_paths(&mut self) -> Vec<String> {
+        let mut res = Vec::new();
+        res.push(self.curmod.clone());
+        res.extend(self.usedmods.iter().cloned());
+        res
     }
 
     pub fn gen_everything(&mut self, nomain: bool) {
@@ -163,9 +174,9 @@ impl CodeGen {
                     }
                 };
 
-
+                let paths = self.get_use_paths();
                 let func_dat = self.func_tab
-                    .get_func(&func_name.path_to_string())
+                    .get_func(&func_name.path_to_string(), &paths)
                     .unwrap()
                     .get(ov_idx.unwrap())
                     .unwrap()
@@ -212,20 +223,21 @@ impl CodeGen {
 
                 let mut has_rn = false;
                 let mname: String = match self.func_tab
-                        .get_func(&func_name.path_to_string()) {
+                        .get_func(&func_name.path_to_string(), &paths) {
                     Some(v) => {
-                        if ov_idx.is_none() {
-                            func_name.path_to_segs().join("_")
-                        } else {
-                            let f = v.get(ov_idx.unwrap());
-                            let unf = f.unwrap();
-                            has_rn = unf.real_name.is_some();
-                            unf.real_name.
-                                clone().
-                                unwrap_or(
-                                    func_name.path_to_segs().join("_")
-                                )
-                        }
+                        let fin_idx = match ov_idx {
+                            Some(v) => v,
+                            None => 0
+                        };
+
+                        let f = v.get(fin_idx);
+                        let unf = f.unwrap();
+                        has_rn = unf.real_name.is_some();
+                        unf.real_name.
+                            clone().
+                            unwrap_or(
+                                unf.name.path_to_segs().join("_")
+                            )
                     }  
                     None => {
                         func_name.path_to_segs().join("_")
@@ -979,10 +991,18 @@ impl CodeGen {
             AstNode::ExternedFunc { name: _, args: _, ret_type: _, public: _, real_name: _ } => {
 
             }
-            AstNode::Module { name: _, node } => {
+            AstNode::Module { name , node } => {
+                let old_mod = self.curmod.clone();
+                self.curmod = match old_mod.as_str() {
+                    "main" => name.clone(),
+                    other => format!("{}::{}", other, name),
+                };
+
                 self.gen_expr(node.node);
+
+                self.curmod = old_mod;
             }
-            AstNode::Structure { name, fields: _, public: _ } => {
+            AstNode::Structure { name, fields: _, public: _, attrs } => {
                 let name_st = name.path_to_string();
                 let struct_dat = self.struct_tab.tab.get(&name_st)
                     .expect("Can't get struct info");
@@ -1149,6 +1169,9 @@ impl CodeGen {
                 };
 
                 res = self.gen_expr(call_node);
+            }
+            AstNode::Usemod { name } => {
+                self.usedmods.push(name.path_to_string());
             }
             AstNode::none => {}
             other => {
@@ -1347,6 +1370,7 @@ impl CodeGen {
         }).collect();
 
         full_except.extend(except);
+        let paths = self.get_use_paths();
 
         for s in dropped {
             if !s.owner {
@@ -1362,7 +1386,7 @@ impl CodeGen {
                 FType::Struct(st) | FType::StructPtr(st) => {
                     let drop_funcname = format!("{}::drop::0", st);
 
-                    if self.func_tab.get_func(&drop_funcname).is_some() {
+                    if self.func_tab.get_func(&drop_funcname, &paths).is_some() {
                         args.push((Type::Long, Value::Temporary(s.name.clone())));
 
                         self.fbuild.add_instr(Instr::Call(
@@ -1379,7 +1403,7 @@ impl CodeGen {
 
                     args.push((Type::Long, Value::Temporary(s.name.clone())));
 
-                    if self.func_tab.get_func(&drop_funcname).is_some() {
+                    if self.func_tab.get_func(&drop_funcname, &paths).is_some() {
                         self.fbuild.add_instr(Instr::Call(
                             format!("{}_0", drop_funcname.replace("::", "_")),
                             args.clone(),

@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet}, io::BufRead};
 
-use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, seman::seman::{FType, StructTable}};
+use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, logger::logger::{ErrKind, LogLevel}, seman::seman::{FType, StructTable}};
 
 pub struct FcParser {
     tokens: Vec<Token>,
@@ -111,9 +111,11 @@ impl FcParser {
                 let name = self.expect_idt().unwrap_or("".to_owned());
 
                 if name.is_empty() {
-                    // TODO: put here error into astnode 
-                    println!("{}: expected module name", self.line);
-                    return AstNode::Invalid;
+                    let found = self.peek().map_or(Tok::EOF, |t| t.tok.clone());
+                    return AstNode::Invalid(LogLevel::Error(
+                            ErrKind::ParseExpectedIdt(found)
+                            )
+                        );
                 }
 
                 let old_mod = self.curmod.clone();
@@ -517,10 +519,47 @@ impl FcParser {
 
             Tok::Keyword(Kword::Impl) => {
                 let res = self.parse_impl();
-                // TODO: push methods
                 res
             }
 
+            Tok::Keyword(Kword::Usemod) => {
+                let first = match self.expect_idt() {
+                    Some(v) => v,
+                    None => {
+                        let found = self.peek().map_or(Tok::EOF, |t| t.tok.clone());
+                        return AstNode::Invalid(
+                            LogLevel::Error(ErrKind::ParseExpectedIdt(found))
+                        );
+                    }
+                };
+                let path = self.parse_path(first);
+                AstNode::Usemod { 
+                    name: Box::new(path)
+                }
+            }
+
+            Tok::Hash => {
+                self.expect(Tok::LBr);
+                let mut arr: Vec<Attr> = Vec::new();
+                let line = self.line;
+                while let Some(t) = self.consume() {
+                    match &t.tok {
+                        Tok::Identifier(idt) => {
+                            let attr: Attr = Attr::from_str(&idt);
+                            arr.push(attr);
+                        }
+                        Tok::Comma => {},
+                        Tok::RBr => {
+                            break;
+                        }
+                        other => panic!("{}: unexpected tok {:?} in attribute parse",
+                            line, other)
+                    }
+                };
+                self.prev_flags.insert(ParseFlags::Attrs(arr));
+                AstNode::none
+            }
+    
             other => {
                 if Some(other) == self.allowed_tok.as_ref() {
                     return self.parse_expr(255).node;
@@ -945,10 +984,18 @@ impl FcParser {
 
         let fields = self.parse_struct_fields();
 
+        let attrs: Vec<Attr> = self.prev_flags.iter().map(|f| {
+            match &f {
+                ParseFlags::Attrs(attrs) => attrs.clone(),
+                other => Vec::new()
+            }
+        }).flatten().collect();
+
         AstNode::Structure { 
             name: Box::new(name), 
             fields: fields,
-            public: self.prev_flags.contains(&ParseFlags::Public) 
+            public: self.prev_flags.contains(&ParseFlags::Public),
+            attrs: attrs,
         }
     }
 
@@ -1059,7 +1106,7 @@ impl FcParser {
 pub enum AstNode {
     none,
     NoParse, // internal astnode to stop parsing expr
-    Invalid, // invalid node
+    Invalid(LogLevel), // invalid node
 
     Int(i64),
     Double(f64),
@@ -1185,6 +1232,7 @@ pub enum AstNode {
         name: Box<AstNode>, // astnode path 
         fields: Vec<AstNode>,
         public: bool,
+        attrs: Vec<Attr>,
     },
 
     StructField {
@@ -1213,6 +1261,10 @@ pub enum AstNode {
         name: Box<AstNode>,
         args: Vec<AstRoot>,
         idx: usize,
+    },
+
+    Usemod {
+        name: Box<AstNode>, // path
     },
 }
 
@@ -1317,6 +1369,7 @@ pub enum CmpOp {
 pub enum ParseFlags {
     Public,
     StructImpl(String),
+    Attrs(Vec<Attr>),
 }
 
 /// for more memory efficiency
@@ -1477,7 +1530,34 @@ impl FuncTable {
         }
     }
 
-    pub fn get_func(&mut self, name: &str) -> Option<&Vec<FuncDat>> {
-        self.ft.get(name)
+    /// Args: func name + used modules 
+    pub fn get_func(&mut self, name: &str, usemods: &Vec<String>) 
+        -> Option<&Vec<FuncDat>> {
+        if let Some(v) = self.ft.get(name) {
+            return Some(v);
+        };
+
+        for modnm in usemods {
+            if let Some(v) = self.ft.get(&format!("{}::{}", modnm, name)) {
+                return Some(v);
+            };
+        }
+
+        return None;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Attr {
+    Heap,
+    Custom(String),
+}
+
+impl Attr {
+    fn from_str(value: &str) -> Self {
+        match value {
+            "heap" => Attr::Heap,
+            other  => Attr::Custom(other.to_owned()), 
+        }
     }
 }

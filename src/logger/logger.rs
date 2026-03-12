@@ -2,7 +2,7 @@ use std::{sync::mpsc::{Receiver, Sender}, thread::{JoinHandle, spawn}, time::Ins
 
 use colored::Colorize;
 
-use crate::{CompilationError, fcparse::fcparse::BinaryOp, seman::seman::FType};
+use crate::{CompilationError, fcparse::fcparse::BinaryOp, lexer::lexer::{Tok, Token}, seman::seman::FType};
 
 pub struct Logger {
     errc: usize,
@@ -317,6 +317,26 @@ impl Logger {
                             {}: consider doing this field public, e.g. `pub {}: ..`",
                             name, help, name)
                     }
+                    ErrKind::ImportNotFound(nm) => {
+                        format!("Imported library {} was not found",
+                            nm)
+                    }
+                    ErrKind::ImportNoSrc(nm, path) => {
+                        format!("Library {} has no `src/` directory\n\
+                        {}: library {} was found in {} but it has no subdirectory \
+                        src/ for source files",
+                        nm, help, nm, path)
+                    }
+                    ErrKind::ParseExpectedIdt(tk) => {
+                        format!("Parse error: expected identifier, found {:?}",
+                            tk)
+                    }
+                    ErrKind::HeapOnlyStack(ft) => {
+                        format!("Struct {} was marked as heap-only, but attempted to\
+                        create it from stack\n\
+                        {}: `{} {{..}}` creates on stack",
+                        ft, help, ft)
+                    }
                     ErrKind::Internal(e) => {
                         format!("Internal error: {}", e)
                     }
@@ -449,6 +469,11 @@ pub enum ErrKind {
     NotPubStruct(String),
     NotStructMethod(String, FType), // name, found ftype
     NotPubFieldAddr(String),
+    ImportNotFound(String), // lib name 
+    ImportNoSrc(String, String), // name, path 
+    HeapOnlyStack(FType),
+                                 
+    ParseExpectedIdt(Tok), // tok 
 }
 
 #[derive(Debug, Clone)]

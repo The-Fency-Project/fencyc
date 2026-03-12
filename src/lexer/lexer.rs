@@ -41,6 +41,7 @@ pub enum Tok {
     RABEq, // >= (right ang brace and eq)
     ExclEq, // != 
     LABEq, // <=
+    Hash, // #
     DoubleDot, // ..
     Dot,
     Comma,
@@ -50,6 +51,8 @@ pub enum Tok {
     At, // @
     DQuote, // "
     Combined(Box<Tok>, Box<Tok>),
+
+    EOF,
 }
 
 #[derive(Debug, Clone)]
@@ -213,7 +216,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                 }
             },
             '%' => {res.push(Token::new(Tok::Percent, line)); chars.next();},
-            ':' => {res.push(Token::new(Tok::Colon, line)); chars.next();},
+            '#' => {res.push(Token::new(Tok::Hash, line)); chars.next();},
             '}' => {res.push(Token::new(Tok::RCurBr, line)); chars.next();},
             '{' => {res.push(Token::new(Tok::LCurBr, line)); chars.next();},
             '$' => {res.push(Token::new(Tok::DollarSign, line)); chars.next();},
@@ -328,6 +331,7 @@ pub enum Kword {
     Module,
     Struct,
     Impl,
+    Usemod,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -358,6 +362,7 @@ fn match_symb_tok(word: &str) -> Tok {
         "module" => Tok::Keyword(Kword::Module),
         "struct" => Tok::Keyword(Kword::Struct),
         "impl" => Tok::Keyword(Kword::Impl),
+        "use" => Tok::Keyword(Kword::Usemod),
 
         "_len" => Tok::Intrin(Intrinsic::Len),
         "printintrin" => Tok::Intrin(Intrinsic::Print),

@@ -3,6 +3,7 @@ module libc {
     pub extern func free(p: ptr);
 }
 
+#[heap]
 struct Person {
     name: str
     pub age: uint
@@ -25,9 +26,16 @@ impl Person {
     }
 }
 
+use main::Person;
+
 func main() {
-    let p = main::Person::new_person("John", 69u);
-    let p2 = main::Person::new_person("NotJohn", 67u);
+    //let ps = Person {
+    //    name: "won't compile";
+    //    age: 0u;
+    //};
+
+    let p = Person::new_person("John", 69u);
+    let p2 = Person::new_person("NotJohn", 67u);
     let p3 = p2;
 
     printintrin p.age;

@@ -2,13 +2,34 @@
 // Fency structures are represented in memory like C structs.
 
 // libc
-extern func malloc(n: uint) -> ptr;
-extern func free(p: ptr);
+pub extern func malloc(n: uint) -> ptr;
+pub extern func free(p: ptr);
 
 struct second {
     pub a: int
     pub b: int
     pub c: int
+}
+
+impl second {
+    // static method
+    pub func new(a: int, b: int, c: int) -> h_second {
+        let p: ptr = main::malloc(sizeof @s_second);
+        let res = p$h_second;
+        res.a = a;
+        res.b = b;
+        res.c = c;
+
+        return res;
+    }
+
+    // if first arg is *Self, then this is callable as method
+    // e.g. s.incb(); (shown later)
+    pub func incb(self: *second) {
+        self.b += 1;
+
+        return;
+    }
 }
 
 // Pass struct by pointer 
@@ -40,6 +61,7 @@ func print_h(s: h_second) {
     return;
 }
 
+use main;
 
 func main() {
     // This assignment (with struct {..})
@@ -75,8 +97,11 @@ func main() {
     test3.c = 17;
 
     print_h(test3);
-    // dont forget to free after raw alloc
-    free(test3_ptr);
+    
+    let test4 = second::new(321, 123, 234);
+    test4.incb();
+    printintrin test4.b; // 124
+    // every h_ ptr will be freed with RAII.
 
     return;
 }

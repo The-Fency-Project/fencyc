@@ -1,10 +1,9 @@
 ## Current:
-- better path resolving, including relative
-- update struct example
-- imports
-- op overload
+- imports?
+- parallel compilation
 ### Future:
 Small:
+- op overload
 - iterators for `for`
 - default args values in funcs (maybe)
 - make error if trying to override func that wasnt declared

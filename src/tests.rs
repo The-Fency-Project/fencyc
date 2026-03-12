@@ -1,6 +1,7 @@
 use std::process::Command;
 
-
+/// Some tests on examples 
+/// Doing nostd for easier CI/CD
 
 #[test]
 fn test_variables_example() {
@@ -8,7 +9,7 @@ fn test_variables_example() {
     let output_bin = "testbins/1_variables";
 
     let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin])
+        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd"])
         .status()
         .expect("Failed to run compiler command");
 
@@ -47,7 +48,7 @@ fn test_loops_example() {
     let output_bin = "testbins/2_loops";
 
     let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin])
+        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd"])
         .status()
         .expect("Failed to run compiler command");
 
@@ -102,7 +103,7 @@ fn test_functions_example() {
     let output_bin = "testbins/3_functions";
 
     let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin])
+        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd"])
         .status()
         .expect("Failed to run compiler command");
 
@@ -140,7 +141,7 @@ fn test_arrays_example() {
     let output_bin = "testbins/4_arrays";
 
     let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin])
+        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd"])
         .status()
         .expect("Failed to run compiler command");
 
@@ -190,6 +191,7 @@ fn test_modules_example() {
         cmd.extend(input_files.iter().map(|s| *s));
         cmd.push("-o");
         cmd.push(output_bin);
+        cmd.push("--nostd");
     println!("Running compiler command: cargo {:?}", cmd);
 
     let compile_output = Command::new("cargo")
@@ -237,6 +239,7 @@ fn test_structs_example() {
         cmd.extend(input_files.iter().map(|s| *s));
         cmd.push("-o");
         cmd.push(output_bin);
+        cmd.push("--nostd");
     println!("Running compiler command: cargo {:?}", cmd);
 
     let compile_output = Command::new("cargo")
@@ -270,7 +273,8 @@ fn test_structs_example() {
 5
 289
 12
-16";
+16
+124";
 
     assert_eq!(stdout, expected, "Program output did not match expected");
 }

@@ -4,7 +4,7 @@ use std::sync::mpsc::Sender;
 
 
 use crate::codegen::codegen::CodeGen;
-use crate::fcparse::fcparse::AstNode;
+use crate::fcparse::fcparse::{AstNode, Attr};
 use crate::fcparse::fcparse::{AstRoot, BinaryOp, FuncArg, 
     FuncTable, UnaryOp};
 use crate::lex::Intrinsic;
@@ -279,6 +279,7 @@ pub struct SemAn {
     struct_tab: StructTable,
     line: usize,
     in_impl: String,
+    usedmods: Vec<String>, // paths to used modules
 }
 
 impl SemAn {
@@ -296,16 +297,25 @@ impl SemAn {
             parsing_func: None,
             matched_overloads: HashMap::new(),
             expect_type: FType::none,
-            module: "main".to_owned(),
+            module: "main".into(),
             struct_tab: struct_tab,
             line: 0,
             in_impl: String::new(),
+            usedmods: Vec::new(),
         }
+    }
+
+    fn get_use_paths(&mut self) -> Vec<String> {
+        let mut res = Vec::new();
+        res.push(self.module.clone());
+        res.extend(self.usedmods.iter().cloned());
+        res
     }
 
     pub fn analyze(&mut self, ast: &Vec<AstRoot>, logger: &Sender<LogMessage>) 
         -> Result<(), ()> {
-        match self.func_table.get_func("main") {
+        let paths = self.get_use_paths();
+        match self.func_table.get_func("main", &paths) {
             Some(fv) => {
                 if fv.len() > 1 {
                     logger.send(LogMessage::new(
@@ -532,8 +542,9 @@ impl SemAn {
                     exprdat.ftype = FType::Struct("");
                     return exprdat;
                 }
-
-                if self.func_table.get_func(var).is_some() {
+    
+                let paths = self.get_use_paths();
+                if self.func_table.get_func(var, &paths).is_some() {
                     // TODO: func type
                     return exprdat;
                 }
@@ -804,8 +815,9 @@ impl SemAn {
                 args,
                 idx,
             } => {
+                let paths = self.get_use_paths();
                 let func_dat_vec = match self.func_table.get_func(
-                    &func_name.path_to_string()) {
+                    &func_name.path_to_string(), &paths) {
                     Some(v) => v.clone(),
                     None => {
                         logger.send(LogMessage::new(
@@ -819,7 +831,7 @@ impl SemAn {
                     }
                 };
                 for (over_idx, overload) in func_dat_vec.iter().enumerate() {
-                    let mut flag: bool = true;
+                    let mut flag_matches: bool = true;
                     let mut extrn = false;
                     if overload.externed {
                         extrn = true;
@@ -830,16 +842,16 @@ impl SemAn {
                                                                      
                         if overload.args.len() != args.len() || !argdat.ftype
                                 .is_compatible_with(&overload.args[idx].ftype) {
-                            flag = false;
+                            flag_matches = false;
                             break;
                         }
                         if self.expect_type != FType::none && self.expect_type != overload.ret_type
                         {
-                            flag = false;
+                            flag_matches = false;
                             break;
                         }
                     }
-                    if flag {
+                    if flag_matches {
                         let ov_idx_op = if extrn {
                             None
                         } else {
@@ -878,9 +890,11 @@ impl SemAn {
             }
             AstNode::ReturnVal { val } => {
                 let retval = self.analyze_expr(&*val, logger);
+                
+                let paths = self.get_use_paths();
 
                 if let Some(curf) = &self.parsing_func {
-                    if let Some(fv) = self.func_table.get_func(&curf.0) {
+                    if let Some(fv) = self.func_table.get_func(&curf.0, &paths) {
                         let f = &fv[curf.1];
                         if retval.ftype != f.ret_type {
                             logger.send(LogMessage::new(
@@ -1013,6 +1027,14 @@ impl SemAn {
                         return exprdat;
                     }
                 };
+                if struct_data.attrs.contains(&Attr::Heap) {
+                    logger.send(LogMessage::new(
+                        LogLevel::Error(ErrKind::HeapOnlyStack(exprdat.ftype)),
+                        line,
+                        self.fname.clone()
+                    ));
+                }
+
                 if struct_data.fields.len() != field_vals.len() {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::MismatchFieldsCount(
@@ -1189,6 +1211,11 @@ impl SemAn {
 
                 exprdat = self.analyze_expr(&call_node, &logger.clone());
             }
+            AstNode::Usemod { name } => {
+                let name_st = name.path_to_string();
+
+                self.usedmods.push(name_st);
+            }
             _ => {}
         }
         exprdat
@@ -1256,12 +1283,13 @@ pub struct StructInfo {
     pub max_alignment: usize,
     pub static_name: &'static str,
     pub public: bool,
+    pub attrs: Vec<Attr>,
 }
 
 impl StructInfo {
     pub fn from_astn(astn: &AstNode) -> StructInfo {
         match astn {
-            AstNode::Structure { name, fields, public } => {
+            AstNode::Structure { name, fields, public, attrs } => {
                 let (parsed_fields, size, max_al) = Self::parse_ast_fields(fields);
                 let leaked = Box::leak(name.path_to_string().into_boxed_str());
                 StructInfo { 
@@ -1271,6 +1299,7 @@ impl StructInfo {
                     max_alignment: max_al,
                     static_name: leaked,
                     public: *public,
+                    attrs: attrs.clone()
                 }
             }
             other => panic!("Internal: expected struct, found {:?}", other)
@@ -1372,7 +1401,7 @@ impl StructTable {
 
     pub fn push_from_astn(&mut self, astn: &AstNode) {
         match astn {
-            AstNode::Structure { name: _, fields: _, public: _ } => {
+            AstNode::Structure { name: _, fields: _, public: _, attrs } => {
                 let _struct = StructInfo::from_astn(astn);
                 self.tab.insert(_struct.name.clone(), _struct);
             }
