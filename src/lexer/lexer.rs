@@ -33,7 +33,7 @@ pub enum Tok {
     Tilde,
     Exclam, // !
     Intrin(Intrinsic),
-    LAngBr, // <
+    LAngBr, /// <
     RAngBr, // >
     DLAngBr, // <<
     DRAngBr, // >> 
@@ -332,6 +332,7 @@ pub enum Kword {
     Struct,
     Impl,
     Usemod,
+    Trait,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -363,6 +364,7 @@ fn match_symb_tok(word: &str) -> Tok {
         "struct" => Tok::Keyword(Kword::Struct),
         "impl" => Tok::Keyword(Kword::Impl),
         "use" => Tok::Keyword(Kword::Usemod),
+        "trait" => Tok::Keyword(Kword::Trait),
 
         "_len" => Tok::Intrin(Intrinsic::Len),
         "printintrin" => Tok::Intrin(Intrinsic::Print),

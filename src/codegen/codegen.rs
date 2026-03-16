@@ -666,7 +666,8 @@ impl CodeGen {
                 res.val = ind.val;
             }
             AstNode::Variable(var) => { // var name
-                if let Some(v) = self.struct_tab.tab.get(&var) {
+                let paths = self.get_use_paths();
+                if let Some(v) = self.struct_tab.get(&var, &paths) {
                     res.ftype = FType::Struct(v.static_name);
                     return res;
                 };
@@ -1004,7 +1005,8 @@ impl CodeGen {
             }
             AstNode::Structure { name, fields: _, public: _, attrs } => {
                 let name_st = name.path_to_string();
-                let struct_dat = self.struct_tab.tab.get(&name_st)
+                let paths = self.get_use_paths();
+                let struct_dat = self.struct_tab.get(&name_st, &paths)
                     .expect("Can't get struct info");
 
                 let typedef = TypeDef {
@@ -1025,8 +1027,9 @@ impl CodeGen {
                 
                 let res_tmp = self.new_temp();
                 let field_tmp = self.new_temp();
+                let paths = self.get_use_paths();
 
-                let struct_dat = self.struct_tab.tab.get(&name_st)
+                let struct_dat = self.struct_tab.get(&name_st, &paths)
                     .expect("Can't get struct info")
                     .clone();
 
@@ -1074,13 +1077,14 @@ impl CodeGen {
 
                 let gd = self.gen_expr(val.node);
                 let tmp = self.new_temp();
+                let paths = self.get_use_paths();
                 
                 let struct_name = match gd.ftype.if_struct() {
                     Some(s) => s.to_owned(),
                     None => panic!("Unexpected non-struct type {:?}", gd.ftype)
                 };
 
-                let struct_info = self.struct_tab.tab.get(&struct_name)
+                let struct_info = self.struct_tab.get(&struct_name, &paths)
                     .expect("Internal: can't get struct info");
 
                 let field_info = struct_info.fields.get(&field_name)
@@ -1095,11 +1099,16 @@ impl CodeGen {
                         Value::Const(field_info.offset as u64)
                     )
                 );
+                res.val = Some(tmp.clone());
+
                 if !self.need_addr {
+                    let load_tmp = self.new_temp();
+                    res.val = Some(load_tmp.clone());
+
                     let field_qtype = Self::match_ft_qbf_t(field_info.ftype, true);
 
                     self.fbuild.assign_instr(
-                        tmp.clone(),
+                        load_tmp.clone(),
                         field_qtype.clone(),
                         Instr::Load(
                             field_qtype,
@@ -1108,9 +1117,8 @@ impl CodeGen {
                     );
                 }
                 res.ftype = field_info.ftype;
-                res.val = Some(tmp);
             }
-            AstNode::StructImpl { name, body } => {
+            AstNode::StructImpl { name, body, Trait } => {
                 let _gd = self.gen_expr(body.node);
             }
             AstNode::MethodCall { name, args, idx } => {
@@ -1172,6 +1180,9 @@ impl CodeGen {
             }
             AstNode::Usemod { name } => {
                 self.usedmods.push(name.path_to_string());
+            }
+            AstNode::Trait { name, body, public } => {
+
             }
             AstNode::none => {}
             other => {
@@ -1618,7 +1629,8 @@ impl CodeGen {
                 let tmp = self.new_temp();
                 let s = match rightdat.ftype {
                     FType::Struct(st) => {
-                        let struct_info = self.struct_tab.tab.get(st)
+                        let paths = self.get_use_paths(); 
+                        let struct_info = self.struct_tab.get(st, &paths)
                             .expect(&format!(
                                     "Internal: can't get struct {}",
                                     st)

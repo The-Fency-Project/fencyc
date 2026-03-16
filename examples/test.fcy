@@ -1,3 +1,5 @@
+use main::Person;
+
 module libc {
     pub extern func malloc(n: uint) -> ptr;
     pub extern func free(p: ptr);
@@ -18,22 +20,21 @@ impl Person {
         res.age = age;
         return res;
     }
+}
 
-    pub func drop(self: h_Person) {
-        printintrin "dropping ";
+// TODO
+pub trait Drop<T: [Iter], E: [Abc]> {
+    pub func drop(self: *T) {}
+}
+
+impl Drop for Person {
+    pub func drop(self: *Person) {
         printintrin self.name;
         return;
     }
 }
 
-use main::Person;
-
-func main() {
-    //let ps = Person {
-    //    name: "won't compile";
-    //    age: 0u;
-    //};
-
+func main() { 
     let p = Person::new_person("John", 69u);
     let p2 = Person::new_person("NotJohn", 67u);
     let p3 = p2;

@@ -2,6 +2,23 @@ use std::{collections::{HashMap, HashSet}, io::BufRead};
 
 use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, logger::logger::{ErrKind, LogLevel}, seman::seman::{FType, StructTable}};
 
+macro_rules! unwrap_or_invalid {
+    ($opt:expr, $parser:expr) => {
+        match $opt {
+            Some(v) => v,
+            None => {
+                return AstNode::Invalid(LogLevel::Error(
+                    ErrKind::ParseExpectedIdt(
+                        $parser
+                            .peek()
+                            .map_or(Tok::EOF, |t| t.tok.clone())
+                    )
+                ));
+            }
+        }
+    };
+}
+
 pub struct FcParser {
     tokens: Vec<Token>,
     pos: usize,
@@ -15,6 +32,8 @@ pub struct FcParser {
     funcs: FuncTable,
     pub structs: StructTable,
     nm_interner: NameInterner,
+    generics: Vec<GenericType>,
+    traits: Vec<TraitInfo>,
 }
 
 /// Parser based on Pratt parsing algorithm
@@ -30,7 +49,9 @@ impl FcParser {
             curmod: "main".to_owned(),
             funcs: FuncTable::new(),
             structs: StructTable::new(),
-            nm_interner: NameInterner { map: HashMap::new() }
+            nm_interner: NameInterner { map: HashMap::new() },
+            generics: Vec::new(),
+            traits: Vec::new(),
         }
     }
 
@@ -453,19 +474,22 @@ impl FcParser {
                     *h += 1;
                     *h
                 };
+
+                let is_public = self.prev_flags.contains(&ParseFlags::Public); 
                 
                 AstNode::FunctionOverload { 
                     func: Box::new(f.0),
                     idx: idx,
-                    public: self.prev_flags.contains(&ParseFlags::Public) 
+                    public: is_public
                 }
             }
 
             Tok::Keyword(Kword::Return) => {
                 if let Some(t) = self.peek() {
                     if t.tok == Tok::Semicol {
-                        return AstNode::ReturnVal { val: Box::new(AstRoot 
-                            { node: AstNode::none, line: self.line }) 
+                        return AstNode::ReturnVal { val: Box::new(AstRoot::new( 
+                                AstNode::none, self.line
+                            ))
                         };
                     }
                 }
@@ -519,6 +543,12 @@ impl FcParser {
 
             Tok::Keyword(Kword::Impl) => {
                 let res = self.parse_impl();
+                res
+            }
+
+            Tok::Keyword(Kword::Trait) => {
+                let res = self.parse_trait();
+                self.traits.push(TraitInfo::from_astn(&res));
                 res
             }
 
@@ -598,6 +628,7 @@ impl FcParser {
                 .collect(),
             false => vec![first]
         };
+        let mut generics = HashSet::new();
 
         while let Some(tok) = self.peek() {
             match &tok.tok {
@@ -608,13 +639,57 @@ impl FcParser {
                     let next = self.expect_idt()
                         .expect("Expected identifier after ::");
                     segments.push(next);
-                }
+                },
+                Tok::LAngBr => {
+                    self.consume();
+                    loop {
+                        if self.peek_is(Tok::RAngBr) {
+                            self.consume();
+                            break;
+                        } else if self.peek_is(Tok::Comma) {
+                            self.consume();
+                        }
+
+                        let name = unwrap_or_invalid!(self.expect_idt(), self); 
+                        let mut bounds = Vec::new();
+                        if self.peek_is(Tok::Colon) {
+                            self.consume();
+                            self.expect(Tok::LBr);
+                            while let Some(tokb) = self.peek() {
+                                match &tokb.tok {
+                                    Tok::Identifier(idt) => {
+                                        let path = self.parse_path(idt.clone());
+                                        bounds.push(path.path_to_string());
+                                        self.consume();
+                                    }
+                                    Tok::RBr => {
+                                        self.consume();
+                                        break;
+                                    }
+                                    other => {
+                                        return AstNode::Invalid(LogLevel::Error(
+                                            ErrKind::ParseUnexpected(other.clone())
+                                            )
+                                        );
+                                    } 
+                                }
+                            }
+                        }
+                        let g = GenericType::new(name, bounds);
+                        generics.insert(g);
+                    }
+                }  
                 _ => break,
             }
         }
 
-        AstNode::Path { segments }
+        AstNode::Path { 
+            segments,
+            generic: generics,
+        }
     }
+
+
 
     fn parse_call(&mut self, idt: &AstNode) -> AstNode {
         let args_nodes = self.parse_args_call();
@@ -825,6 +900,8 @@ impl FcParser {
 
         let ret_type = self.parse_func_rettype();
 
+        let is_public = self.prev_flags.contains(&ParseFlags::Public);
+
         if !externed {
             let body = self.parse_expr(0);
 
@@ -833,14 +910,14 @@ impl FcParser {
                 args: args, 
                 ret_type: ret_type, 
                 body: Box::new(body.node),
-                public: self.prev_flags.contains(&ParseFlags::Public) 
+                public: is_public 
             }, name.path_to_string())
         } else {
             (AstNode::ExternedFunc { 
                 name: Box::new(name.clone()),
                 args: args, 
                 ret_type: ret_type,
-                public: self.prev_flags.contains(&ParseFlags::Public),
+                public: is_public,
                 real_name: Box::new(AstNode::string_to_path(&name_start)),
             }, name.path_to_string())
         }
@@ -1078,13 +1155,19 @@ impl FcParser {
     }
 
     fn parse_impl(&mut self) -> AstNode {
-        let name_start = self.expect_idt().unwrap_or_else(|| {
-            panic!("{}: Expected function name", self.line)
-        });
-        let name_start_mod = format!("{}::{}", self.curmod, name_start);
+        let name = self.path_helper();
+        let mut trait_impl = false;
 
-        let name = self.parse_path(name_start_mod);
-        let st_name = name.path_to_string();
+        let name_struct = if self.peek_is(Tok::Keyword(Kword::For)) {
+            self.consume();
+            let name_struct = self.path_helper();
+            trait_impl = true;
+            self.prev_flags.insert(ParseFlags::TraitImpl(name.path_to_string()));
+            name_struct
+        } else {
+            name.clone()
+        };
+        let st_name = name_struct.path_to_string();
 
         self.prev_flags.insert(ParseFlags::StructImpl(st_name.clone()));
 
@@ -1093,11 +1176,58 @@ impl FcParser {
         let body = self.parse_expr(0);
         self.curmod = old_mod;
         
-        self.prev_flags.remove(&ParseFlags::StructImpl(st_name));
+        self.prev_flags.remove(&ParseFlags::StructImpl(st_name.clone()));
 
-        AstNode::StructImpl {
+        if !trait_impl {
+            AstNode::StructImpl {
+                name: Box::new(name),
+                body: Box::new(body),
+                Trait: None,
+            }
+        } else {
+            self.prev_flags.remove(&ParseFlags::TraitImpl(st_name));
+            AstNode::StructImpl {
+                name: Box::new(name_struct),
+                body: Box::new(body),
+                Trait: Some(Box::new(name)),
+            }
+        }
+    }
+
+    fn path_helper(&mut self) -> AstNode {
+        let name_start = self.expect_idt().unwrap_or_else(|| {
+            panic!("{}: Expected function name", self.line)
+        });
+
+        let name_raw = self.parse_path(name_start);
+        let name_raw_st = name_raw.path_to_string();
+        let name = match name_raw_st.contains("::") {
+            true => {
+                name_raw 
+            }
+            false => {
+                let withmod = format!("{}::{}", self.curmod, name_raw_st);
+                AstNode::string_to_path(&withmod)
+            }
+        };
+        name
+    }
+
+    fn parse_trait(&mut self) -> AstNode {
+        let public = self.prev_flags.contains(&ParseFlags::Public);
+
+        let name = self.path_helper();
+        
+        self.prev_flags.insert(ParseFlags::Trait);
+
+        let body = self.parse_expr(0);
+
+        self.prev_flags.remove(&ParseFlags::Trait);
+
+        AstNode::Trait {
             name: Box::new(name),
-            body: Box::new(body),
+            body: Box::new(body.node),
+            public,
         }
     }
 }
@@ -1128,7 +1258,8 @@ pub enum AstNode {
     },
 
     Path {
-        segments: Vec<String>
+        segments: Vec<String>,
+        generic:  HashSet<GenericType>,
     },
 
     BinaryOp {
@@ -1255,6 +1386,7 @@ pub enum AstNode {
     StructImpl {
         name: Box<AstNode>,
         body: Box<AstRoot>,
+        Trait: Option<Box<AstNode>>,
     },
 
     MethodCall {
@@ -1266,14 +1398,21 @@ pub enum AstNode {
     Usemod {
         name: Box<AstNode>, // path
     },
+
+    Trait {
+        name: Box<AstNode>,
+        body: Box<AstNode>,
+        public: bool,
+    },
 }
 
 impl AstNode {
     /// Get path segments, 
     /// panic if its not a path node.
     pub fn path_to_segs(&self) -> Vec<String> {
+        // TODO: generics here 
         match self {
-            AstNode::Path { segments } => {
+            AstNode::Path { segments, .. } => {
                 segments.clone()
             }
             other => panic!("Expected Path node, got {:?}", other)
@@ -1287,7 +1426,10 @@ impl AstNode {
     }
 
     pub fn segs_to_path(segs: &Vec<String>) -> AstNode {
-        AstNode::Path { segments: segs.clone() }
+        AstNode::Path { 
+            segments: segs.clone(), 
+            generic: HashSet::new() 
+        }
     }
 
     pub fn string_to_path(st: &str) -> AstNode {
@@ -1370,6 +1512,8 @@ pub enum ParseFlags {
     Public,
     StructImpl(String),
     Attrs(Vec<Attr>),
+    Trait,
+    TraitImpl(String),
 }
 
 /// for more memory efficiency
@@ -1396,6 +1540,7 @@ pub fn match_ftype(lit: &str, interner: &mut NameInterner) -> Option<FType> {
         "bool" => Some(FType::bool),
         "str" => Some(FType::strconst),
         "single" => Some(FType::single),
+        "float" => Some(FType::single),
         "u32" => Some(FType::u32),
         "i32" => Some(FType::i32),
         "ubyte" => Some(FType::ubyte),
@@ -1424,12 +1569,17 @@ pub fn match_ftype(lit: &str, interner: &mut NameInterner) -> Option<FType> {
 #[derive(Debug, Clone)]
 pub struct AstRoot {
     pub node: AstNode,
-    pub line: usize 
+    pub line: usize,
+    pub attrs: Vec<Attr>,
 }
 
 impl AstRoot {
     pub fn new(node: AstNode, line: usize) -> AstRoot {
-        AstRoot { node: node, line: line }
+        AstRoot { 
+            node: node, 
+            line: line,
+            attrs: Vec::new(),
+        }
     }
 }
 
@@ -1547,6 +1697,7 @@ impl FuncTable {
     }
 }
 
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Attr {
     Heap,
@@ -1558,6 +1709,52 @@ impl Attr {
         match value {
             "heap" => Attr::Heap,
             other  => Attr::Custom(other.to_owned()), 
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenericType {
+    name:   String,
+    bounds: Vec<String>, // vec of needed trait names
+}
+
+impl GenericType {
+    pub fn new(name: String, bounds: Vec<String>) -> GenericType {
+        GenericType { name, bounds }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitInfo {
+    pub path: AstNode,
+    pub req_funcs: Vec<FuncDat>,
+}
+
+impl TraitInfo {
+    pub fn from_astn(n: &AstNode) -> TraitInfo {
+        match n {
+            AstNode::Trait { name, body, public } => {
+                let mut funcs = Vec::new();
+                match &**body {
+                    AstNode::CodeBlock { exprs } => {
+                        for e in exprs {
+                            let err_msg = format!("Expected function, found {:#?}",
+                                e.node);
+                            let fdat = FuncDat::new_from_astn(&e.node)
+                                .expect(&err_msg);
+                            funcs.push(fdat);
+                        }
+                    }
+                    other => unreachable!("Expected codeblock, found {:#?}", other)
+                }
+
+                TraitInfo { 
+                    path: *name.clone(), 
+                    req_funcs: funcs
+                }
+            }
+            other => unreachable!("Expected trait node, found {:#?}", other)
         }
     }
 }

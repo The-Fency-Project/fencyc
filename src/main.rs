@@ -146,7 +146,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
             panic!("Error writing temp into file: {}", e.to_string());
         }; 
 
-        let nname = match assemble(&temp_fname, flags.target) {
+        let nname = match genasm(&temp_fname, flags.target) {
             CompilationError::OkFile(f) => {f},
             _other => {
                 //logger.extrn_err = other; TODO: send 
@@ -191,7 +191,7 @@ enum CompilationError {
     Unknown,
 }
 
-fn assemble(input_name: &str, t: Target)
+fn genasm(input_name: &str, t: Target)
         -> CompilationError {
     let nat_fname = input_name.replace(".ssa", ".s");
     
@@ -204,17 +204,16 @@ fn assemble(input_name: &str, t: Target)
     };
     print_stds(out1);
  
-    
-    release_cleanup(vec![input_name]);
+    release_cleanup(&vec![input_name]);
 
     CompilationError::OkFile(nat_fname.clone())
 }
 
-fn link(nat_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>, 
+fn link(asm_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>, 
     flags: &InputFlags, fcy_paths: &Vec<PathBuf>)
     -> Result<(), CompilationError> {
     let mut args: Vec<&str> = Vec::new();
-    args.extend(nat_fnames);
+    args.extend(asm_fnames);
     
     if !flags.onlyobjs {
         if flags.shared {
@@ -248,12 +247,12 @@ fn link(nat_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>,
         }
     };
     print_stds(out2);
-
+    release_cleanup(asm_fnames);
 
     Ok(())
 }
 
-fn release_cleanup(files: Vec<&str>) {
+fn release_cleanup(files: &Vec<&str>) {
     if !cfg!(debug_assertions) {
         for file in files {
             if let Err(e) = std::fs::remove_file(file) {

@@ -337,6 +337,9 @@ impl Logger {
                         {}: `{} {{..}}` creates on stack",
                         ft, help, ft)
                     }
+                    ErrKind::ParseUnexpected(tok) => {
+                        format!("Parse: Unexpected tok {:?}", tok)
+                    }
                     ErrKind::Internal(e) => {
                         format!("Internal error: {}", e)
                     }
@@ -474,6 +477,7 @@ pub enum ErrKind {
     HeapOnlyStack(FType),
                                  
     ParseExpectedIdt(Tok), // tok 
+    ParseUnexpected(Tok),
 }
 
 #[derive(Debug, Clone)]

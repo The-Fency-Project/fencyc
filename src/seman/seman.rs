@@ -57,6 +57,7 @@ pub enum FType {
     single,
     any, // some kind of wildcard for seman 
     Ptr, // ftype id 
+    Generic(usize), // idx in generic table
 }
 
 impl Into<qbe::Type> for FType {
@@ -105,16 +106,17 @@ impl fmt::Display for FType {
             FType::Array(typeid, count, arridx) => {
                 write!(f, "Array(typeid={}, count={}, arridx={})", typeid, count, arridx)
             }
-            FType::Struct(name) => write!(f, "s_{}", name),
-            FType::StructPtr(name) => write!(f, "ptr_{}", name),
+            FType::Struct(name)        => write!(f, "s_{}", name),
+            FType::StructPtr(name)     => write!(f, "ptr_{}", name),
             FType::StructHeapPtr(name) => write!(f, "h_{}", name),
-            FType::ubyte => write!(f, "ubyte"),
-            FType::ibyte => write!(f, "ibyte"),
-            FType::u32 => write!(f, "u32"),
-            FType::i32 => write!(f, "i32"),
-            FType::single => write!(f, "single"),
-            FType::any => write!(f, "any"),
-            FType::Ptr => write!(f, "Ptr"),
+            FType::ubyte      => write!(f, "ubyte"),
+            FType::ibyte      => write!(f, "ibyte"),
+            FType::u32        => write!(f, "u32"),
+            FType::i32        => write!(f, "i32"),
+            FType::single     => write!(f, "single"),
+            FType::any        => write!(f, "any"),
+            FType::Ptr        => write!(f, "Ptr"),
+            FType::Generic(i) => write!(f, "Generic of id {}", i),
         }
     }
 }
@@ -354,6 +356,7 @@ impl SemAn {
                         self.fname.clone()
                     ));
                 };
+                let paths = self.get_use_paths();
 
                 let res_ft = match ft {
                     FType::none => {
@@ -366,7 +369,7 @@ impl SemAn {
                     }
                     ft if ft.if_struct().is_some() => {
                         let name = ft.if_struct().unwrap();
-                        if let Some(si) = self.struct_tab.tab.get(name) {
+                        if let Some(si) = self.struct_tab.get(name, &paths) {
                             if !si.public && !name.contains(&self.module) {
                                 logger.send(LogMessage::new(
                                     LogLevel::Error(ErrKind::NotPubStruct(name.to_owned())),
@@ -538,12 +541,12 @@ impl SemAn {
                 }
             }
             AstNode::Variable(var) => {
-                if let Some(_v) = self.struct_tab.tab.get(var) {
+                let paths = self.get_use_paths();
+                if let Some(_v) = self.struct_tab.get(var, &paths) {
                     exprdat.ftype = FType::Struct("");
                     return exprdat;
                 }
     
-                let paths = self.get_use_paths();
                 if self.func_table.get_func(var, &paths).is_some() {
                     // TODO: func type
                     return exprdat;
@@ -735,7 +738,8 @@ impl SemAn {
                     match arg.ftype {
                         ft if ft.if_struct().is_some() => {
                             let name = ft.if_struct().unwrap();
-                            if let Some(si) = self.struct_tab.tab.get(name) {
+                            let paths = self.get_use_paths();
+                            if let Some(si) = self.struct_tab.get(name, &paths) {
                                 if !si.public && !name.contains(&self.module) {
                                     logger.send(LogMessage::new(
                                         LogLevel::Error(ErrKind::NotPubStruct(name.to_owned())),
@@ -972,6 +976,7 @@ impl SemAn {
 
                 let elem_type = match array_symb.ftype {
                     FType::Array(fti, _, _) => FType::from_idx(fti),
+                    FType::strconst         => Some(FType::ubyte),
                     _other => unreachable!(),
                 };
 
@@ -1085,7 +1090,8 @@ impl SemAn {
                     }
                 };
 
-                let struct_info = match self.struct_tab.tab.get(&struct_name) {
+                let paths = self.get_use_paths();
+                let struct_info = match self.struct_tab.get(&struct_name, &paths) {
                     Some(v) => v,
                     None => {
                         logger.send(LogMessage::new(
@@ -1124,7 +1130,7 @@ impl SemAn {
                     return exprdat;
                 }
             }
-            AstNode::StructImpl { name, body } => {
+            AstNode::StructImpl { name, body, Trait } => {
                 let old_mod = self.module.clone();
                 self.module = name.path_to_string();
                 
@@ -1133,6 +1139,7 @@ impl SemAn {
                 self.in_impl = String::new();
 
                 self.module = old_mod;
+                // TODO: trait 
             }
             AstNode::MethodCall { name, args, idx } => {
                 let first_arg = args.get(0).expect(&format!(
@@ -1389,6 +1396,19 @@ impl StructTable {
         StructTable { 
             tab: HashMap::new()
         }
+    }
+
+    pub fn get(&mut self, name: &str, usemods: &Vec<String>) -> Option<StructInfo> {
+        if let Some(v) = self.tab.get(name) {
+            return Some(v.clone())
+        }; 
+        for modnm in usemods {
+            let nm = format!("{}::{}", modnm, name);
+            if let Some(v) = self.tab.get(&nm) {
+                return Some(v.clone());
+            };
+        }
+        return None;
     }
 
     pub fn from_several(tabs: &Vec<StructTable>) -> StructTable {
