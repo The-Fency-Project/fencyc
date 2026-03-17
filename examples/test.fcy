@@ -23,7 +23,7 @@ impl Person {
 }
 
 // TODO
-pub trait Drop<T: [Iter], E: [Abc]> {
+pub trait Drop<T> {
     pub func drop(self: *T) {}
 }
 
@@ -41,5 +41,26 @@ func main() {
 
     printintrin p.age;
 
+    #[target(amd64_win)] {
+        printintrin "Hi windows (i hate windows)";
+        hiwin();
+    }
+
+    let a = "abc";
+    if a[0u] == ('a')$ubyte {
+        printintrin 1;
+    } else {
+        printintrin 0;
+    }
+
+    if a == "abc" {
+        printintrin 1;
+    }
+
+    return;
+}
+
+#[target(amd64_win)] func hiwin() {
+    printintrin "hello windows";
     return;
 }

@@ -1,6 +1,7 @@
-use std::{path::PathBuf, process::{Command, exit}, sync::mpsc::{self, Sender}, time::Instant};
+use std::{path::{Path, PathBuf}, process::{Command, exit}, sync::mpsc::{self, Sender}, time::Instant};
 
-use clap::Parser;
+use clap::{FromArgMatches, Parser};
+use colored::Colorize;
 
 mod fcparse {pub mod fcparse;}
 mod codegen {pub mod codegen;}
@@ -9,7 +10,7 @@ mod seman {pub mod seman;}
 mod logger {pub mod logger;}
 mod tests;
 mod cli;
-use crate::{cli::{Commands, InputFlags, Target}, codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstRoot, FuncTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, StructTable}};
+use crate::{cli::{Commands, InputFlags, Target, def_ldas}, codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstRoot, FuncTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, StructTable}};
 
 // prepend home here 
 const FENCY_DIR: &str = ".fency";
@@ -51,6 +52,49 @@ fn main() {
         }
         Some(Commands::ListTargets) => {
             Target::list(); 
+        }
+        Some(Commands::Build { args }) => {
+            let build_scr_spath = "build.fcy".to_owned();
+            let build_scr_path = Path::new(&build_scr_spath);
+            if !build_scr_path.exists() {
+                println!("{}: build script file doesn't exist\n\
+                {}: `fencyc build` is intended to be used with build.fcy script",
+                "ERROR".red(), "help".purple());
+                exit(1);
+            }
+
+            let build_o_name = "builder".to_owned();
+            let mut iflags = InputFlags::default();
+            iflags.ldas = def_ldas();
+            iflags.target = Target::get_def();
+
+            match compile(
+                vec![build_scr_spath], Some(build_o_name.clone()), 
+                iflags,
+                vec![], paths
+            ) {
+                Ok(_) => {},
+                Err(_) => {exit(1);}
+            }
+
+            let args_slice: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            #[cfg(not(target_os = "windows"))] let build_run_name = 
+                format!("./{}", build_o_name);
+           
+            #[cfg(target_os = "windows")] let build_run_name = 
+                format!("{}", build_o_name);
+
+            match run_command(&build_run_name, &args_slice) {
+                Ok(vs) => {
+                    for v in vs {
+                        println!("{}", v);
+                    }
+                }
+                Err(_) => {
+                    println!("Unexpected command execution failure");
+                    exit(1);
+                }
+            }
         }
         None => {
             eprintln!("Please, specify command or try fencyc --help.");
@@ -101,7 +145,8 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
             flags.permissive, 
             functab.clone(), 
             fname.clone(),
-            struct_tab.clone()
+            struct_tab.clone(),
+            flags.target
         );
         seman.analyze(&ast, &log_tx);
 
@@ -134,7 +179,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         let matched_overloads = seman.matched_overloads.clone();
 
         let mut gene = cgen::CodeGen::new(ast, matched_overloads, 
-            idx == 0, functab.clone(), struct_tab.clone());
+            idx == 0, functab.clone(), struct_tab.clone(), flags.target);
         gene.gen_everything(flags.shared);
         if cfg!(debug_assertions) { 
             println!("{}", gene.module);

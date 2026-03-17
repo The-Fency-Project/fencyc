@@ -49,7 +49,7 @@ pub enum Tok {
     LBr,
     RBr,
     At, // @
-    DQuote, // "
+    SQuote, // '
     Combined(Box<Tok>, Box<Tok>),
 
     EOF,
@@ -240,7 +240,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                     res.push(Token::new(Tok::LABEq, line));
                     chars.next();
                 } else {
-                      res.push(Token::new(Tok::LAngBr, line));
+                res.push(Token::new(Tok::LAngBr, line));
                 };
 
             },
@@ -264,7 +264,6 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             'a'..='z' | 'A'..='Z' | '_' => {
                 let mut idn = String::new();
                 while let Some(ic) = chars.peek() {
-                    //println!("{}", ic);
                     if ic.is_alphanumeric() || *ic == '_' {
                         idn.push(*ic);
                         chars.next();
@@ -283,6 +282,15 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                 } else {
                     res.push(Token::new(Tok::Dot, line));
                 }
+            }
+            '\'' => {
+                chars.next();
+                if let Some(nc) = chars.peek() {
+                    let nc_byte = u32::from(*nc);
+                    res.push(Token::new(Tok::U32(nc_byte), line));
+                    chars.next();
+                }
+                chars.next(); // expecting next squote 
             }
             other => {
                 panic!("{}: Unknown token {}", line, other);

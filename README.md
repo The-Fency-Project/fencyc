@@ -51,7 +51,12 @@ Compile some program:
 - `fencyc input input.fcy`     
 Run as normal program.
 Flags: see `fencyc help` for general help or `fencyc help subcommand` to see info about 
-specific subcommand (e.g. `fencyc help input`)   
+specific subcommand (e.g. `fencyc help input`)  
+
+## Editor plugins
+For now, we have plugins for 2 code editors:
+1. [VS Code](https://github.com/The-Fency-Project/fcyvsc)
+2. [Vim/Nvim](https://github.com/The-Fency-Project/fcyvim)
 
 ## Docs
 Soon. For now, consider learning from `examples/` directory in numerical order (1_*, 2_*, ..)

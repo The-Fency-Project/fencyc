@@ -1,6 +1,8 @@
 use std::{collections::{HashMap, HashSet}, io::BufRead};
 
-use crate::{lexer::lexer::{Intrinsic, Kword, Tok, Token}, logger::logger::{ErrKind, LogLevel}, seman::seman::{FType, StructTable}};
+use clap::ValueEnum;
+
+use crate::{cli::Target, lexer::lexer::{Intrinsic, Kword, Tok, Token}, logger::logger::{ErrKind, LogLevel}, seman::seman::{FType, StructTable}};
 
 macro_rules! unwrap_or_invalid {
     ($opt:expr, $parser:expr) => {
@@ -34,6 +36,7 @@ pub struct FcParser {
     nm_interner: NameInterner,
     generics: Vec<GenericType>,
     traits: Vec<TraitInfo>,
+    trait_impls: HashMap<String, HashSet<String>>, // struct name -> traits
 }
 
 /// Parser based on Pratt parsing algorithm
@@ -52,6 +55,7 @@ impl FcParser {
             nm_interner: NameInterner { map: HashMap::new() },
             generics: Vec::new(),
             traits: Vec::new(),
+            trait_impls: HashMap::new(),
         }
     }
 
@@ -61,7 +65,7 @@ impl FcParser {
 
         while self.peek().is_some() {
             let expr = self.parse_expr(0);
-
+            
             ast.push(expr);
         }
 
@@ -106,7 +110,18 @@ impl FcParser {
             };
         } 
 
-        AstRoot::new(left, line_n)
+        let mut res = AstRoot::new(left, line_n);
+        let attr_to_remove = self.prev_flags
+            .iter()
+            .find(|flag| matches!(flag, ParseFlags::Attrs(_)))
+            .cloned(); 
+        if let Some(ParseFlags::Attrs(mut attrs)) = attr_to_remove {
+            if !attrs.is_empty() && res.node.can_have_attrs() {
+                self.prev_flags.remove(&ParseFlags::Attrs(attrs.clone()));
+                res.attrs.extend(attrs.drain(..));
+            }
+        }
+        res
     }
 
     const PREFIX_BP: u8 = 22;
@@ -405,7 +420,6 @@ impl FcParser {
             }
 
             Tok::Intrin(intr) => {
-                // TODO
                 match intr {
                     Intrinsic::Sizeof => {
                         if self.peek_is(Tok::At) {
@@ -573,9 +587,28 @@ impl FcParser {
                 let mut arr: Vec<Attr> = Vec::new();
                 let line = self.line;
                 while let Some(t) = self.consume() {
+                    let t = t.clone();
                     match &t.tok {
                         Tok::Identifier(idt) => {
-                            let attr: Attr = Attr::from_str(&idt);
+                            let args: Vec<String> = if self.peek_is(Tok::LPar) {
+                                self.consume();
+                                let mut res = Vec::new();
+                                while let Some(ta) = self.consume() {
+                                    match &ta.tok {
+                                        Tok::Identifier(idt) => {
+                                            res.push(idt.to_owned());       
+                                        }
+                                        Tok::Comma => {}
+                                        Tok::RPar => {break;}
+                                        other => unimplemented!("{}: attribute {:#?}", 
+                                            line, other)
+                                    }
+                                }
+                                res
+                            } else {
+                                Vec::new()
+                            };
+                            let attr: Attr = Attr::from_str(&idt, &args);
                             arr.push(attr);
                         }
                         Tok::Comma => {},
@@ -903,7 +936,12 @@ impl FcParser {
         let is_public = self.prev_flags.contains(&ParseFlags::Public);
 
         if !externed {
-            let body = self.parse_expr(0);
+            let mut body = self.parse_expr(0);
+            if !body.attrs.is_empty() {
+                self.prev_flags.insert(ParseFlags::Attrs(
+                    body.attrs.drain(..).collect()
+                ));
+            }
 
             (AstNode::Function { 
                 name: Box::new(name.clone()), 
@@ -1162,6 +1200,17 @@ impl FcParser {
             self.consume();
             let name_struct = self.path_helper();
             trait_impl = true;
+
+            let nm_stc_s = name_struct.path_to_string();
+            match self.trait_impls.get_mut(&nm_stc_s) {
+                Some(v) => {v.insert(name.path_to_string());},
+                None => {
+                    self.trait_impls.insert(nm_stc_s, HashSet::from(
+                            [name.path_to_string()]
+                        ));
+                }
+            }
+            
             self.prev_flags.insert(ParseFlags::TraitImpl(name.path_to_string()));
             name_struct
         } else {
@@ -1217,12 +1266,13 @@ impl FcParser {
         let public = self.prev_flags.contains(&ParseFlags::Public);
 
         let name = self.path_helper();
+        let generic_names = name.get_generic_names();
         
-        self.prev_flags.insert(ParseFlags::Trait);
+        self.prev_flags.insert(ParseFlags::Trait(generic_names.clone()));
 
         let body = self.parse_expr(0);
 
-        self.prev_flags.remove(&ParseFlags::Trait);
+        self.prev_flags.remove(&ParseFlags::Trait(generic_names));
 
         AstNode::Trait {
             name: Box::new(name),
@@ -1458,6 +1508,32 @@ impl AstNode {
         }
         Self::string_to_path(&st)
     }
+
+    pub fn get_generic_names(&self) -> Vec<String> {
+        match self {
+            AstNode::Path { segments, generic } => {
+                let mut res = Vec::new();
+                for g in generic {
+                    res.push(g.name.clone());
+                }
+                res
+            }
+            other => unreachable!("Expected path node, found {:#?}", other)
+        } 
+    }
+
+    pub fn can_have_attrs(&self) -> bool {
+        match self {
+            AstNode::CodeBlock { exprs } => true,
+            AstNode::Structure { name, fields, public, attrs } => true,
+            AstNode::StructImpl { name, body, Trait } => true,
+            AstNode::Function { name, args, ret_type, body, public } => true,
+            AstNode::FunctionOverload { func, idx, public } => true,
+            AstNode::ExternedFunc { name, real_name, args, ret_type, public } => true,
+            AstNode::Module { name, node } => true,
+            other => false,
+        }
+    }
 }
 
 pub fn remove_struct_pref(s: &str) -> (String, String) {
@@ -1512,7 +1588,7 @@ pub enum ParseFlags {
     Public,
     StructImpl(String),
     Attrs(Vec<Attr>),
-    Trait,
+    Trait(Vec<String>), // generic typenames
     TraitImpl(String),
 }
 
@@ -1533,7 +1609,12 @@ impl NameInterner {
 }
 
 pub fn match_ftype(lit: &str, interner: &mut NameInterner) -> Option<FType> {
+//    generic_names: HashSet<String>) -> Option<FType> {
     match lit {
+        // any if generic_names.contains(any) => {
+        //     // TODO
+        //     Some(FType::Generic(0))
+        // }
         "uint" => Some(FType::uint),
         "int" => Some(FType::int),
         "double" => Some(FType::double),
@@ -1580,7 +1661,7 @@ impl AstRoot {
             line: line,
             attrs: Vec::new(),
         }
-    }
+    }    
 }
 
 #[derive(Debug, Clone)]
@@ -1701,13 +1782,26 @@ impl FuncTable {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Attr {
     Heap,
+    Target(Vec<Target>),
     Custom(String),
 }
 
 impl Attr {
-    fn from_str(value: &str) -> Self {
+    fn from_str(value: &str, args: &Vec<String>) -> Self {
         match value {
             "heap" => Attr::Heap,
+            "target" => {
+                let mut targets = Vec::new();
+                for arg in args {
+                    let tgt = match Target::from_str(arg, false) {
+                        Ok(v) => v,
+                        Err(e) => panic!("Target {} parsing exception: {}",
+                            arg, e)
+                    };
+                    targets.push(tgt);
+                }
+                Attr::Target(targets)
+            },
             other  => Attr::Custom(other.to_owned()), 
         }
     }

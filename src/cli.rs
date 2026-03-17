@@ -16,6 +16,7 @@ pub struct CliArgs {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Compile some files
     Input {
         #[arg(help = "List input .fcy source code files")]
         files: Vec<String>,
@@ -30,7 +31,14 @@ pub enum Commands {
         ldflags: Vec<String>,
     },
 
+    /// List available targets
     ListTargets,
+
+    /// Build project using build.fcy
+    Build {
+        #[arg(short, long, help = "Flags that will be passed into build (optional)")]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -66,7 +74,7 @@ pub struct InputFlags {
     pub shared: bool, // compile as shared library
 }
 
-fn def_ldas() -> String {
+pub fn def_ldas() -> String {
     #[cfg(target_os = "linux")]
     {
         return "gcc".to_string();
@@ -81,7 +89,7 @@ fn def_ldas() -> String {
     "gcc".to_string()
 }
 
-#[derive(Clone, ValueEnum, Copy, Debug, Default, EnumIter)]
+#[derive(Clone, ValueEnum, Copy, Debug, Default, EnumIter, PartialEq, Eq, Hash)]
 #[clap(rename_all = "snake_case")]
 pub enum Target {
     #[default]

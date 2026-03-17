@@ -3,6 +3,7 @@ use std::mem::discriminant;
 use std::sync::mpsc::Sender;
 
 
+use crate::cli::Target;
 use crate::codegen::codegen::CodeGen;
 use crate::fcparse::fcparse::{AstNode, Attr};
 use crate::fcparse::fcparse::{AstRoot, BinaryOp, FuncArg, 
@@ -281,13 +282,14 @@ pub struct SemAn {
     struct_tab: StructTable,
     line: usize,
     in_impl: String,
-    usedmods: Vec<String>, // paths to used modules
+    usedmods: Vec<String>, // paths to used modules 
+    target: Target,
 }
 
 impl SemAn {
     /// Inits semantic analyzer struct. Permissive flag for less type checks
     pub fn new(permissive: bool, functab: FuncTable, fname: String, 
-        struct_tab: StructTable) -> SemAn {
+        struct_tab: StructTable, tgt: Target) -> SemAn {
         SemAn {
             symb_table: SymbolTable::new(),
             cur_scope: 0,
@@ -304,6 +306,7 @@ impl SemAn {
             line: 0,
             in_impl: String::new(),
             usedmods: Vec::new(),
+            target: tgt,
         }
     }
 
@@ -343,6 +346,18 @@ impl SemAn {
         let mut exprdat = ExprDat::new(FType::none);
         let line = node.line;
         self.line = line;
+        
+        for attr in &node.attrs {
+            match attr {
+                Attr::Target(tgts) => {
+                    if !tgts.contains(&self.target) {
+                        return exprdat;
+                    }
+                }
+                other => {}
+            }
+        }
+
         match &node.node {
             AstNode::Assignment { name, val, ft } => {
                 self.expect_type = *ft;
@@ -977,7 +992,7 @@ impl SemAn {
                 let elem_type = match array_symb.ftype {
                     FType::Array(fti, _, _) => FType::from_idx(fti),
                     FType::strconst         => Some(FType::ubyte),
-                    _other => unreachable!(),
+                    _other => unreachable!("Indexing for {}", _other),
                 };
 
                 let idx_exprdat = self.analyze_expr(&idx, logger);

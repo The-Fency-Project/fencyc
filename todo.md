@@ -1,10 +1,11 @@
 ## Current:
 - traits (seman, gen, self, etc) 
 - trait implements table
+- generic types
 - glob for input
 - generic funcs 
 - generic structs
-- ptrs to primitives
+- ptrs for primitives
 - array assigm story
 ### Future:
 Small/medium:
@@ -19,8 +20,7 @@ Small/medium:
 - block return
 - va args
 - stack strs
-- attrs like `#[target(amd64_sysv amd64_win)]`
 Major:
-- traits
+- traits, generics
 - wiki
 - stdlib

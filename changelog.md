@@ -1,7 +1,9 @@
-v0.10.0-pre1:
-- fixed use paths for structs
-- `float` now may be used as `single` typename
-- fixed str indexing
-- some name changes in `src/main.rs`
-- release cleanup for assemblies
-- basic traits parsing
+v0.10.1:
+- some detour from traits here
+- updated README (added editor plugins info)
+- now `#[heap]` structs are now being freed by RAII even if its `*T`
+- conditional compilation for targets
+- `fencyc build` to build project with `build.fcy`
+- str byte indexing now works
+- char loading 
+- strings compare work

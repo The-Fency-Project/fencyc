@@ -1,9 +1,7 @@
-use std::{collections::HashMap, ptr::hash};
+use std::{backtrace::Backtrace, collections::HashMap, ptr::hash};
 
 use crate::{
-    fcparse::fcparse::{self as fparse, AstRoot, CmpOp, FuncArg, FuncTable, UnaryOp},
-    lexer::lexer::Intrinsic,
-    seman::seman::{FSymbol, FType, OverloadTable, StructTable, SymbolTable, VarPosition},
+    cli::Target, fcparse::fcparse::{self as fparse, AstRoot, Attr, CmpOp, FuncArg, FuncTable, UnaryOp}, lexer::lexer::Intrinsic, seman::seman::{FSymbol, FType, OverloadTable, StructTable, SymbolTable, VarPosition}
 }; // AstNode;
 use fparse::AstNode;
 use qbe::{DataDef, DataItem, Function, Instr, Linkage, Module, Type, TypeDef, Value};
@@ -48,11 +46,12 @@ pub struct CodeGen {
     expected_type: FType,
     usedmods: Vec<String>,
     curmod: String,
+    target: Target,
 }
 
 impl CodeGen {
     pub fn new(ast: Vec<AstRoot>, mo: OverloadTable, first: bool,
-        fnctb: FuncTable, struct_tab: StructTable) -> CodeGen {
+        fnctb: FuncTable, struct_tab: StructTable, tgt: Target) -> CodeGen {
         CodeGen {
             ast: ast,
             cur_ast: 0,
@@ -75,6 +74,7 @@ impl CodeGen {
             expected_type: FType::none,
             usedmods: Vec::new(),
             curmod: "main".into(),
+            target: tgt,
         }
     }
 
@@ -90,6 +90,11 @@ impl CodeGen {
         let mut had_main = false;
        
         while let Some(r) = self.ast.get(self.cur_ast) {
+            if !self.should_gen(&r) {
+                self.cur_ast += 1;
+                continue;
+            }
+
             let node_cl = r.node.clone();
             if let AstNode::Function { name, .. } = &node_cl {
                 if (name.path_to_string() == "main::main") && (!had_main) && 
@@ -272,6 +277,9 @@ impl CodeGen {
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
                 for expr in exprs {
+                    if !self.should_gen(&expr) {
+                        continue;
+                    }
                     let gend = self.gen_expr(expr.node.clone());
                     res.instrs.extend(gend.instrs);
                     res.returned = gend.returned;
@@ -468,6 +476,7 @@ impl CodeGen {
                     FType::Array(el, _, _) => {
                         FType::from_idx(el).unwrap()
                     }
+                    FType::strconst => FType::ubyte, // byte-wise indexing
                     _other => unreachable!()
                 };
 
@@ -488,6 +497,7 @@ impl CodeGen {
                 
                 res.by_addr = self.need_addr;
                 if !self.need_addr {
+                    let el_qtype = Self::match_ft_qbf_t(el_ftype, true);
                     self.fbuild.assign_instr(
                         tmp.clone(),
                         Type::Long,
@@ -1312,6 +1322,9 @@ impl CodeGen {
                     Value::Const(0)
                 )
             }
+            (FType::u32, FType::ubyte) => {
+                Instr::And(src, Value::Const(255))
+            }
             (FType::ubyte, FType::bool) | (FType::ibyte, FType::bool) => {
                 Instr::Cmp(
                     Type::Byte,
@@ -1347,6 +1360,30 @@ impl CodeGen {
         let val1 = op1.val.unwrap();
         let val2 = op2.val.unwrap();
 
+        if op1.ftype == FType::strconst {
+            let func_tmp = self.new_temp();
+            let args = vec![
+                (Type::Long, val1.clone()), 
+                (Type::Long, val2.clone())
+            ];
+            self.fbuild.assign_instr(
+                func_tmp.clone(),
+                Type::Word,
+                Instr::Call("strcmp".into(), args, None) // libc
+            ); 
+            self.fbuild.assign_instr(
+                tmp.clone(), 
+                Type::Word,
+                Instr::Cmp(
+                    Type::Word,
+                    qbe::Cmp::Eq,
+                    func_tmp,
+                    Value::Const(0)
+                )
+            );
+            return tmp;
+        }
+
         let is_unsigned = op1.ftype == FType::uint;
 
         let qbe_cmp = match cmp_op {
@@ -1360,16 +1397,16 @@ impl CodeGen {
         };
 
         let instr = Instr::Cmp(
-                        Self::match_ft_qbf(op1.ftype),
-                        qbe_cmp,
-                        val1, val2
-                    );
+            Self::match_ft_qbf(op1.ftype),
+            qbe_cmp,
+            val1, val2
+        );
 
-        self.fbuild.add_instr(Instr::Assign(
+        self.fbuild.assign_instr(
             tmp.clone(),
             Type::Word,
-            Box::new(instr)
-        ));
+            instr
+        );
 
         tmp
     }
@@ -1402,9 +1439,21 @@ impl CodeGen {
 
                         self.fbuild.add_instr(Instr::Call(
                             drop_funcname.replace("::", "_"),
-                            args,
+                            args.clone(),
                             None
                         ));
+                    }
+
+                    if let Some(si) = self.struct_tab.get(st, &paths) {
+                        if si.attrs.contains(&fparse::Attr::Heap) {
+                            args.push((Type::Long, Value::Temporary(s.name.clone())));
+
+                            self.fbuild.add_instr(Instr::Call(
+                                "free".to_owned(),
+                                args,
+                                None
+                            ));       
+                        }
                     }
                 }
                 // heap ptr 
@@ -1433,6 +1482,20 @@ impl CodeGen {
         }
     }
 
+    fn should_gen(&self, r: &AstRoot) -> bool {
+        for attr in &r.attrs {
+            match &attr {
+                Attr::Target(tgts) => {
+                    if !tgts.contains(&self.target) {
+                        return false;
+                    }
+                }
+                other => {}
+            }
+        }
+        true
+    }
+
     /// presaves idx but wont push into sbuf
     fn alloc_label(&mut self) -> String {
         let name = format!("label_{}", self.labels.len());
@@ -1455,8 +1518,9 @@ impl CodeGen {
             },
             FType::strconst | FType::StructPtr(_)
                 | FType::StructHeapPtr(_) | FType::Ptr => Type::Long, // ptr 
-            FType::bool | FType::ubyte | FType::ibyte if straight 
-                => Type::Byte,
+            FType::bool | FType::ubyte if straight 
+                => Type::UnsignedByte,
+            FType::ibyte if straight => Type::SignedByte,
             FType::bool | FType::ubyte | FType::ibyte => Type::Word,
             FType::Struct(s) if straight => Type::Aggregate(
                 TypeDef { 
