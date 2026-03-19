@@ -1,4 +1,8 @@
 # fencyc
+![GitHub Release](https://img.shields.io/github/v/release/The-Fency-Project/fencyc)
+![GitHub License](https://img.shields.io/github/license/The-Fency-Project/fencyc)
+![GitHub commit activity](https://img.shields.io/github/commit-activity/m/The-Fency-Project/fencyc)
+
 The Fency programming language compiler - simple and modern language, aimed to be enjoyable.
 Think of this like this: Rust, but without borrow checker pain, simpler C interop,
 overloads and much more.

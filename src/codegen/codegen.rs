@@ -120,21 +120,24 @@ impl CodeGen {
     }
 
     fn gen_prologue(&mut self) {
+        let main_args = vec![
+            (Type::Word, Value::Temporary("argc".to_owned())),
+            (Type::Long, Value::Temporary("argv".to_owned()))
+        ];
         let mut mainf = Function::new(
             Linkage::public(), 
-            "main", 
-            Vec::new(), 
+            "main",
+            main_args.clone(),
             Some(Type::Word)
         );
 
         mainf.add_block("start");
         mainf.add_instr(
-            Instr::Call("main_main_0".into(), Vec::new(), None)
+            Instr::Call("main_main_0".into(), main_args, None)
         );
         mainf.add_instr(Instr::Ret(Some(Value::Const(0))));
 
         self.module.add_function(mainf);
-        
     }
 
     fn gen_expr(&mut self, node: AstNode) -> GenData {
@@ -1321,6 +1324,12 @@ impl CodeGen {
                     src,
                     Value::Const(0)
                 )
+            }
+            (FType::u32, FType::uint) => {
+                Instr::Extuw(src)
+            }
+            (FType::i32, FType::int) => {
+                Instr::Extsw(src)
             }
             (FType::u32, FType::ubyte) => {
                 Instr::And(src, Value::Const(255))

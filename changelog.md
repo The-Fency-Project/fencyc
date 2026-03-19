@@ -1,9 +1,7 @@
-v0.10.1:
-- some detour from traits here
-- updated README (added editor plugins info)
-- now `#[heap]` structs are now being freed by RAII even if its `*T`
-- conditional compilation for targets
-- `fencyc build` to build project with `build.fcy`
-- str byte indexing now works
-- char loading 
-- strings compare work
+v0.10.2:
+- main passing argc and argv
+- added convs: `u32 -> uint` and `i32 -> int`
+- added some fancy badges to README
+- fix for build
+- symboltable now works with indexmap in order to presave order for RAII
+- traits themselves finally done

@@ -1,14 +1,13 @@
 ## Current:
-- traits (seman, gen, self, etc) 
 - trait implements table
 - generic types
-- glob for input
 - generic funcs 
 - generic structs
 - ptrs for primitives
 - array assigm story
 ### Future:
 Small/medium:
+- glob for input
 - unsafe stuff
 - imports?
 - parallel compilation
@@ -20,6 +19,7 @@ Small/medium:
 - block return
 - va args
 - stack strs
+- slices
 Major:
 - traits, generics
 - wiki

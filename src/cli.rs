@@ -36,7 +36,8 @@ pub enum Commands {
 
     /// Build project using build.fcy
     Build {
-        #[arg(short, long, help = "Flags that will be passed into build (optional)")]
+        #[arg(short, long, help = "Flags that will be passed into build (optional)",
+            num_args=1..)]
         args: Vec<String>,
     },
 }

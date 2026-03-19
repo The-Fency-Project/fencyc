@@ -22,7 +22,6 @@ impl Person {
     }
 }
 
-// TODO
 pub trait Drop<T> {
     pub func drop(self: *T) {}
 }
@@ -34,7 +33,11 @@ impl Drop for Person {
     }
 }
 
-func main() { 
+func main(argc: uint, argv: [str]) { 
+    for let i = 0u in i < argc; i += 1u {
+        printintrin argv[i];
+    }
+
     let p = Person::new_person("John", 69u);
     let p2 = Person::new_person("NotJohn", 67u);
     let p3 = p2;

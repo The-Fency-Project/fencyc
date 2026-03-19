@@ -31,12 +31,12 @@ pub struct FcParser {
                                 // e.g. comma (further)
     prev_flags: HashSet<ParseFlags>,
     curmod: String, // cur module name
-    funcs: FuncTable,
+    pub funcs: FuncTable,
     pub structs: StructTable,
     nm_interner: NameInterner,
     generics: Vec<GenericType>,
-    traits: Vec<TraitInfo>,
-    trait_impls: HashMap<String, HashSet<String>>, // struct name -> traits
+    pub traits: TraitTable,
+    pub trait_impls: HashMap<String, HashSet<String>>, // struct name -> traits
 }
 
 /// Parser based on Pratt parsing algorithm
@@ -54,7 +54,7 @@ impl FcParser {
             structs: StructTable::new(),
             nm_interner: NameInterner { map: HashMap::new() },
             generics: Vec::new(),
-            traits: Vec::new(),
+            traits: TraitTable::new(),
             trait_impls: HashMap::new(),
         }
     }
@@ -562,7 +562,8 @@ impl FcParser {
 
             Tok::Keyword(Kword::Trait) => {
                 let res = self.parse_trait();
-                self.traits.push(TraitInfo::from_astn(&res));
+                let ti = TraitInfo::from_astn(&res);
+                self.traits.t.insert(ti.path.path_to_string(), ti);
                 res
             }
 
@@ -1256,7 +1257,9 @@ impl FcParser {
             }
             false => {
                 let withmod = format!("{}::{}", self.curmod, name_raw_st);
-                AstNode::string_to_path(&withmod)
+                let mut wmod = AstNode::string_to_path(&withmod);
+                wmod.add_generics(name_raw.get_generics());
+                wmod
             }
         };
         name
@@ -1522,6 +1525,24 @@ impl AstNode {
         } 
     }
 
+    pub fn get_generics(&self) -> HashSet<GenericType> {
+        match self {
+            AstNode::Path { segments, generic } => {
+                generic.clone()
+            }
+            other => unreachable!("Expected path node, found {:#?}", other)
+        } 
+    }
+
+    pub fn add_generics(&mut self, gs: HashSet<GenericType>) {
+        match self {
+            AstNode::Path { generic, .. } => {
+                generic.extend(gs);
+            }
+            other => unreachable!("Expected path node, found {:#?}", other),
+        }
+    }
+
     pub fn can_have_attrs(&self) -> bool {
         match self {
             AstNode::CodeBlock { exprs } => true,
@@ -1740,7 +1761,7 @@ impl FuncTable {
         FuncTable { ft: HashMap::new() }
     }
 
-    pub fn from_several(fts: &mut Vec<FuncTable>) -> FuncTable {
+    pub fn from_several(mut fts: Vec<FuncTable>) -> FuncTable {
         let mut ft = FuncTable::new();
 
         for v in fts.drain(..) {
@@ -1822,14 +1843,14 @@ impl GenericType {
 #[derive(Debug, Clone)]
 pub struct TraitInfo {
     pub path: AstNode,
-    pub req_funcs: Vec<FuncDat>,
+    pub req_funcs: HashMap<String, FuncDat>,
 }
 
 impl TraitInfo {
     pub fn from_astn(n: &AstNode) -> TraitInfo {
         match n {
             AstNode::Trait { name, body, public } => {
-                let mut funcs = Vec::new();
+                let mut funcs = HashMap::new();
                 match &**body {
                     AstNode::CodeBlock { exprs } => {
                         for e in exprs {
@@ -1837,7 +1858,11 @@ impl TraitInfo {
                                 e.node);
                             let fdat = FuncDat::new_from_astn(&e.node)
                                 .expect(&err_msg);
-                            funcs.push(fdat);
+                            let segs = fdat.name.path_to_segs();
+                            let fname = segs
+                                .last()
+                                .expect("Empty func name!");
+                            funcs.insert(fname.to_owned(), fdat);
                         }
                     }
                     other => unreachable!("Expected codeblock, found {:#?}", other)
@@ -1850,5 +1875,28 @@ impl TraitInfo {
             }
             other => unreachable!("Expected trait node, found {:#?}", other)
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitTable {
+    pub t: HashMap<String, TraitInfo>,
+}
+
+impl TraitTable {
+    pub fn new() -> TraitTable {
+        TraitTable { 
+            t: HashMap::new()
+        }
+    }
+
+    pub fn from_several(mut tts: Vec<TraitTable>) -> TraitTable {
+        let mut res = TraitTable::new();
+
+        for tt in tts.drain(..) {
+            res.t.extend(tt.t);
+        }
+
+        res
     }
 }

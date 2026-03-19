@@ -2,7 +2,7 @@ use std::{sync::mpsc::{Receiver, Sender}, thread::{JoinHandle, spawn}, time::Ins
 
 use colored::Colorize;
 
-use crate::{CompilationError, fcparse::fcparse::BinaryOp, lexer::lexer::{Tok, Token}, seman::seman::FType};
+use crate::{CompilationError, fcparse::fcparse::{AstNode, BinaryOp}, lexer::lexer::{Tok, Token}, seman::seman::FType};
 
 pub struct Logger {
     errc: usize,
@@ -337,6 +337,43 @@ impl Logger {
                         {}: `{} {{..}}` creates on stack",
                         ft, help, ft)
                     }
+                    ErrKind::NotBlockBody(astn) => {
+                        format!("Expected code block, found {:#?}\n\
+                        {}: this was expected to be code block ({{..}})",
+                        astn, help)
+                    }
+                    ErrKind::NotFuncInImpl(astn) => {
+                        format!("Struct impl may only have functions (methods),\n\
+                        but {:#?} was found.",
+                        astn)
+                    }
+                    ErrKind::UnknownTrait(nm) => {
+                        format!("Attempting to implement unknown trait {}",
+                            nm)
+                    }
+                    ErrKind::TraitFuncArgsLen(fnname, tname, expected, got) => {
+                        format!("Function arguments length incompat\n\
+                        Function {} of trait {} expects {} arguments, but {} was \
+                        provided",
+                        fnname, tname, expected, got)
+                    }
+                    ErrKind::TraitUnknownFunc(fnname, tname) => {
+                        format!("Unexpected function {} in trait implementation\n\
+                        {}: trait {} doesn't require function {}\n\
+                        {}: if you need this function, consider extracting it into\
+                        normal impl or add it to trait",
+                        fnname, help, tname, fnname, help)
+                    }
+                    ErrKind::TraitFuncArgsIncompat(fnname, tname, expected, got) => {
+                        format!("Trait implementation function args incompat\n\
+                        function {} of trait {} expects {} at this pos, but {} was found",
+                        fnname, tname, expected, got)
+                    }
+                    ErrKind::TraitIncompleteImpl(tname, funcs) => {
+                        format!("Trait implementaion is incomplete\n\
+                        trait {} also expects this functions: {:?}",
+                        tname, funcs)
+                    }
                     ErrKind::ParseUnexpected(tok) => {
                         format!("Parse: Unexpected tok {:?}", tok)
                     }
@@ -475,7 +512,14 @@ pub enum ErrKind {
     ImportNotFound(String), // lib name 
     ImportNoSrc(String, String), // name, path 
     HeapOnlyStack(FType),
-                                 
+    NotBlockBody(Box<AstNode>), // found
+    NotFuncInImpl(Box<AstNode>), // found 
+    UnknownTrait(String), // name 
+    TraitFuncArgsLen(String, String, usize, usize), // func name, trait name, expected, got 
+    TraitUnknownFunc(String, String), // func name, trait name
+    TraitFuncArgsIncompat(String, String, FType, FType), // func name, trait name, expected, got                     
+    TraitIncompleteImpl(String, Vec<String>), // trait name, func names
+        
     ParseExpectedIdt(Tok), // tok 
     ParseUnexpected(Tok),
 }

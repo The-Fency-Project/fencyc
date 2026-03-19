@@ -3,9 +3,11 @@ use std::mem::discriminant;
 use std::sync::mpsc::Sender;
 
 
+use indexmap::IndexMap;
+
 use crate::cli::Target;
 use crate::codegen::codegen::CodeGen;
-use crate::fcparse::fcparse::{AstNode, Attr};
+use crate::fcparse::fcparse::{AstNode, Attr, FuncDat, TraitTable};
 use crate::fcparse::fcparse::{AstRoot, BinaryOp, FuncArg, 
     FuncTable, UnaryOp};
 use crate::lex::Intrinsic;
@@ -174,7 +176,7 @@ impl FType {
     }
 }
 
-
+/// Deprecated
 #[derive(Debug, Clone, Copy)]
 pub enum VarPosition {
     Stack(usize),
@@ -186,20 +188,22 @@ pub enum VarPosition {
 
 #[derive(Debug)]
 pub struct SymbolTable {
-    st: Vec<HashMap<String, FSymbol>>,
+    // using indexmap to presave order for 
+    // RAII
+    st: Vec<IndexMap<String, FSymbol>>,
     pub cur_scope: usize,
 }
 impl SymbolTable {
     pub fn new() -> SymbolTable {
         SymbolTable {
-            st: vec![HashMap::new()],
+            st: vec![IndexMap::new()],
             cur_scope: 0,
         }
     }
 
     pub fn enter_scope(&mut self) {
         self.cur_scope += 1;
-        self.st.push(HashMap::new());
+        self.st.push(IndexMap::new());
     }
 
     /// Returns vec of dropped vals
@@ -207,7 +211,7 @@ impl SymbolTable {
         self.cur_scope -= 1;
         let mut res: Vec<FSymbol> = Vec::new();
         if let Some(mut poped) = self.st.pop() {
-            for (_key, val) in poped.drain() {
+            for (_key, val) in poped.drain(..) {
                 res.push(val);
             }
         };
@@ -221,6 +225,7 @@ impl SymbolTable {
                 res.push(val.clone());
             }
         };
+        res.reverse();
         res
     }
 
@@ -284,12 +289,13 @@ pub struct SemAn {
     in_impl: String,
     usedmods: Vec<String>, // paths to used modules 
     target: Target,
+    traits: TraitTable,
 }
 
 impl SemAn {
     /// Inits semantic analyzer struct. Permissive flag for less type checks
     pub fn new(permissive: bool, functab: FuncTable, fname: String, 
-        struct_tab: StructTable, tgt: Target) -> SemAn {
+        struct_tab: StructTable, tgt: Target, tt: TraitTable) -> SemAn {
         SemAn {
             symb_table: SymbolTable::new(),
             cur_scope: 0,
@@ -307,6 +313,7 @@ impl SemAn {
             in_impl: String::new(),
             usedmods: Vec::new(),
             target: tgt,
+            traits: tt,
         }
     }
 
@@ -1151,10 +1158,17 @@ impl SemAn {
                 
                 self.in_impl = name.path_to_string();
                 let _ed = self.analyze_expr(&*body, &logger.clone());
+                if let Some(tp) = Trait {
+                    self.verify_trait(
+                        &name.path_to_string(), 
+                        &*body, 
+                        &tp.path_to_string(), 
+                        &mut logger.clone()
+                    );
+                }
                 self.in_impl = String::new();
 
-                self.module = old_mod;
-                // TODO: trait 
+                self.module = old_mod; 
             }
             AstNode::MethodCall { name, args, idx } => {
                 let first_arg = args.get(0).expect(&format!(
@@ -1255,6 +1269,145 @@ impl SemAn {
             logger.send(LogMessage::new(lwarn, line, self.fname.clone()));
         } else {
             logger.send(LogMessage::new(lerr, line, self.fname.clone()));
+        }
+    }
+
+    pub fn verify_trait(&mut self, sname: &str, bd: &AstRoot, traitname: &str,
+        logger: &mut Sender<LogMessage>) {
+        let trait_info = match self.traits.t.get(traitname) {
+            Some(v) => v,
+            None => {
+                logger.send(LogMessage::new(
+                    LogLevel::Error(ErrKind::UnknownTrait(traitname.to_owned())),
+                    self.line,
+                    self.fname.clone()
+                ));
+                return;
+            }
+        };
+
+        let exprs = match &bd.node {
+            AstNode::CodeBlock { exprs } => exprs,
+            other => {
+                logger.send(LogMessage::new(
+                    LogLevel::Error(ErrKind::NotBlockBody(Box::new(other.clone()))),
+                    self.line,
+                    self.fname.clone()
+                ));
+
+                return;
+            }
+        };
+
+        let mut implemented: HashMap<String, FuncDat> = HashMap::new();
+        for e in exprs {
+            match &e.node {
+                AstNode::Function { name, args, ret_type, body, public } => {
+                    let name_segs = name.path_to_segs();
+                    let fdat = FuncDat::new_from_astn(&e.node)
+                        .unwrap();
+                    implemented.insert(
+                        name_segs
+                            .last()
+                            .expect("Empty funcname")
+                            .to_owned(), 
+                        fdat
+                    );
+                }
+                other => {
+                    logger.send(LogMessage::new(
+                        LogLevel::Error(ErrKind::NotFuncInImpl(Box::new(
+                                    other.clone())
+                                )),
+                        e.line,
+                        self.fname.clone()
+                    ));
+                }
+            }
+        }
+
+        // si - struct implemented
+        let mut inimpl = trait_info.req_funcs.clone();
+        for (si_k, si_v) in implemented {
+            if let Some(f) = inimpl.get(&si_k) {
+                if f.args.len() != si_v.args.len() {
+                    logger.send(LogMessage::new(
+                        LogLevel::Error(ErrKind::TraitFuncArgsLen(
+                            traitname.to_owned(),
+                            si_k.clone(),
+                            f.args.len(),
+                            si_v.args.len()
+                        )),
+                        self.line,
+                        self.fname.clone()
+                    ));
+                    continue;
+                }
+                for (idx, fa) in f.args.iter().enumerate() {
+                    let sa = si_v.args.get(idx).unwrap();
+                    match (sa.ftype, fa.ftype) {
+                        (o1, o2) if o1.if_struct().is_some() && o2.if_struct().is_some() => {
+                            let o1_nm     = o1.if_struct().unwrap();
+                            let o2_nm     = o2.if_struct().unwrap();
+                            let o2_nm_lst = o2_nm.rsplit("::").next().unwrap();
+
+                            let gn = trait_info.path.get_generic_names();
+                            let gen_cond = (o1_nm == sname) && 
+                                (gn.iter().any(|n| {n == o2_nm_lst}));
+
+                            if !(o1_nm == o2_nm || gen_cond) {
+                                logger.send(LogMessage::new(
+                                    LogLevel::Error(ErrKind::TraitFuncArgsIncompat(
+                                        f.name.path_to_segs().last().unwrap().to_owned(),
+                                        traitname.to_owned(),
+                                        o2, o1
+                                    )),
+                                    self.line,
+                                    self.fname.clone()
+                                )); 
+                                continue;
+                            }
+                        } 
+                        (o1, o2) if discriminant(&o1) == discriminant(&o2) => {} 
+                        (o1, o2) => {
+                            logger.send(LogMessage::new(
+                                LogLevel::Error(ErrKind::TraitFuncArgsIncompat(
+                                    f.name.path_to_segs().last().unwrap().to_owned(),
+                                    traitname.to_owned(),
+                                    o2, o1
+                                )),
+                                self.line,
+                                self.fname.clone()
+                            )); 
+                            continue;
+                        }
+                    } 
+                } 
+                inimpl.remove(&si_k);
+            } else {
+                logger.send(LogMessage::new(
+                    LogLevel::Error(ErrKind::TraitUnknownFunc(
+                        si_k.clone(), traitname.to_owned() 
+                    )),
+                    self.line,
+                    self.fname.clone()
+                ));
+            };
+        }
+
+        if !inimpl.is_empty() {
+            let names = inimpl.keys().map(|k| {
+                k.to_owned()
+            }).collect();
+
+            logger.send(LogMessage::new(
+                LogLevel::Error(ErrKind::TraitIncompleteImpl(
+                    traitname.to_owned(),
+                    names
+                )),
+                self.line,
+                self.fname.clone()
+            ));
         }
     }
 

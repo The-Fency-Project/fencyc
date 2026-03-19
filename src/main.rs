@@ -10,7 +10,7 @@ mod seman {pub mod seman;}
 mod logger {pub mod logger;}
 mod tests;
 mod cli;
-use crate::{cli::{Commands, InputFlags, Target, def_ldas}, codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstRoot, FuncTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, StructTable}};
+use crate::{cli::{Commands, InputFlags, Target, def_ldas}, codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstRoot, FcParser, FuncTable, TraitTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, StructTable}};
 
 // prepend home here 
 const FENCY_DIR: &str = ".fency";
@@ -91,7 +91,7 @@ fn main() {
                     }
                 }
                 Err(_) => {
-                    println!("Unexpected command execution failure");
+                    println!("Build error occured!");
                     exit(1);
                 }
             }
@@ -112,17 +112,18 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     let mut asts      = Vec::new();
     let mut func_tabs = Vec::new();
     let mut struct_tabs = Vec::new();
+    let mut trait_tabs = Vec::new(); 
     
-
     for file in files.iter() {
-        let (ast, func_tab, struct_tab) = build_ast(
+        let (ast, func_tab, p) = build_ast(
             file, 
             log_tx.clone()
         );
 
         asts.push(ast);
         func_tabs.push(func_tab);
-        struct_tabs.push(struct_tab);
+        struct_tabs.push(p.structs);
+        trait_tabs.push(p.traits);
     }
 
     let out = match output {
@@ -130,8 +131,9 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         None => String::from("program")
     };
 
-    let functab = FuncTable::from_several(&mut func_tabs);
+    let functab    = FuncTable::from_several(func_tabs);
     let struct_tab = StructTable::from_several(&struct_tabs);
+    let trait_tab  = TraitTable::from_several(trait_tabs); 
 
     let mut nat_fnames = Vec::new();
     let fin_msg = LogMessage::from_query(LoggerQuery::Stop);
@@ -146,7 +148,8 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
             functab.clone(), 
             fname.clone(),
             struct_tab.clone(),
-            flags.target
+            flags.target,
+            trait_tab.clone(),
         );
         seman.analyze(&ast, &log_tx);
 
@@ -215,7 +218,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
 }
 
 fn build_ast(input: &str, _log_tx: Sender<LogMessage>)
-    -> (Vec<AstRoot>, FuncTable, StructTable) {
+    -> (Vec<AstRoot>, FuncTable, FcParser) {
     let toks = lex::tokenize(&input);
 
     let mut parser = fparser::FcParser::new(toks);
@@ -223,7 +226,7 @@ fn build_ast(input: &str, _log_tx: Sender<LogMessage>)
     let ast = parsing_res.0;
     let func_tab = parsing_res.1;
     
-    (ast, func_tab, parser.structs)
+    (ast, func_tab, parser)
 }
 
 #[derive(Debug)]
