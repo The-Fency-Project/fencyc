@@ -34,9 +34,8 @@ pub struct FcParser {
     pub funcs: FuncTable,
     pub structs: StructTable,
     nm_interner: NameInterner,
-    generics: Vec<GenericType>,
     pub traits: TraitTable,
-    pub trait_impls: HashMap<String, HashSet<String>>, // struct name -> traits
+    pub generic_funcs: HashMap<String, AstRoot>,
 }
 
 /// Parser based on Pratt parsing algorithm
@@ -53,9 +52,8 @@ impl FcParser {
             funcs: FuncTable::new(),
             structs: StructTable::new(),
             nm_interner: NameInterner { map: HashMap::new() },
-            generics: Vec::new(),
             traits: TraitTable::new(),
-            trait_impls: HashMap::new(),
+            generic_funcs: HashMap::new(),
         }
     }
 
@@ -131,6 +129,8 @@ impl FcParser {
         self.line = line_n;
 
         match &token.tok {
+            Tok::Semicol => AstNode::none,
+
             Tok::Int(iv) => AstNode::Int(*iv),
             Tok::Uint(uv) => AstNode::Uint(*uv),
             Tok::Double(fv) => AstNode::Double(*fv),
@@ -464,8 +464,15 @@ impl FcParser {
 
             Tok::Keyword(Kword::Func) => {
                 let f = self.parse_func(false);
-                self.funcs.push_func(FuncDat::new_from_astn(&f.0)
-                    .expect(&format!("{}: Expected func", self.line)));
+                let fdat = FuncDat::new_from_astn(&f.0)
+                    .expect(&format!("{}: Expected func", self.line));
+                if !fdat.name.get_generics().is_empty() {
+                    self.generic_funcs.insert(
+                        fdat.name.path_to_string(),
+                        AstRoot::new(f.0.clone(), self.line)
+                    );
+                }
+                self.funcs.push_func(fdat);
                 self.overload_ctr.insert(f.1, 0);
                 f.0
             }
@@ -676,6 +683,7 @@ impl FcParser {
                 },
                 Tok::LAngBr => {
                     self.consume();
+                    // loop of catching generic params 
                     loop {
                         if self.peek_is(Tok::RAngBr) {
                             self.consume();
@@ -692,17 +700,22 @@ impl FcParser {
                             while let Some(tokb) = self.peek() {
                                 match &tokb.tok {
                                     Tok::Identifier(idt) => {
-                                        let path = self.parse_path(idt.clone());
+                                        let path = self.path_helper();
                                         bounds.push(path.path_to_string());
-                                        self.consume();
                                     }
                                     Tok::RBr => {
                                         self.consume();
                                         break;
                                     }
+                                    Tok::Comma => {
+                                        self.consume();
+                                        continue;
+                                    }
                                     other => {
+                                        let ot_cl = other.clone();
+                                        self.consume();
                                         return AstNode::Invalid(LogLevel::Error(
-                                            ErrKind::ParseUnexpected(other.clone())
+                                            ErrKind::ParseUnexpected(ot_cl)
                                             )
                                         );
                                     } 
@@ -716,6 +729,7 @@ impl FcParser {
                 _ => break,
             }
         }
+
 
         AstNode::Path { 
             segments,
@@ -1203,14 +1217,7 @@ impl FcParser {
             trait_impl = true;
 
             let nm_stc_s = name_struct.path_to_string();
-            match self.trait_impls.get_mut(&nm_stc_s) {
-                Some(v) => {v.insert(name.path_to_string());},
-                None => {
-                    self.trait_impls.insert(nm_stc_s, HashSet::from(
-                            [name.path_to_string()]
-                        ));
-                }
-            }
+            self.traits.add_impl(nm_stc_s.clone(), name.path_to_string()); 
             
             self.prev_flags.insert(ParseFlags::TraitImpl(name.path_to_string()));
             name_struct
@@ -1463,7 +1470,6 @@ impl AstNode {
     /// Get path segments, 
     /// panic if its not a path node.
     pub fn path_to_segs(&self) -> Vec<String> {
-        // TODO: generics here 
         match self {
             AstNode::Path { segments, .. } => {
                 segments.clone()
@@ -1477,6 +1483,7 @@ impl AstNode {
         let segs = self.path_to_segs();
         segs.join("::")
     }
+
 
     pub fn segs_to_path(segs: &Vec<String>) -> AstNode {
         AstNode::Path { 
@@ -1830,8 +1837,8 @@ impl Attr {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GenericType {
-    name:   String,
-    bounds: Vec<String>, // vec of needed trait names
+    pub name:   String,
+    pub bounds: Vec<String>, // vec of needed trait names
 }
 
 impl GenericType {
@@ -1881,12 +1888,14 @@ impl TraitInfo {
 #[derive(Debug, Clone)]
 pub struct TraitTable {
     pub t: HashMap<String, TraitInfo>,
+    pub impls: HashMap<String, HashSet<String>>, // struct -> traits
 }
 
 impl TraitTable {
     pub fn new() -> TraitTable {
         TraitTable { 
-            t: HashMap::new()
+            t: HashMap::new(),
+            impls: HashMap::new(),
         }
     }
 
@@ -1895,8 +1904,19 @@ impl TraitTable {
 
         for tt in tts.drain(..) {
             res.t.extend(tt.t);
+            res.impls.extend(tt.impls);
         }
 
         res
+    }
+
+    pub fn add_impl(&mut self, sname: String, tname: String) {
+        if let Some(s) = self.impls.get_mut(&sname) {
+            s.insert(tname);
+        } else {
+            let mut hs = HashSet::new();
+            hs.insert(tname);
+            self.impls.insert(sname, hs);
+        }
     }
 }

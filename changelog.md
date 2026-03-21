@@ -1,7 +1,6 @@
-v0.10.2:
-- main passing argc and argv
-- added convs: `u32 -> uint` and `i32 -> int`
-- added some fancy badges to README
-- fix for build
-- symboltable now works with indexmap in order to presave order for RAII
-- traits themselves finally done
+v0.11.0:
+- extracted some seman code 
+- seman now also checks for return type in trait impl
+- now you can return numerical values from main (except floats)
+- added `_bitsof` and `_frombits` intrinsics for bit reinterpret of floats
+- OMG, generic functions works! im so excited abt this 

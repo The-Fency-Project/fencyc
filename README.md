@@ -4,8 +4,8 @@
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/The-Fency-Project/fencyc)
 
 The Fency programming language compiler - simple and modern language, aimed to be enjoyable.
-Think of this like this: Rust, but without borrow checker pain, simpler C interop,
-overloads and much more.
+Think of it like this: Rust, but without borrow checker pain, simpler C interop,
+faster compilation, overloads and much more.
 
 > [!WARNING]
 > The toolchain is still on very early stages. Best experience would be with 

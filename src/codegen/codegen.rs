@@ -1,9 +1,10 @@
-use std::{backtrace::Backtrace, collections::HashMap, ptr::hash};
+use std::{backtrace::Backtrace, collections::{HashMap, HashSet}, ptr::hash};
 
 use crate::{
     cli::Target, fcparse::fcparse::{self as fparse, AstRoot, Attr, CmpOp, FuncArg, FuncTable, UnaryOp}, lexer::lexer::Intrinsic, seman::seman::{FSymbol, FType, OverloadTable, StructTable, SymbolTable, VarPosition}
 }; // AstNode;
 use fparse::AstNode;
+use indexmap::IndexSet;
 use qbe::{DataDef, DataItem, Function, Instr, Linkage, Module, Type, TypeDef, Value};
 
 #[derive(Debug, Clone)]
@@ -47,11 +48,15 @@ pub struct CodeGen {
     usedmods: Vec<String>,
     curmod: String,
     target: Target,
+    genfuncs: HashMap<String, AstRoot>, // generic functions 
+    deffered_gen: Vec<AstRoot>, // for generics mostly
+    pub prev_gen: IndexSet<String>, // which generic functions were already generated 
 }
 
 impl CodeGen {
     pub fn new(ast: Vec<AstRoot>, mo: OverloadTable, first: bool,
-        fnctb: FuncTable, struct_tab: StructTable, tgt: Target) -> CodeGen {
+        fnctb: FuncTable, struct_tab: StructTable, tgt: Target,
+        genfuncs: HashMap<String, AstRoot>, prev_gen: IndexSet<String>) -> CodeGen {
         CodeGen {
             ast: ast,
             cur_ast: 0,
@@ -75,6 +80,9 @@ impl CodeGen {
             usedmods: Vec::new(),
             curmod: "main".into(),
             target: tgt,
+            genfuncs,
+            deffered_gen: Vec::new(),
+            prev_gen: prev_gen,
         }
     }
 
@@ -96,16 +104,25 @@ impl CodeGen {
             }
 
             let node_cl = r.node.clone();
-            if let AstNode::Function { name, .. } = &node_cl {
+            let mut was_func = false;
+            if let AstNode::Function { name, ret_type, .. } = &node_cl {
+                was_func = true;
                 if (name.path_to_string() == "main::main") && (!had_main) && 
                     (!nomain) {
                     had_main = true;
-                    self.gen_prologue();
+                    self.gen_prologue(*ret_type);
                 }
             };
             
             let _gdat = self.gen_expr(node_cl);
             self.cur_ast += 1;
+
+            if !self.deffered_gen.is_empty() && was_func {
+                let ars: Vec<AstRoot> = self.deffered_gen.drain(..).collect(); 
+                for ar in ars {
+                    self.gen_expr(ar.node);
+                }
+            }
         }
         
     }
@@ -119,7 +136,9 @@ impl CodeGen {
         Ok(())
     }
 
-    fn gen_prologue(&mut self) {
+    /// Generates prologue (main func)
+    /// Check ret type first!
+    fn gen_prologue(&mut self, ret_type: FType) {
         let main_args = vec![
             (Type::Word, Value::Temporary("argc".to_owned())),
             (Type::Long, Value::Temporary("argv".to_owned()))
@@ -132,10 +151,20 @@ impl CodeGen {
         );
 
         mainf.add_block("start");
-        mainf.add_instr(
-            Instr::Call("main_main_0".into(), main_args, None)
-        );
-        mainf.add_instr(Instr::Ret(Some(Value::Const(0))));
+        if ret_type != FType::none {
+            let tmp = self.new_temp();
+            mainf.assign_instr(
+                tmp.clone(),
+                Self::match_ft_qbf_t(ret_type, true),
+                Instr::Call("main_main_0".into(), main_args, None)
+            );
+            mainf.add_instr(Instr::Ret(Some(tmp)));
+        } else {
+            mainf.add_instr(
+                Instr::Call("main_main_0".into(), main_args, None)
+            );
+            mainf.add_instr(Instr::Ret(Some(Value::Const(0))));
+        }
 
         self.module.add_function(mainf);
     }
@@ -144,6 +173,11 @@ impl CodeGen {
         let mut res = GenData::new();
         match node {
             AstNode::Function { name, args, ret_type, body, public } => {
+                let generics = name.get_generics();
+                if !generics.is_empty() {
+                    return res;
+                }
+
                 self.gen_func(&name, args, ret_type, body, 0, public); 
             }
             AstNode::FunctionOverload { func, idx, public } => {
@@ -153,6 +187,11 @@ impl CodeGen {
                     }
                     _other => unreachable!()
                 };
+
+                let generics = name.get_generics();
+                if !generics.is_empty() {
+                    return res;
+                }
 
                 self.gen_func(&name, args, ret_type, body, idx, public); 
             }
@@ -191,6 +230,7 @@ impl CodeGen {
                     .clone();
 
                 let mut args_qbe = Vec::new();
+                let mut args_ft = Vec::new(); // vec of args ftypes (for generics)
 
                 for (idx, arg) in args.iter().enumerate() {
                     self.expected_type = func_dat.args
@@ -204,6 +244,7 @@ impl CodeGen {
                     self.expected_type = FType::none;
                     self.need_addr = old_needaddr;
                     
+                    args_ft.push(gd.ftype);
                     let mut qtype = Self::match_ft_qbf(gd.ftype);
                     if let Some(a) = func_dat.args.get(idx) {
                         match a.ftype {
@@ -227,6 +268,19 @@ impl CodeGen {
                         })
                     ));
                 }
+
+                let generics = func_dat.name.get_generics();
+                let generated_fname = match generics.is_empty() {
+                    false => {
+                        let res = self.gen_generic_func(
+                            &func_dat.name.path_to_string(),
+                            args_ft,
+                            self.expected_type
+                        );
+                        Some(res)
+                    }
+                    true => None,
+                }; 
                 
 
                 let mut has_rn = false;
@@ -252,15 +306,16 @@ impl CodeGen {
                     }
                 };
 
-                let name = match ov_idx {
-                    Some(v) if !has_rn => format!("{}_{}", mname, v),
+                let name = match (ov_idx, generated_fname.is_some()) {
+                    (_, true) => generated_fname.unwrap(),
+                    (Some(v), false) if !has_rn => format!("{}_{}", mname, v),
                     _other => format!("{}", mname)
                 };
 
                 let instr = Instr::Call(
-                        name, 
-                        args_qbe, 
-                        None
+                    name, 
+                    args_qbe, 
+                    None
                 );
                 let tmpvar = self.new_temp();
 
@@ -1266,6 +1321,48 @@ impl CodeGen {
         self.fbuild.args_passed.clear();
     }
 
+    /// Generates generic function and returns name of it 
+    fn gen_generic_func(&mut self, fname: &str, args_ft: Vec<FType>, 
+        ret_ft: FType) -> String {
+
+        let mut f_ast = self.genfuncs.get(fname)
+            .expect(&format!("Internal: Expected generic function {}!", fname))
+            .clone();
+
+        let new_name = match &mut f_ast.node {
+            AstNode::Function { name, args, ret_type, body, public } => {
+                let generics = name.get_generics();
+                let mut new_name_suf = name.path_to_string();
+                for ft in args_ft.iter().take(generics.len()) {
+                    let ft_name = FType::rm_prefix(&format!("{}", ft));
+
+                    new_name_suf.push_str(&format!("::{}", ft_name));
+                }
+                let new_name_astn = AstNode::string_to_path(&new_name_suf);
+                *name = Box::new(new_name_astn.clone());
+
+                for (idx, new_ft) in args_ft.iter().enumerate() {
+                    args[idx].ftype = *new_ft;
+                }
+
+                *ret_type = ret_ft;
+
+                new_name_astn.path_to_segs()
+            }
+            other => unreachable!("{}: Generic func expected, found {:?}", 
+                f_ast.line, other)
+        };
+
+        let mut res = new_name.join("_");
+        // don't generate if already did earlier 
+        if self.prev_gen.get(&res).is_none() {
+            self.deffered_gen.push(f_ast);
+        }
+
+        res.push_str("_0"); // overload 0 
+        res
+    }
+
     fn new_temp(&mut self) -> Value {
         let name = format!("tmp_{}", self.tmp_ctr);
         self.tmp_ctr += 1;
@@ -1725,6 +1822,54 @@ impl CodeGen {
             }
             Intrinsic::Typeof => {
                 resd.ftype = rightdat.ftype;
+            }
+            Intrinsic::BitsOf => {
+                let tmp = self.new_temp();
+                match rightdat.ftype {
+                    FType::double => {
+                        self.fbuild.assign_instr(
+                            tmp.clone(),
+                            Type::Long,
+                            Instr::Cast(rightdat.val.unwrap())
+                        );
+                        resd.ftype = FType::uint;
+                    }
+                    FType::single => {
+                        self.fbuild.assign_instr(
+                            tmp.clone(),
+                            Type::Word,
+                            Instr::Cast(rightdat.val.unwrap())
+                        );
+                        resd.ftype = FType::u32;
+                    }
+                    other => panic!("Can't use _bits for type {}", other)
+                }
+
+                resd.val = Some(tmp);
+            }
+            Intrinsic::FromBits => {
+                let tmp = self.new_temp();
+                match rightdat.ftype {
+                    FType::uint => {
+                        self.fbuild.assign_instr(
+                            tmp.clone(),
+                            Type::Double,
+                            Instr::Cast(rightdat.val.unwrap())
+                        );
+                        resd.ftype = FType::double;
+                    }
+                    FType::u32 => {
+                        self.fbuild.assign_instr(
+                            tmp.clone(),
+                            Type::Single,
+                            Instr::Cast(rightdat.val.unwrap())
+                        );
+                        resd.ftype = FType::single;
+                    }
+                    other => panic!("Can't use _frombits for type {}", other)
+                }
+
+                resd.val = Some(tmp);
             }
         }
         resd

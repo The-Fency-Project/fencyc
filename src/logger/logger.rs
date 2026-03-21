@@ -347,6 +347,15 @@ impl Logger {
                         but {:#?} was found.",
                         astn)
                     }
+                    ErrKind::MainRetIncompat(ft) => {
+                        format!("Function main can return only non-float numerical \
+                        values or nothing, but not {}", ft)
+                    }
+                    ErrKind::BitsCastErr(opname, found, possible) => {
+                        format!("Type {} can't be used in {} operation\n\
+                        {}: possible types for this op: {:?}",
+                        found, opname, help, possible)
+                    }
                     ErrKind::UnknownTrait(nm) => {
                         format!("Attempting to implement unknown trait {}",
                             nm)
@@ -373,6 +382,17 @@ impl Logger {
                         format!("Trait implementaion is incomplete\n\
                         trait {} also expects this functions: {:?}",
                         tname, funcs)
+                    }
+                    ErrKind::TraitRetTypeIncompat(fnname, tname, exp, got) => {
+                        format!("Trait implementation function return type incompat\n\
+                        function {} of trait {} expects to return {}, but {} was found",
+                        fnname, tname, exp, got)
+                    }
+                    ErrKind::GenericFuncInimpl(fnname, tname, found) => {
+                        format!("Trait bound isn't satisified\n\
+                        generic function {} requires trait {} to be implemented, \
+                        but type {} does not implement it.",
+                        fnname, tname, found)
                     }
                     ErrKind::ParseUnexpected(tok) => {
                         format!("Parse: Unexpected tok {:?}", tok)
@@ -514,12 +534,17 @@ pub enum ErrKind {
     HeapOnlyStack(FType),
     NotBlockBody(Box<AstNode>), // found
     NotFuncInImpl(Box<AstNode>), // found 
+    MainRetIncompat(FType), // found 
+    BitsCastErr(String, FType, Vec<FType>), // op name, found type, possible fts
+
     UnknownTrait(String), // name 
     TraitFuncArgsLen(String, String, usize, usize), // func name, trait name, expected, got 
     TraitUnknownFunc(String, String), // func name, trait name
     TraitFuncArgsIncompat(String, String, FType, FType), // func name, trait name, expected, got                     
     TraitIncompleteImpl(String, Vec<String>), // trait name, func names
-        
+    TraitRetTypeIncompat(String, String, FType, FType), // func name, trait name, expected, got   
+    GenericFuncInimpl(String, String, FType), // func name, trait name, found ftype
+
     ParseExpectedIdt(Tok), // tok 
     ParseUnexpected(Tok),
 }

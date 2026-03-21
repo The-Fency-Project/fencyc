@@ -1,10 +1,7 @@
 ## Current:
-- trait implements table
-- generic types
-- generic funcs 
-- generic structs
-- ptrs for primitives
-- array assigm story
+- generic structs 
+- check ret type trait compat in seman
+- traits example 
 ### Future:
 Small/medium:
 - glob for input
@@ -20,7 +17,10 @@ Small/medium:
 - va args
 - stack strs
 - slices
+- ptrs for primitives
+- array assigm bug
 Major:
-- traits, generics
+- generics
+    - generic structs
 - wiki
 - stdlib

@@ -23,7 +23,7 @@ impl Person {
 }
 
 pub trait Drop<T> {
-    pub func drop(self: *T) {}
+    pub func drop(self: *T);
 }
 
 impl Drop for Person {
@@ -33,37 +33,49 @@ impl Drop for Person {
     }
 }
 
-func main(argc: uint, argv: [str]) { 
-    for let i = 0u in i < argc; i += 1u {
-        printintrin argv[i];
+pub trait Printable<T> {
+    pub func printable(self: *T);
+}
+
+impl Printable for Person {
+    pub func printable(self: *Person) {
+        printintrin self.name;
+        printintrin self.age;
+
+        return;
     }
+}
 
-    let p = Person::new_person("John", 69u);
-    let p2 = Person::new_person("NotJohn", 67u);
-    let p3 = p2;
+pub trait GetAge<T> {
+    pub func getAge(self: *T) -> uint;
+}
 
-    printintrin p.age;
-
-    #[target(amd64_win)] {
-        printintrin "Hi windows (i hate windows)";
-        hiwin();
+impl GetAge for Person {
+    pub func getAge(self: *Person) -> uint {
+        return self.age;
     }
+}
 
-    let a = "abc";
-    if a[0u] == ('a')$ubyte {
-        printintrin 1;
-    } else {
-        printintrin 0;
-    }
+pub func print<T: [Printable, GetAge], B: [GetAge]>(s: *T, s2: *B) {
+    s.printable();
 
-    if a == "abc" {
-        printintrin 1;
-    }
+    let a = s.getAge() + s2.getAge();
+    printintrin a;
 
     return;
 }
 
-#[target(amd64_win)] func hiwin() {
-    printintrin "hello windows";
-    return;
+func main(argc: uint, argv: [str]) -> int { 
+    let p = Person::new_person("John", 69u);
+    let p2 = Person::new_person("NotJohn", 67u);
+
+    print(p, p2);
+   
+    //let a = 15.5;
+    //let b = _bitsof a;
+    //printintrin b;
+    //let c = _frombits b;
+    //printintrin c;
+
+    return 0;
 }

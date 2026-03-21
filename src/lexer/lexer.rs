@@ -349,6 +349,8 @@ pub enum Intrinsic {
     Len,
     Sizeof,
     Typeof,
+    BitsOf,
+    FromBits,
 }
 
 fn match_symb_tok(word: &str) -> Tok {
@@ -378,6 +380,8 @@ fn match_symb_tok(word: &str) -> Tok {
         "printintrin" => Tok::Intrin(Intrinsic::Print),
         "sizeof" => Tok::Intrin(Intrinsic::Sizeof),
         "typeof" => Tok::Intrin(Intrinsic::Typeof),
+        "_bitsof" => Tok::Intrin(Intrinsic::BitsOf),
+        "_frombits" => Tok::Intrin(Intrinsic::FromBits),
         
         other => Tok::Identifier(other.to_string()),
     }

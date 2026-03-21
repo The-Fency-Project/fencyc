@@ -1,7 +1,8 @@
-use std::{path::{Path, PathBuf}, process::{Command, exit}, sync::mpsc::{self, Sender}, time::Instant};
+use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, process::{Command, exit}, sync::mpsc::{self, Sender}, time::Instant};
 
 use clap::{FromArgMatches, Parser};
 use colored::Colorize;
+use indexmap::IndexSet;
 
 mod fcparse {pub mod fcparse;}
 mod codegen {pub mod codegen;}
@@ -59,7 +60,7 @@ fn main() {
             if !build_scr_path.exists() {
                 println!("{}: build script file doesn't exist\n\
                 {}: `fencyc build` is intended to be used with build.fcy script",
-                "ERROR".red(), "help".purple());
+                "ERROR".red(), "help".blue());
                 exit(1);
             }
 
@@ -84,6 +85,7 @@ fn main() {
             #[cfg(target_os = "windows")] let build_run_name = 
                 format!("{}", build_o_name);
 
+            // TODO: check for errs and do corresp exit code
             match run_command(&build_run_name, &args_slice) {
                 Ok(vs) => {
                     for v in vs {
@@ -105,6 +107,7 @@ fn main() {
 // 1st path is runtime dir, 2nd path is libs dir
 fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     ldflags: Vec<String>, paths: Vec<PathBuf>) -> Result<(), CompilationError> {
+    // TODO: this function has a lot of clones. maybe move to refs instead.
     let (log_tx, log_rx) = mpsc::channel::<LogMessage>();
     let (log_resp, resp_get) = mpsc::channel::<LogMessage>();
     let handle = spawn_logger_thread(log_rx, log_resp);
@@ -112,7 +115,8 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     let mut asts      = Vec::new();
     let mut func_tabs = Vec::new();
     let mut struct_tabs = Vec::new();
-    let mut trait_tabs = Vec::new(); 
+    let mut trait_tabs = Vec::new();
+    let mut genfunc_tabs = Vec::new();
     
     for file in files.iter() {
         let (ast, func_tab, p) = build_ast(
@@ -124,6 +128,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         func_tabs.push(func_tab);
         struct_tabs.push(p.structs);
         trait_tabs.push(p.traits);
+        genfunc_tabs.push(p.generic_funcs);
     }
 
     let out = match output {
@@ -134,10 +139,17 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     let functab    = FuncTable::from_several(func_tabs);
     let struct_tab = StructTable::from_several(&struct_tabs);
     let trait_tab  = TraitTable::from_several(trait_tabs); 
+    let genfunc_tab: HashMap<String, AstRoot> = genfunc_tabs
+        .into_iter()
+        .flat_map(|g| {g.into_iter()})
+        .collect();
 
     let mut nat_fnames = Vec::new();
     let fin_msg = LogMessage::from_query(LoggerQuery::Stop);
     let int_msg = LogMessage::from_query(LoggerQuery::Status);
+
+    // hashset of which generics funcs were already generated 
+    let mut generated_gens: IndexSet<String> = IndexSet::new(); 
 
     // TODO: extract this into a function
     for (idx, ast) in asts.drain(..).enumerate() {
@@ -181,9 +193,24 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
 
         let matched_overloads = seman.matched_overloads.clone();
 
+        let old_gg_size = generated_gens.len();
+        
         let mut gene = cgen::CodeGen::new(ast, matched_overloads, 
-            idx == 0, functab.clone(), struct_tab.clone(), flags.target);
+            idx == 0, functab.clone(), struct_tab.clone(), flags.target,
+            genfunc_tab.clone(), generated_gens.clone());
         gene.gen_everything(flags.shared);
+        
+        if gene.prev_gen.len() > old_gg_size {
+            let n = gene.prev_gen.len() - old_gg_size;
+            generated_gens.extend(
+                gene.prev_gen
+                    .iter()
+                    .rev()
+                    .take(n)
+                    .cloned()
+            );
+        }
+
         if cfg!(debug_assertions) { 
             println!("{}", gene.module);
         }

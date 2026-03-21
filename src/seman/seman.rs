@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::mem::discriminant;
 use std::sync::mpsc::Sender;
 
@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 
 use crate::cli::Target;
 use crate::codegen::codegen::CodeGen;
-use crate::fcparse::fcparse::{AstNode, Attr, FuncDat, TraitTable};
+use crate::fcparse::fcparse::{AstNode, Attr, FuncDat, GenericType, TraitInfo, TraitTable};
 use crate::fcparse::fcparse::{AstRoot, BinaryOp, FuncArg, 
     FuncTable, UnaryOp};
 use crate::lex::Intrinsic;
@@ -167,12 +167,52 @@ impl FType {
         }
     }
 
+    /// Checks whether it is a struct type and if so returns name 
     pub fn if_struct(&self) -> Option<&'static str> {
         match self {
             FType::Struct(st) | FType::StructPtr(st) | FType::StructHeapPtr(st) 
                 => Some(st),
             _other => None,
         }
+    }
+
+    /// True for single and double types 
+    pub fn is_float(&self) -> bool {
+        match self {
+            FType::single | FType::double => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_numerical(&self) -> bool {
+        match self {
+            FType::uint | FType::u32 | FType::ubyte => true,
+            FType::int | FType::i32 | FType::ibyte => true,
+            other if other.is_float() => true,
+            _ => false,
+        }
+    }
+
+    /// Whether this type may be return type of main function 
+    pub fn can_be_main_ret(&self) -> bool {
+        match self {
+            FType::none => true,
+            other if other.is_numerical() && !other.is_float() => true,
+            other => false,
+        }
+    }
+
+    pub fn rm_prefix(s: &str) -> String {
+        let mut res = s.to_owned();
+
+        let prefixes = ["s_", "h_", "ptr_"];
+        for p in prefixes {
+            if let Some(stripped) = res.strip_prefix(p) {
+                res = stripped.to_owned();
+            };
+        }
+
+        res
     }
 }
 
@@ -290,6 +330,7 @@ pub struct SemAn {
     usedmods: Vec<String>, // paths to used modules 
     target: Target,
     traits: TraitTable,
+    in_generic: HashMap<String, GenericType>, // generic types if we're in generic func/struct 
 }
 
 impl SemAn {
@@ -314,6 +355,7 @@ impl SemAn {
             usedmods: Vec::new(),
             target: tgt,
             traits: tt,
+            in_generic: HashMap::new(),
         }
     }
 
@@ -335,6 +377,19 @@ impl SemAn {
                         0,
                         self.fname.clone()
                     ));
+                } else if fv.len() == 1 {
+                    match fv[0].ret_type.can_be_main_ret() {
+                        true => {}
+                        false => {
+                            logger.send(LogMessage::new(
+                                LogLevel::Error(ErrKind::MainRetIncompat(
+                                    fv[0].ret_type
+                                )),
+                                0,
+                                self.fname.clone()
+                            ));
+                        }
+                    }
                 }
             }
             None => {
@@ -665,6 +720,44 @@ impl SemAn {
                     Intrinsic::Sizeof => {
                         exprdat.ftype = FType::uint;
                     }
+                    Intrinsic::BitsOf => {
+                        exprdat.ftype = match rdat.ftype {
+                            FType::single => FType::u32,
+                            FType::double => FType::uint,
+                            other => {
+                                logger.send(LogMessage::new(
+                                    LogLevel::Error(ErrKind::BitsCastErr(
+                                        "_bitsof".into(),
+                                        other,
+                                        vec![FType::single, FType::double]
+                                    )),
+                                    self.line,
+                                    self.fname.clone()
+                                ));
+
+                                return exprdat;
+                            }
+                        }
+                    }
+                    Intrinsic::FromBits => {
+                        exprdat.ftype = match rdat.ftype {
+                            FType::uint => FType::double,
+                            FType::u32 => FType::single,
+                            other => {
+                                logger.send(LogMessage::new(
+                                    LogLevel::Error(ErrKind::BitsCastErr(
+                                        "_frombits".into(),
+                                        other,
+                                        vec![FType::u32, FType::uint]
+                                    )),
+                                    self.line,
+                                    self.fname.clone()
+                                ));
+
+                                return exprdat;
+                            }
+                        };
+                    }
                     _other => {}
                 }
             }
@@ -756,6 +849,9 @@ impl SemAn {
                     self.declared_parse.insert(name.path_to_string(), line);
                 }
 
+                let generics = name.get_generics();
+                let generic_names = name.get_generic_names();
+
                 for arg in args {
                     match arg.ftype {
                         ft if ft.if_struct().is_some() => {
@@ -770,11 +866,14 @@ impl SemAn {
                                     ));                                
                                 }
                             } else {
-                                logger.send(LogMessage::new(
-                                    LogLevel::Error(ErrKind::UnknownStruct(name.to_owned())),
-                                    line,
-                                    self.fname.clone()
-                                ));
+                                let last_seg = name.rsplit("::").next().unwrap();
+                                if !(generic_names.iter().any(|g| g == last_seg)) {
+                                    logger.send(LogMessage::new(
+                                        LogLevel::Error(ErrKind::UnknownStruct(name.to_owned())),
+                                        line,
+                                        self.fname.clone()
+                                    ));
+                                }
                             }
                         }
                         _other => {}
@@ -783,10 +882,14 @@ impl SemAn {
 
                 self.symb_table.enter_scope();
                 self.symb_table.push_funcargs(args.to_vec());
+                self.in_generic = generics.into_iter().map(|g| {
+                    (g.name.clone(), g)
+                }).collect();
 
                 let fdat = self
                     .analyze_expr(&AstRoot::new(*body.clone(), line), logger);
 
+                self.in_generic = HashMap::new();
                 self.symb_table.exit_scope();
                 self.parsing_func = None;
 
@@ -841,10 +944,31 @@ impl SemAn {
                 args,
                 idx,
             } => {
+                let f_name_s = func_name.path_to_string();
                 let paths = self.get_use_paths();
+
+                // if we're inside generic
+                let mut generic_f = None;
+                let f_name_end = f_name_s.rsplit("::").next().unwrap();
+                if let Some(v) = f_name_s.rsplit("::").nth(1) {
+                    if let Some(g) = self.in_generic.get(v) {
+                        for tb in &g.bounds {
+                            if let Some(f) = self.traits.t.get(tb) {
+                                if let Some(fdat) = f.req_funcs.get(f_name_end) {
+                                    generic_f = Some(fdat.clone());
+                                }
+                            }
+                        } 
+                    }
+                };
+
+
                 let func_dat_vec = match self.func_table.get_func(
                     &func_name.path_to_string(), &paths) {
                     Some(v) => v.clone(),
+                    None if generic_f.is_some() => {
+                        vec![generic_f.unwrap().clone()]
+                    }
                     None => {
                         logger.send(LogMessage::new(
                             LogLevel::Error(ErrKind::UndeclaredFunc(
@@ -856,17 +980,56 @@ impl SemAn {
                         return exprdat;
                     }
                 };
+
                 for (over_idx, overload) in func_dat_vec.iter().enumerate() {
                     let mut flag_matches: bool = true;
                     let mut extrn = false;
                     if overload.externed {
                         extrn = true;
                     }
+                    
+                    if overload.args.len() != args.len() {
+                        continue;
+                    }
+
+                    let generics: HashMap<String, GenericType> = overload.name
+                        .get_generics()
+                        .iter()
+                        .map(|e| {(e.name.clone(), e.clone())})
+                        .collect();
 
                     for (idx, arg) in args.iter().enumerate() {
                         let argdat = self.analyze_expr(arg, logger); 
+
+                        let arg_typename = format!("{}", overload.args[idx].ftype)
+                            .rsplit("::").next().unwrap().to_owned();
+
+                        let mut passed_typename = format!("{}", argdat.ftype);
+                        passed_typename = FType::rm_prefix(&passed_typename);
+
+                        if let Some(gt) = generics.get(&arg_typename) {
+                            let empty = HashSet::new();
+                            let passed_impls = self.traits.impls.get(
+                                &passed_typename
+                            ).unwrap_or(&empty);
+
+                            for b in &gt.bounds {     
+                                if passed_impls.get(b).is_none() {
+                                    logger.send(LogMessage::new(
+                                        LogLevel::Error(ErrKind::GenericFuncInimpl(
+                                            f_name_s.clone(),
+                                            b.to_owned(),
+                                            argdat.ftype
+                                        )),
+                                        self.line,
+                                        self.fname.clone()
+                                    ));
+                                } 
+                            }
+                            continue;
+                        };
                                                                      
-                        if overload.args.len() != args.len() || !argdat.ftype
+                        if !argdat.ftype
                                 .is_compatible_with(&overload.args[idx].ftype) {
                             flag_matches = false;
                             break;
@@ -1275,7 +1438,7 @@ impl SemAn {
     pub fn verify_trait(&mut self, sname: &str, bd: &AstRoot, traitname: &str,
         logger: &mut Sender<LogMessage>) {
         let trait_info = match self.traits.t.get(traitname) {
-            Some(v) => v,
+            Some(v) => v.clone(),
             None => {
                 logger.send(LogMessage::new(
                     LogLevel::Error(ErrKind::UnknownTrait(traitname.to_owned())),
@@ -1343,45 +1506,51 @@ impl SemAn {
                     ));
                     continue;
                 }
+
+                // checking ret type compat 
+                let msg = LogMessage::new(
+                    LogLevel::Error(ErrKind::TraitRetTypeIncompat(
+                        si_k.clone(),
+                        traitname.to_owned(),
+                        f.ret_type,
+                        si_v.ret_type
+                    )),
+                    self.line,
+                    self.fname.clone()
+                );
+                if !self.check_gen_compat(
+                    &trait_info,
+                    &si_v.ret_type,
+                    &f.ret_type, 
+                    &mut logger.clone(), 
+                    sname, 
+                    msg
+                ) {
+                    continue;
+                }
+
+                // checking args compat 
                 for (idx, fa) in f.args.iter().enumerate() {
                     let sa = si_v.args.get(idx).unwrap();
-                    match (sa.ftype, fa.ftype) {
-                        (o1, o2) if o1.if_struct().is_some() && o2.if_struct().is_some() => {
-                            let o1_nm     = o1.if_struct().unwrap();
-                            let o2_nm     = o2.if_struct().unwrap();
-                            let o2_nm_lst = o2_nm.rsplit("::").next().unwrap();
-
-                            let gn = trait_info.path.get_generic_names();
-                            let gen_cond = (o1_nm == sname) && 
-                                (gn.iter().any(|n| {n == o2_nm_lst}));
-
-                            if !(o1_nm == o2_nm || gen_cond) {
-                                logger.send(LogMessage::new(
-                                    LogLevel::Error(ErrKind::TraitFuncArgsIncompat(
-                                        f.name.path_to_segs().last().unwrap().to_owned(),
-                                        traitname.to_owned(),
-                                        o2, o1
-                                    )),
-                                    self.line,
-                                    self.fname.clone()
-                                )); 
-                                continue;
-                            }
-                        } 
-                        (o1, o2) if discriminant(&o1) == discriminant(&o2) => {} 
-                        (o1, o2) => {
-                            logger.send(LogMessage::new(
-                                LogLevel::Error(ErrKind::TraitFuncArgsIncompat(
-                                    f.name.path_to_segs().last().unwrap().to_owned(),
-                                    traitname.to_owned(),
-                                    o2, o1
-                                )),
-                                self.line,
-                                self.fname.clone()
-                            )); 
-                            continue;
-                        }
-                    } 
+                    let msg = LogMessage::new(
+                        LogLevel::Error(ErrKind::TraitFuncArgsIncompat(
+                            f.name.path_to_segs().last().unwrap().to_owned(),
+                            traitname.to_owned(),
+                            fa.ftype, sa.ftype
+                        )),
+                        self.line,
+                        self.fname.clone()
+                    );
+                    if !self.check_gen_compat(
+                        &trait_info, 
+                        &sa.ftype, 
+                        &fa.ftype, 
+                        &mut logger.clone(), 
+                        sname, 
+                        msg
+                    ) {
+                        continue;
+                    }
                 } 
                 inimpl.remove(&si_k);
             } else {
@@ -1409,6 +1578,37 @@ impl SemAn {
                 self.fname.clone()
             ));
         }
+    }
+
+    /// checks func args generic compatibility and returns true if everything is ok
+    /// sa: provided ftype, fa: expected ftype 
+    /// sname: struct name 
+    /// msg: failure logger message
+    fn check_gen_compat(&mut self, ti: &TraitInfo, sa: &FType, fa: &FType,
+        logger: &mut Sender<LogMessage>, sname: &str, msg: LogMessage)
+        -> bool {
+        match (sa, fa) {
+            (o1, o2) if o1.if_struct().is_some() && o2.if_struct().is_some() => {
+                let o1_nm     = o1.if_struct().unwrap();
+                let o2_nm     = o2.if_struct().unwrap();
+                let o2_nm_lst = o2_nm.rsplit("::").next().unwrap();
+
+                let gn = ti.path.get_generic_names();
+                let gen_cond = (o1_nm == sname) && 
+                    (gn.iter().any(|n| {n == o2_nm_lst}));
+
+                if !(o1_nm == o2_nm || gen_cond) {
+                    logger.send(msg); 
+                    return false;
+                }
+            } 
+            (o1, o2) if discriminant(o1) == discriminant(o2) => {} 
+            (o1, o2) => {
+                logger.send(msg); 
+                return false;
+            }
+        }
+        return true;
     }
 
     pub fn is_cmp_op(op: &BinaryOp) -> bool {
@@ -1544,6 +1744,8 @@ impl StructInfo {
             other => unimplemented!("alignment_of for {:?}", other)
         }
     }
+
+    
 }
 
 #[derive(Debug, Clone)]
