@@ -138,6 +138,8 @@ impl FcParser {
             Tok::I32(iwv) => AstNode::I32(*iwv),
             Tok::Single(sv) => AstNode::Single(*sv),
             Tok::U32(uwv) => AstNode::U32(*uwv),
+            Tok::Ishort(ihv) => AstNode::Ishort(*ihv),
+            Tok::Ushort(uhv) => AstNode::Ushort(*uhv),
             Tok::Ibyte(ibv) => AstNode::Ibyte(*ibv),
             Tok::Ubyte(ubv) => AstNode::Ubyte(*ubv),
 
@@ -1304,6 +1306,8 @@ pub enum AstNode {
     I32(i32),
     Single(f32),
     U32(u32),
+    Ishort(i16),
+    Ushort(u16),
     Ibyte(i8),
     Ubyte(u8),
     boolVal(bool),
@@ -1562,6 +1566,21 @@ impl AstNode {
             other => false,
         }
     }
+
+    pub fn get_func_name(&self) -> String {
+        match self {
+            AstNode::Function { name, args, ret_type, body, public } => {
+                name.path_to_string()
+            }
+            AstNode::FunctionOverload { func, idx, public } => {
+                Self::get_func_name(&*func)
+            }
+            AstNode::ExternedFunc { name, real_name, args, ret_type, public } => {
+                name.path_to_string()
+            }
+            other => panic!("Unexpected ast node {:?} in get func name", other)
+        } 
+    }
 }
 
 pub fn remove_struct_pref(s: &str) -> (String, String) {
@@ -1637,12 +1656,7 @@ impl NameInterner {
 }
 
 pub fn match_ftype(lit: &str, interner: &mut NameInterner) -> Option<FType> {
-//    generic_names: HashSet<String>) -> Option<FType> {
     match lit {
-        // any if generic_names.contains(any) => {
-        //     // TODO
-        //     Some(FType::Generic(0))
-        // }
         "uint" => Some(FType::uint),
         "int" => Some(FType::int),
         "double" => Some(FType::double),
@@ -1652,6 +1666,8 @@ pub fn match_ftype(lit: &str, interner: &mut NameInterner) -> Option<FType> {
         "float" => Some(FType::single),
         "u32" => Some(FType::u32),
         "i32" => Some(FType::i32),
+        "ushort" => Some(FType::ushort),
+        "ishort" => Some(FType::ishort),
         "ubyte" => Some(FType::ubyte),
         "ibyte" => Some(FType::ibyte),
         "ptr" => Some(FType::Ptr),
@@ -1790,7 +1806,7 @@ impl FuncTable {
     }
 
     /// Args: func name + used modules 
-    pub fn get_func(&mut self, name: &str, usemods: &Vec<String>) 
+    pub fn get_func(&self, name: &str, usemods: &Vec<String>) 
         -> Option<&Vec<FuncDat>> {
         if let Some(v) = self.ft.get(name) {
             return Some(v);

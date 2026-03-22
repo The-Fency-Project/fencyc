@@ -1,4 +1,4 @@
-use std::{backtrace::Backtrace, collections::{HashMap, HashSet}, ptr::hash};
+use std::{backtrace::Backtrace, collections::{HashMap, HashSet}, ptr::hash, sync::Arc};
 
 use crate::{
     cli::Target, fcparse::fcparse::{self as fparse, AstRoot, Attr, CmpOp, FuncArg, FuncTable, UnaryOp}, lexer::lexer::Intrinsic, seman::seman::{FSymbol, FType, OverloadTable, StructTable, SymbolTable, VarPosition}
@@ -26,14 +26,14 @@ pub enum Numerical {
 
 #[derive(Debug)]
 pub struct CodeGen {
-    ast: Vec<AstRoot>,
+    ast: Arc<Vec<AstRoot>>,
     cur_ast: usize,
     pub sbuf: String,
     pub module: Module,
     pub fbuild: FuncBuilder,
     pub symb_table: SymbolTable,
-    func_tab: FuncTable,
-    struct_tab: StructTable,
+    func_tab: Arc<FuncTable>,
+    struct_tab: Arc<StructTable>,
     should_push: bool,
     tmp_ctr: usize,
     dslbl_ctr: usize,
@@ -48,15 +48,15 @@ pub struct CodeGen {
     usedmods: Vec<String>,
     curmod: String,
     target: Target,
-    genfuncs: HashMap<String, AstRoot>, // generic functions 
+    genfuncs: Arc<HashMap<String, AstRoot>>, // generic functions 
     deffered_gen: Vec<AstRoot>, // for generics mostly
     pub prev_gen: IndexSet<String>, // which generic functions were already generated 
 }
 
 impl CodeGen {
-    pub fn new(ast: Vec<AstRoot>, mo: OverloadTable, first: bool,
-        fnctb: FuncTable, struct_tab: StructTable, tgt: Target,
-        genfuncs: HashMap<String, AstRoot>, prev_gen: IndexSet<String>) -> CodeGen {
+    pub fn new(ast: Arc<Vec<AstRoot>>, mo: OverloadTable, first: bool,
+        fnctb: Arc<FuncTable>, struct_tab: Arc<StructTable>, tgt: Target,
+        genfuncs: Arc<HashMap<String, AstRoot>>, prev_gen: IndexSet<String>) -> CodeGen {
         CodeGen {
             ast: ast,
             cur_ast: 0,
@@ -120,7 +120,12 @@ impl CodeGen {
             if !self.deffered_gen.is_empty() && was_func {
                 let ars: Vec<AstRoot> = self.deffered_gen.drain(..).collect(); 
                 for ar in ars {
+                    let name = ar.node.get_func_name();
+                    if self.prev_gen.get(&name).is_some() {
+                        continue;
+                    }
                     self.gen_expr(ar.node);
+                    self.prev_gen.insert(name);
                 }
             }
         }
@@ -425,6 +430,16 @@ impl CodeGen {
                 let val = Value::Const(uwv as u64);
                 res.val = Some(val);
                 res.ftype = FType::u32;
+            }
+            AstNode::Ishort(ihv) => {
+                let val = Value::SignConst(ihv as i64);
+                res.val = Some(val);
+                res.ftype = FType::ishort;
+            }
+            AstNode::Ushort(ihv) => {
+                let val = Value::Const(ihv as u64);
+                res.val = Some(val);
+                res.ftype = FType::ushort;
             }
             AstNode::Ibyte(ibv) => {
                 let val = Value::SignConst(ibv as i64);
@@ -879,8 +894,9 @@ impl CodeGen {
                     }
                     other if leftdat.by_addr => {
                         // type dst val 
+                        let qtype = Self::match_ft_qbf_tl(gd.ftype, true, true);
                         self.fbuild.add_instr(Instr::Store(
-                            Self::match_ft_qbf_t(gd.ftype, true), 
+                            qtype, 
                             val.clone(),
                             gd.val.expect("Internal: can't get reas value"), 
                         ));
@@ -1082,9 +1098,12 @@ impl CodeGen {
                     align: Some(struct_dat.max_alignment as u64),
                     items: struct_dat.fields.iter()
                         .map(|f| (
-                                CodeGen::match_ft_qbf_t(f.1.ftype, true), 
-                                CodeGen::match_ft_qbf_t(f.1.ftype, true)
-                                    .size() as usize,
+                                CodeGen::qtype_lose_sign(
+                                    CodeGen::match_ft_qbf_t(f.1.ftype, true)
+                                ),
+                                CodeGen::qtype_lose_sign(
+                                    CodeGen::match_ft_qbf_t(f.1.ftype, true)
+                                ).size() as usize,
                             ))
                         .collect(),
                 }; 
@@ -1134,7 +1153,7 @@ impl CodeGen {
                     let gd = self.gen_expr(*v);
                     // type dst val
                     self.fbuild.add_instr(Instr::Store(
-                        CodeGen::match_ft_qbf_t(gd.ftype, true),
+                        CodeGen::match_ft_qbf_tl(gd.ftype, true, true),
                         field_tmp.clone(),
                         gd.val.unwrap()
                     ));
@@ -1449,6 +1468,12 @@ impl CodeGen {
                 (other, FType::double) if ft_src.size() == target_type.size() => {
                 Instr::Cast(src)
             }
+            (FType::ishort, FType::i32) | (FType::ishort, FType::int) => {
+                Instr::Extsh(src)
+            }
+            (FType::ushort, FType::u32) | (FType::ushort, FType::uint) => {
+                Instr::Extuh(src)
+            }
             (FType::ubyte, FType::uint) | (FType::ibyte, FType::uint) => {
                 Instr::Extub(src)
             }
@@ -1613,6 +1638,16 @@ impl CodeGen {
         Self::match_ft_qbf_t(ft, false) 
     }
 
+    /// t - true conversion 
+    /// l - lose sign 
+    pub fn match_ft_qbf_tl(ft: FType, t: bool, l: bool) -> Type { 
+        let mut res = Self::match_ft_qbf_t(ft, t);
+        if l {
+            res = Self::qtype_lose_sign(res);
+        }
+        res
+    }
+
     pub fn match_ft_qbf_t(ft: FType, straight: bool) -> Type {
         match ft {
             FType::int | FType::uint  => Type::Long,
@@ -1628,6 +1663,11 @@ impl CodeGen {
                 => Type::UnsignedByte,
             FType::ibyte if straight => Type::SignedByte,
             FType::bool | FType::ubyte | FType::ibyte => Type::Word,
+
+            FType::ushort if straight => Type::UnsignedHalfword,
+            FType::ishort if straight => Type::SignedHalfword,
+            FType::ushort | FType::ishort => Type::Word,
+
             FType::Struct(s) if straight => Type::Aggregate(
                 TypeDef { 
                     name: s.to_owned().replace("::", "_"), 
@@ -1637,7 +1677,16 @@ impl CodeGen {
                 }
             ),
             FType::Struct(_s) => Type::Long,
+            
             _other => todo!("Match ft qbf for {:?}", ft)
+        }
+    }
+
+    pub fn qtype_lose_sign(qt: Type) -> Type {
+        match qt {
+            Type::SignedByte | Type::UnsignedByte => Type::Byte,
+            Type::SignedHalfword | Type::UnsignedHalfword => Type::Halfword,
+            other => other,
         }
     }
 

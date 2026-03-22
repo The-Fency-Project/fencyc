@@ -7,7 +7,6 @@ Small/medium:
 - glob for input
 - unsafe stuff
 - imports?
-- parallel compilation
 - op overload
 - iterators for `for`
 - default args values in funcs (maybe)

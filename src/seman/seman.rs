@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::mem::discriminant;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 
 
@@ -60,7 +61,8 @@ pub enum FType {
     single,
     any, // some kind of wildcard for seman 
     Ptr, // ftype id 
-    Generic(usize), // idx in generic table
+    ushort,
+    ishort,
 }
 
 impl Into<qbe::Type> for FType {
@@ -119,7 +121,8 @@ impl fmt::Display for FType {
             FType::single     => write!(f, "single"),
             FType::any        => write!(f, "any"),
             FType::Ptr        => write!(f, "Ptr"),
-            FType::Generic(i) => write!(f, "Generic of id {}", i),
+            FType::ushort     => write!(f, "ushort"),
+            FType::ishort     => write!(f, "ishort"),
         }
     }
 }
@@ -186,8 +189,8 @@ impl FType {
 
     pub fn is_numerical(&self) -> bool {
         match self {
-            FType::uint | FType::u32 | FType::ubyte => true,
-            FType::int | FType::i32 | FType::ibyte => true,
+            FType::uint | FType::u32 | FType::ushort | FType::ubyte => true,
+            FType::int | FType::i32 | FType::ishort | FType::ibyte => true,
             other if other.is_float() => true,
             _ => false,
         }
@@ -318,25 +321,25 @@ pub struct SemAn {
     module: String,
     permissive: bool,
     parsing_loop: Vec<usize>, // fold level
-    func_table: FuncTable,
+    func_table: Arc<FuncTable>,
     declared_parse: HashMap<String, usize>, // already declared function names and first occurance
     //lines to check redecl
     parsing_func: Option<(String, usize)>, // currently parsing function name and overload idx
     pub matched_overloads: OverloadTable, // call idx -> overload idx, ret type
     expect_type: FType,                    // for overloads matching and generics (in future)
-    struct_tab: StructTable,
+    struct_tab: Arc<StructTable>,
     line: usize,
     in_impl: String,
     usedmods: Vec<String>, // paths to used modules 
     target: Target,
-    traits: TraitTable,
+    traits: Arc<TraitTable>,
     in_generic: HashMap<String, GenericType>, // generic types if we're in generic func/struct 
 }
 
 impl SemAn {
     /// Inits semantic analyzer struct. Permissive flag for less type checks
-    pub fn new(permissive: bool, functab: FuncTable, fname: String, 
-        struct_tab: StructTable, tgt: Target, tt: TraitTable) -> SemAn {
+    pub fn new(permissive: bool, functab: Arc<FuncTable>, fname: String, 
+        struct_tab: Arc<StructTable>, tgt: Target, tt: Arc<TraitTable>) -> SemAn {
         SemAn {
             symb_table: SymbolTable::new(),
             cur_scope: 0,
@@ -366,7 +369,7 @@ impl SemAn {
         res
     }
 
-    pub fn analyze(&mut self, ast: &Vec<AstRoot>, logger: &Sender<LogMessage>) 
+    pub fn analyze(&mut self, ast: Arc<Vec<AstRoot>>, logger: &Sender<LogMessage>) 
         -> Result<(), ()> {
         let paths = self.get_use_paths();
         match self.func_table.get_func("main", &paths) {
@@ -397,8 +400,8 @@ impl SemAn {
             }
         }
 
-        for root in ast {
-            self.analyze_expr(root, logger);
+        for root_arc in ast.iter() {
+            self.analyze_expr(root_arc, logger);
         }
 
         Ok(())
@@ -515,6 +518,12 @@ impl SemAn {
             }
             AstNode::Single(_) => {
                 exprdat.ftype = FType::single;
+            }
+            AstNode::Ishort(_) => {
+                exprdat.ftype = FType::ishort;
+            }
+            AstNode::Ushort(_) => {
+                exprdat.ftype = FType::ushort;
             }
             AstNode::Ubyte(_) => {
                 exprdat.ftype = FType::ubyte;
@@ -1768,7 +1777,7 @@ impl StructTable {
         }
     }
 
-    pub fn get(&mut self, name: &str, usemods: &Vec<String>) -> Option<StructInfo> {
+    pub fn get(&self, name: &str, usemods: &Vec<String>) -> Option<StructInfo> {
         if let Some(v) = self.tab.get(name) {
             return Some(v.clone())
         }; 
@@ -1798,4 +1807,11 @@ impl StructTable {
             other => panic!("Internal: ast node {:?} isnt struct", other)
         }
     }
+}
+
+pub struct SemanResult {
+    fname: String,
+    ast: Arc<AstRoot>,
+    matched_overloads: Vec<OverloadTable>,
+    has_error: bool,
 }

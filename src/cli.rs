@@ -6,7 +6,7 @@ use strum_macros::EnumIter;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 pub struct CliArgs {
-    #[arg(short, long, help = "Currently unused")]
+    #[arg(short, long, help = "Detailed output")]
     pub verbose: bool,
 
     #[command(subcommand)]
@@ -29,6 +29,9 @@ pub enum Commands {
 
         #[arg(long = "ldflags", num_args=1.., help = "Linker flags (dashes prepended)")]
         ldflags: Vec<String>,
+
+        #[arg(long, num_args=1.., help = "External files (c/asm) to pass")]
+        extfiles: Vec<String>,
     },
 
     /// List available targets
@@ -44,7 +47,7 @@ pub enum Commands {
 
 #[derive(Args, Debug, Default, Clone)]
 pub struct InputFlags {
-    #[arg(short, long, help = "Currently unused")]
+    #[arg(short, long, help = "Prints current status during different steps")]
     pub verbose: bool,
 
     // a bit less type checks

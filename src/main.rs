@@ -1,8 +1,9 @@
-use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, process::{Command, exit}, sync::mpsc::{self, Sender}, time::Instant};
+use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, process::{Command, exit}, sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}, mpsc::{self, Sender}}, time::Instant};
 
 use clap::{FromArgMatches, Parser};
 use colored::Colorize;
 use indexmap::IndexSet;
+use rayon::prelude::*;
 
 mod fcparse {pub mod fcparse;}
 mod codegen {pub mod codegen;}
@@ -11,7 +12,7 @@ mod seman {pub mod seman;}
 mod logger {pub mod logger;}
 mod tests;
 mod cli;
-use crate::{cli::{Commands, InputFlags, Target, def_ldas}, codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstRoot, FcParser, FuncTable, TraitTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, StructTable}};
+use crate::{cli::{Commands, InputFlags, Target, def_ldas}, codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstRoot, FcParser, FuncTable, TraitTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, OverloadTable, SemanResult, StructTable}};
 
 // prepend home here 
 const FENCY_DIR: &str = ".fency";
@@ -41,12 +42,13 @@ fn main() {
     let paths = vec![runtime_dir, libs_dir];
     
     match cli.command {
-        Some(Commands::Input { files, output, flags, mut ldflags } ) => {
+        Some(Commands::Input { files, output, mut flags, mut ldflags, extfiles } ) => {
             if !(flags.nostd || fail_fcypath) {
                 ldflags.push("lfcyrt".to_owned());
-            } 
+            }
+            flags.verbose |= cli.verbose;
 
-            match compile(files, output, flags, ldflags, paths) {
+            match compile(files, output, flags, ldflags, paths, extfiles) {
                 Ok(_) => {return;}
                 Err(_) => {exit(1);}
             }
@@ -68,11 +70,12 @@ fn main() {
             let mut iflags = InputFlags::default();
             iflags.ldas = def_ldas();
             iflags.target = Target::get_def();
+            iflags.verbose = cli.verbose;
 
             match compile(
                 vec![build_scr_spath], Some(build_o_name.clone()), 
                 iflags,
-                vec![], paths
+                vec![], paths, vec![]
             ) {
                 Ok(_) => {},
                 Err(_) => {exit(1);}
@@ -106,136 +109,142 @@ fn main() {
 
 // 1st path is runtime dir, 2nd path is libs dir
 fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
-    ldflags: Vec<String>, paths: Vec<PathBuf>) -> Result<(), CompilationError> {
-    // TODO: this function has a lot of clones. maybe move to refs instead.
+    ldflags: Vec<String>, paths: Vec<PathBuf>, extfiles: Vec<String>)
+    -> Result<(), CompilationError> {
     let (log_tx, log_rx) = mpsc::channel::<LogMessage>();
     let (log_resp, resp_get) = mpsc::channel::<LogMessage>();
     let handle = spawn_logger_thread(log_rx, log_resp);
-
-    let mut asts      = Vec::new();
-    let mut func_tabs = Vec::new();
-    let mut struct_tabs = Vec::new();
-    let mut trait_tabs = Vec::new();
-    let mut genfunc_tabs = Vec::new();
-    
-    for file in files.iter() {
-        let (ast, func_tab, p) = build_ast(
-            file, 
-            log_tx.clone()
-        );
-
-        asts.push(ast);
-        func_tabs.push(func_tab);
-        struct_tabs.push(p.structs);
-        trait_tabs.push(p.traits);
-        genfunc_tabs.push(p.generic_funcs);
-    }
 
     let out = match output {
         Some(s) => s,
         None => String::from("program")
     };
 
-    let functab    = FuncTable::from_several(func_tabs);
-    let struct_tab = StructTable::from_several(&struct_tabs);
-    let trait_tab  = TraitTable::from_several(trait_tabs); 
-    let genfunc_tab: HashMap<String, AstRoot> = genfunc_tabs
-        .into_iter()
-        .flat_map(|g| {g.into_iter()})
+    let ast_results: Vec<_> = files.par_iter()
+        .map(|file| {
+            let (ast, func_tab, p) = build_ast(file, log_tx.clone());
+            (Arc::new(ast), func_tab, p)
+        })
         .collect();
 
-    let mut nat_fnames = Vec::new();
+    let mut asts = Vec::with_capacity(ast_results.len());
+    let mut func_tabs = Vec::with_capacity(ast_results.len());
+    let mut struct_tabs = Vec::with_capacity(ast_results.len());
+    let mut trait_tabs  = Vec::with_capacity(ast_results.len());
+    let mut genfunc_tabs = Vec::with_capacity(ast_results.len());
+
+    for (ast, func_tab, p) in ast_results {
+        asts.push(ast);
+        func_tabs.push(func_tab);
+        struct_tabs.push(p.structs);
+        trait_tabs.push(p.traits);
+        genfunc_tabs.push(p.generic_funcs);
+    }    
+
+    let functab    = Arc::new(FuncTable::from_several(func_tabs));
+    let struct_tab = Arc::new(StructTable::from_several(&struct_tabs));
+    let trait_tab  = Arc::new(TraitTable::from_several(trait_tabs)); 
+    let genfunc_tab: Arc<HashMap<String, AstRoot>> = Arc::new(genfunc_tabs
+        .into_iter()
+        .flat_map(|g| {g.into_iter()})
+        .collect());
+
     let fin_msg = LogMessage::from_query(LoggerQuery::Stop);
     let int_msg = LogMessage::from_query(LoggerQuery::Status);
 
-    // hashset of which generics funcs were already generated 
-    let mut generated_gens: IndexSet<String> = IndexSet::new(); 
-
-    // TODO: extract this into a function
-    for (idx, ast) in asts.drain(..).enumerate() {
-        let fname = files[idx].clone(); // todo: map asts with filenames instead
+    let total_files = asts.len();
+    let seman_counter = Arc::new(AtomicUsize::new(0));
+    let matched_ovs: HashMap<usize, OverloadTable> = asts.par_iter()
+        .enumerate()
+        .map(|(idx, ast)| {
+        
+        let fname = files[idx].clone();
+        let progress = seman_counter.fetch_add(1, Ordering::SeqCst);
+        if flags.verbose {
+            println!("[{}/{}] {} {}", progress + 1, total_files, 
+                "Analyzing".bright_blue(), fname)
+        }
 
         let mut seman = Seman::SemAn::new(
-            flags.permissive, 
-            functab.clone(), 
+            flags.permissive,
+            functab.clone(),
             fname.clone(),
             struct_tab.clone(),
             flags.target,
             trait_tab.clone(),
         );
-        seman.analyze(&ast, &log_tx);
+        seman.analyze(ast.clone(), &log_tx); 
+        (idx, seman.matched_overloads.clone())
+    }).collect();
 
-        log_tx.send(int_msg.clone());
+    log_tx.send(int_msg.clone());
 
-        match resp_get.recv() {
-            Ok(m) => {
-                match m.query {
-                    Some(v) => match v {
-                        LoggerQuery::StatusResp(b) => {
-                            if b {
-                                log_tx.send(fin_msg);
-                                handle.join().unwrap();
-                                return Err(CompilationError::Compilation);
-                            }
+    match resp_get.recv() {
+        Ok(m) => {
+            match m.query {
+                Some(v) => match v {
+                    LoggerQuery::StatusResp(b) => {
+                        if b {
+                            log_tx.send(fin_msg);
+                            handle.join().unwrap();
+                            return Err(CompilationError::Compilation);
                         }
-                        _other => unreachable!()
                     }
-                    None => unreachable!()
+                    _other => unreachable!()
                 }
-            }
-            Err(_e) => {
+                None => unreachable!()
             }
         }
+        Err(_e) => {}
+    }
 
-        if flags.check {
-            continue;
-        }
+    let global_gens = Arc::new(Mutex::new(IndexSet::new()));
+    
+    let counter = Arc::new(AtomicUsize::new(0));
+    let nat_fnames: Vec<String> = asts.par_iter().enumerate().map(|(idx, ast)| {
+        let fname = files[idx].clone();
 
-        let matched_overloads = seman.matched_overloads.clone();
-
-        let old_gg_size = generated_gens.len();
+        let progress = counter.fetch_add(1, Ordering::SeqCst); // atomic increment
         
-        let mut gene = cgen::CodeGen::new(ast, matched_overloads, 
-            idx == 0, functab.clone(), struct_tab.clone(), flags.target,
-            genfunc_tab.clone(), generated_gens.clone());
+        if flags.verbose {
+            println!("[{}/{}] {} {}", progress + 1, total_files, 
+                "Generating".blue() , fname);
+        }
+
+        let gens = global_gens.clone();
+
+        let mut gene = cgen::CodeGen::new(
+            ast.clone(),
+            matched_ovs.get(&idx).unwrap().clone(),
+            idx == 0,
+            functab.clone(),
+            struct_tab.clone(),
+            flags.target,
+            genfunc_tab.clone(),
+            gens.lock().unwrap().clone(), 
+        );
+
         gene.gen_everything(flags.shared);
-        
-        if gene.prev_gen.len() > old_gg_size {
-            let n = gene.prev_gen.len() - old_gg_size;
-            generated_gens.extend(
-                gene.prev_gen
-                    .iter()
-                    .rev()
-                    .take(n)
-                    .cloned()
-            );
-        }
 
-        if cfg!(debug_assertions) { 
-            println!("{}", gene.module);
+        {
+            let mut lock = gens.lock().unwrap();
+            lock.extend(gene.prev_gen.iter().cloned());
         }
 
         let temp_fname = format!("{}_temp.ssa", fname.replace(".fcy", ""));
+        gene.write_file(&temp_fname).unwrap();
 
-        if let Err(e) = gene.write_file(&temp_fname) {
-            panic!("Error writing temp into file: {}", e.to_string());
-        }; 
-
-        let nname = match genasm(&temp_fname, flags.target) {
-            CompilationError::OkFile(f) => {f},
-            _other => {
-                //logger.extrn_err = other; TODO: send 
-                String::from("")
-            }
-        };
-        nat_fnames.push(nname);
-    }
+        match genasm(&temp_fname, flags.target) {
+            CompilationError::OkFile(f) => f,
+            _ => String::new(),
+        }
+    }).collect();
 
     if !flags.check {
         let strs = nat_fnames.iter()
             .map(String::as_str)
             .collect();
-        link(&strs, &out, &ldflags, &flags, &paths)?;
+        ldas(&strs, &out, &ldflags, &flags, &paths, &extfiles)?;
     }
 
     log_tx.send(fin_msg);
@@ -262,6 +271,7 @@ enum CompilationError {
     OkFile(String),
     QBEError(),
     LinkError(),
+    AsmFault,
     Compilation,
     Unknown,
 }
@@ -284,56 +294,108 @@ fn genasm(input_name: &str, t: Target)
     CompilationError::OkFile(nat_fname.clone())
 }
 
-fn link(asm_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>, 
-    flags: &InputFlags, fcy_paths: &Vec<PathBuf>)
+fn ldas(asm_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>, 
+    flags: &InputFlags, fcy_paths: &Vec<PathBuf>, extfiles: &Vec<String>)
     -> Result<(), CompilationError> {
-    let mut args: Vec<&str> = Vec::new();
-    args.extend(asm_fnames);
+
+    let mut obj_files = Arc::new(Mutex::new(Vec::new()));
+    let mut input_files = asm_fnames.clone();
+    input_files.extend(extfiles.iter().map(|s| {s.as_str()}));
+
+    let counter = Arc::new(AtomicUsize::new(0));
+    let total = input_files.len();
     
-    if !flags.onlyobjs {
-        if flags.shared {
-            args.push("-fPIC");
-            args.push("-shared");
+    let errs_count: usize = input_files.par_iter()
+        .enumerate()
+        .map(|(i, v)| {
+        
+        let obj_filename = format!("{}.o", v);
+        {
+            let mut vec = obj_files.lock().unwrap();
+            vec.push(obj_filename.clone());
         }
 
-        args.push("-o");
-        args.push(output_name);
-    } else {
-        args.push("-c");
+        let progress = counter.fetch_add(1, Ordering::SeqCst); // atomic increment
+        if flags.verbose {
+            println!("[{}/{}] {} object file {}",
+                progress + 1, total, "Assembling".cyan(), obj_filename);
+        }
+
+        let args = match flags.shared {
+            true  => vec!["-c", "-fPIC", &v, "-o", &obj_filename],
+            false => vec!["-c", &v, "-o", &obj_filename],
+        };
+        match run_command(&flags.ldas, &args) {
+            Ok(vs) => {
+                for s in vs {
+                    if !s.is_empty() {
+                        println!("asm: {}", s);
+                    }
+                }
+            },
+            Err(_) => {
+                return 1;
+            }
+        }
+        0
+    }).sum();
+    if errs_count > 0 {
+        return Err(CompilationError::AsmFault);
     }
 
-    let mut s_v: Vec<String> = Vec::new();
-
-    for v in fcy_paths {
-        let new_arg = format!("-L{}", v.display());
-        s_v.push(new_arg);
+    let mut fin_args: Vec<String> = Vec::new();
+    let shared_flag = String::from("-shared");
+    if flags.shared {
+        fin_args.push(shared_flag);
     }
+    {
+        let vec = obj_files.lock().unwrap();
+        fin_args.extend(vec.iter().cloned());
+    }
+    fin_args.push("-o".to_owned());
+    fin_args.push(output_name.to_owned());
+    fin_args.extend(fcy_paths.iter().map(|p| {
+        format!("-L{}", p.display())
+    }));
+    fin_args.extend(ldflags.iter().map(|s| {
+        format!("-{}", s)
+    }));
 
-    args.extend(s_v.iter().map(|s| {s.as_str()}));
-
-    let dash_flags: Vec<String> = ldflags.iter().map(|s| format!("-{}", s))
+    if flags.verbose {
+        println!("{} program {}...", "Linking".bright_green(), output_name);
+    }
+    let args_strs: Vec<&str> = fin_args.iter().map(|s| {s.as_str()})
         .collect();
-    args.extend(dash_flags.iter().map(|s| s.as_str())); 
-
-    let out2 = match run_command(&flags.ldas, &args) {
-        Ok(sv) => sv,
-        Err(()) => {
-            return Err(CompilationError::LinkError());
+    match run_command(&flags.ldas, &args_strs) {
+        Ok(vs) => {
+            print_stds(vs); 
         }
-    };
-    print_stds(out2);
+        Err(_) => {
+            return Err(CompilationError::LinkError())
+        }
+    }
+
     release_cleanup(asm_fnames);
+    {
+        let vec = obj_files.lock().unwrap();
+        let obj_files_refs = vec.iter().map(|s| {s.as_str()}).collect();
+        cleanup(&obj_files_refs);
+    }
 
     Ok(())
 }
 
 fn release_cleanup(files: &Vec<&str>) {
     if !cfg!(debug_assertions) {
-        for file in files {
-            if let Err(e) = std::fs::remove_file(file) {
-                eprintln!("Failed to delete temp asm file {}: {}", file, e);
-            };
-        }
+        cleanup(files); 
+    }
+}
+
+fn cleanup(files: &Vec<&str>) {
+    for file in files {
+        if let Err(e) = std::fs::remove_file(file) {
+            eprintln!("Failed to delete temp asm file {}: {}", file, e);
+        };
     }
 }
 

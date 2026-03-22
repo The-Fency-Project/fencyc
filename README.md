@@ -53,7 +53,7 @@ Make sure everything working:
 - `cargo test`    
 Compile some program:  
 - `fencyc input input.fcy`     
-Run as normal program.
+Run as normal program.     
 Flags: see `fencyc help` for general help or `fencyc help subcommand` to see info about 
 specific subcommand (e.g. `fencyc help input`)  
 

@@ -10,6 +10,8 @@ pub enum Tok {
     I32(i32),
     Single(f32),
     U32(u32),
+    Ishort(i16),
+    Ushort(u16),
     Ubyte(u8),
     Ibyte(i8), 
     strlit(String),
@@ -78,7 +80,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '0'..='9' => {
                 let mut num_st = String::new();
                 let mut ftyp = FType::int;
-                while let Some('0'..='9' | '.' | 'u' | 'i' | 'f' | 'w' | 'b') 
+                while let Some('0'..='9' | '.' | 'u' | 'i' | 'f' | 'w' | 'h' | 'b') 
                     = chars.peek() {
                     let chn = chars.next().unwrap();
                     let peek = chars.peek();
@@ -96,12 +98,18 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                         }
                         ('u', Some('b')) => {
                             ftyp = FType::ubyte;
-                        }       
+                        }      
+                        ('u', Some('h')) => {
+                            ftyp = FType::ushort;
+                        }
                         ('u', _any) => {
                             ftyp = FType::uint;
                         }
                         ('i', Some('b')) => {
                             ftyp = FType::ibyte;
+                        }
+                        ('i', Some('h')) => {
+                            ftyp = FType::ishort;
                         }
                         ('i', _any) => {
                             ftyp = FType::i32;
@@ -139,6 +147,14 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                     FType::u32 => {
                         let nval: u32 = num_st.parse().unwrap();
                         res.push(Token::new(Tok::U32(nval), line));
+                    }
+                    FType::ishort => {
+                        let nval: i16 = num_st.parse().unwrap();
+                        res.push(Token::new(Tok::Ishort(nval), line));
+                    }
+                    FType::ushort => {
+                        let nval: u16 = num_st.parse().unwrap();
+                        res.push(Token::new(Tok::Ushort(nval), line));
                     }
                     FType::ibyte => {
                         let nval: i8 = num_st.parse().unwrap();

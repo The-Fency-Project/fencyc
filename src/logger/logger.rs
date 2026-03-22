@@ -200,8 +200,8 @@ impl Logger {
                     } 
                     ErrKind::UndeclaredFunc(name) => {
                         format!("Call of undeclared function {}\n\
-                            {}: function {} was called/referenced but never declared",
-                        &name, help, &name)
+                            function {} was called/referenced but never declared",
+                        &name, &name)
                     }
                     ErrKind::MuchArgsPassed(func_name, expected, got) => {
                         format!("Function {} expected {} arguments, but {} were passed\n\

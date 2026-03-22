@@ -70,12 +70,15 @@ func main(argc: uint, argv: [str]) -> int {
     let p2 = Person::new_person("NotJohn", 67u);
 
     print(p, p2);
-   
-    //let a = 15.5;
-    //let b = _bitsof a;
-    //printintrin b;
-    //let c = _frombits b;
-    //printintrin c;
+
+    let a = "abc";
+    if a[0u] == ('a')$ubyte {
+        printintrin 1;
+    } else {
+        printintrin 0;
+    }
+
+    let b = 1322uh; // ushort 
 
     return 0;
 }
