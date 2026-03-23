@@ -1,13 +1,17 @@
 ## Current:
+- ftype rework (no copy!) 
+- sizes recomputing (for embedded structs)
+- just `T` 
 - generic structs 
+- op overload
 - check ret type trait compat in seman
 - traits example 
 ### Future:
-Small/medium:
+Small/medium (unsorted):
+- incremential compilation
 - glob for input
 - unsafe stuff
 - imports?
-- op overload
 - iterators for `for`
 - default args values in funcs (maybe)
 - make error if trying to override func that wasnt declared

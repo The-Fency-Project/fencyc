@@ -1,4 +1,4 @@
-use std::{backtrace::Backtrace, collections::{HashMap, HashSet}, ptr::hash, sync::Arc};
+use std::{backtrace::Backtrace, collections::{HashMap, HashSet}, ptr::hash, sync::{Arc, Mutex, RwLock}};
 
 use crate::{
     cli::Target, fcparse::fcparse::{self as fparse, AstRoot, Attr, CmpOp, FuncArg, FuncTable, UnaryOp}, lexer::lexer::Intrinsic, seman::seman::{FSymbol, FType, OverloadTable, StructTable, SymbolTable, VarPosition}
@@ -50,13 +50,14 @@ pub struct CodeGen {
     target: Target,
     genfuncs: Arc<HashMap<String, AstRoot>>, // generic functions 
     deffered_gen: Vec<AstRoot>, // for generics mostly
-    pub prev_gen: IndexSet<String>, // which generic functions were already generated 
+    pub prev_gen: Arc<RwLock<IndexSet<String>>>, // which generic functions were already generated 
 }
 
 impl CodeGen {
     pub fn new(ast: Arc<Vec<AstRoot>>, mo: OverloadTable, first: bool,
         fnctb: Arc<FuncTable>, struct_tab: Arc<StructTable>, tgt: Target,
-        genfuncs: Arc<HashMap<String, AstRoot>>, prev_gen: IndexSet<String>) -> CodeGen {
+        genfuncs: Arc<HashMap<String, AstRoot>>, prev_gen: Arc<RwLock<IndexSet<String>>>) 
+        -> CodeGen {
         CodeGen {
             ast: ast,
             cur_ast: 0,
@@ -121,11 +122,19 @@ impl CodeGen {
                 let ars: Vec<AstRoot> = self.deffered_gen.drain(..).collect(); 
                 for ar in ars {
                     let name = ar.node.get_func_name();
-                    if self.prev_gen.get(&name).is_some() {
+
+                    let already_generated = {
+                        let lock = self.prev_gen.read().unwrap();
+                        lock.contains(&name)
+                    };
+                    if already_generated {
                         continue;
                     }
+
                     self.gen_expr(ar.node);
-                    self.prev_gen.insert(name);
+
+                    let mut lock = self.prev_gen.write().unwrap();
+                    lock.insert(name);
                 }
             }
         }
@@ -351,6 +360,8 @@ impl CodeGen {
                 if !res.returned && self.fbuild.func.is_some() {
                     let dropped = self.symb_table.exit_scope();
                     self.leave_scope_clean(&dropped, Vec::new());
+                } else if !res.returned {
+                    self.symb_table.exit_scope();
                 }
             }
             AstNode::Assignment { name, val, ft } => {
@@ -507,10 +518,9 @@ impl CodeGen {
                     total_size += el_size;
                 }
 
-                res.ftype = FType::Array(
-                    ft.to_idx(),
-                    vals.len(), 
-                    0
+                res.ftype = FType::array_from(
+                    &ft,
+                    vals.len()
                 );
 
                 self.fbuild.assign_instr(
@@ -540,14 +550,14 @@ impl CodeGen {
 
                 res.val = Some(tmp);
             }
-            AstNode::ArrayElem(arr_name, idx_val) => {
+            AstNode::ArrayElem(arr, idx_val) => {
+                let val_dat  = self.gen_expr(*arr);
                 let idx_gd   = self.gen_expr(idx_val.node);
-                let tmp = self.new_temp();
-                let symb     = self.symb_table.get(&arr_name).unwrap();
+                let tmp      = self.new_temp();
 
-                let el_ftype = match symb.1.ftype {
-                    FType::Array(el, _, _) => {
-                        FType::from_idx(el).unwrap()
+                let el_ftype = match val_dat.ftype {
+                    FType::Array(el, _, nm) => {
+                        FType::from_idx_patched(el, nm).unwrap()
                     }
                     FType::strconst => FType::ubyte, // byte-wise indexing
                     _other => unreachable!()
@@ -565,7 +575,7 @@ impl CodeGen {
                 self.fbuild.assign_instr(
                     tmp.clone(),
                     Type::Long,
-                    Instr::Add(tmp.clone(), Value::Temporary(arr_name.clone()))
+                    Instr::Add(tmp.clone(), val_dat.val.unwrap().clone())
                 );
                 
                 res.by_addr = self.need_addr;
@@ -1374,7 +1384,11 @@ impl CodeGen {
 
         let mut res = new_name.join("_");
         // don't generate if already did earlier 
-        if self.prev_gen.get(&res).is_none() {
+        let already_generated = {
+            let lock = self.prev_gen.read().unwrap();
+            lock.contains(&res)
+        };
+        if !already_generated {
             self.deffered_gen.push(f_ast);
         }
 
@@ -1654,8 +1668,9 @@ impl CodeGen {
             FType::double             => Type::Double,
             FType::single             => Type::Single,
             FType::u32 | FType::i32   => Type::Word,
-            FType::Array(el, _, _)    => {
-                Self::match_ft_qbf(FType::from_idx(el).unwrap())
+            FType::Array(el, _, nm)    => {
+                Self::match_ft_qbf(FType::from_idx_patched(el, nm)
+                    .unwrap())
             },
             FType::strconst | FType::StructPtr(_)
                 | FType::StructHeapPtr(_) | FType::Ptr => Type::Long, // ptr 

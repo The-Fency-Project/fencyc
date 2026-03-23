@@ -1,7 +1,8 @@
-v0.12.0:
-- now you can pass c and asm files into input using `--extfiles ...` cli arg 
-- fixed ubyte/ibyte struct bug
-- ushort and ishort types
-- parallel compilation
-- flag `--verbose` finally does something
-- parallel assembling
+v0.11.2:
+- update readme
+- now tests are being runned with `--verbose` flag
+- fixed locks inside of codegen 
+- `[*T]` (array of struct pointers) now works
+- non arr indexing error
+- this is a just just a small patch before big rework. gotta work on ftype refactor now. then - 
+pushing generic structs. 

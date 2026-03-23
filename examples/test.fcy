@@ -65,20 +65,28 @@ pub func print<T: [Printable, GetAge], B: [GetAge]>(s: *T, s2: *B) {
     return;
 }
 
+// now just for array tests,
+// later - for generic structs test
+struct VecPerson {
+    data: [*Person]
+    len: uint 
+    capacity: uint
+}
+
+impl Vec {
+    pub func get(self: *Vec, idx: uint) -> *Person {
+        let res = self.data[idx];
+        return res;
+    }
+}
+
 func main(argc: uint, argv: [str]) -> int { 
     let p = Person::new_person("John", 69u);
     let p2 = Person::new_person("NotJohn", 67u);
+    let arr = [p, p2]*Person;
+    printintrin arr[0u].age;
 
     print(p, p2);
-
-    let a = "abc";
-    if a[0u] == ('a')$ubyte {
-        printintrin 1;
-    } else {
-        printintrin 0;
-    }
-
-    let b = 1322uh; // ushort 
 
     return 0;
 }

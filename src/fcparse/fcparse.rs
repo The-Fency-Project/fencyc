@@ -246,11 +246,12 @@ impl FcParser {
                     vals.push(self.parse_expr(0).node);
                 };
                 self.allowed_tok = None;
-                let typename = self.expect_idt().unwrap_or_else(|| {
-                    panic!("{}: expected typename after array end (e.g. [1, 2]int)", self.line);
-                }); 
-                let ft = match_ftype(&typename, &mut self.nm_interner)
-                    .unwrap_or(FType::none);
+                // let typename = self.expect_idt().unwrap_or_else(|| {
+                //     panic!("{}: expected typename after array end (e.g. [1, 2]int)", self.line);
+                // }); 
+                // let ft = match_ftype(&typename, &mut self.nm_interner)
+                //     .unwrap_or(FType::none);
+                let ft = self.parse_ftype();
 
                 AstNode::Array(ft, vals)
             }
@@ -339,7 +340,10 @@ impl FcParser {
                             self.expect(Tok::RBr);
                             el_idx = Some(Box::new(idx_ast.clone()));
 
-                            let n = AstNode::ArrayElem(idt.clone(), Box::new(idx_ast));
+                            let n = AstNode::ArrayElem(
+                                Box::new(buf.last().unwrap().clone()), 
+                                Box::new(idx_ast)
+                            );
                             buf.push(n);
                         }
                         Tok::LCurBr => {
@@ -1007,7 +1011,7 @@ impl FcParser {
                         .unwrap_or_else(|| {
                         panic!("{}: unknown type {}", self.line, arg_typename)}
                     );
-                    let ft = FType::Array(el_ft.to_idx(), 0, 0);
+                    let ft = FType::array_from(&el_ft, 0);
 
                     res.push(FuncArg::new(arg_name, ft));
                     self.expect(Tok::RBr);
@@ -1026,13 +1030,16 @@ impl FcParser {
     fn parse_ftype(&mut self) -> FType {
         let mut is_ptr = false;
         let mut is_arr = false;
-        if self.peek_is(Tok::Star) {
-            self.consume();
-            is_ptr = true;
-        } else if self.peek_is(Tok::LBr) {
+       
+        if self.peek_is(Tok::LBr) {
             self.consume();
             is_arr = true;
         }
+        if self.peek_is(Tok::Star) {
+            self.consume();
+            is_ptr = true;
+        } 
+        
 
         let arg_typename_start = self.expect_idt().unwrap_or_else(|| {
             panic!("{}: expected typename for arg", self.line)}
@@ -1077,7 +1084,7 @@ impl FcParser {
 
         if is_arr {
             self.expect(Tok::RBr);
-            FType::Array(ft.to_idx(), 0, 0)
+            FType::array_from(&ft, 0)
         } else {
             ft
         }
@@ -1314,7 +1321,7 @@ pub enum AstNode {
     StringLiteral(String),
     Variable(String),
     Array(FType, Vec<AstNode>),
-    ArrayElem(String, Box<AstRoot>), // arrname, idx val
+    ArrayElem(Box<AstNode>, Box<AstRoot>), // arrname, idx val
     ArrRep(u64), // repeat array elems N times
 
     CodeBlock {

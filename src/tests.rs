@@ -9,7 +9,7 @@ fn test_variables_example() {
     let output_bin = "testbins/1_variables";
 
     let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd"])
+        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd", "--verbose"])
         .status()
         .expect("Failed to run compiler command");
 
@@ -48,7 +48,7 @@ fn test_loops_example() {
     let output_bin = "testbins/2_loops";
 
     let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd"])
+        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd", "--verbose"])
         .status()
         .expect("Failed to run compiler command");
 
@@ -103,7 +103,7 @@ fn test_functions_example() {
     let output_bin = "testbins/3_functions";
 
     let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd"])
+        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd", "--verbose"])
         .status()
         .expect("Failed to run compiler command");
 
@@ -141,7 +141,7 @@ fn test_arrays_example() {
     let output_bin = "testbins/4_arrays";
 
     let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd"])
+        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd", "--verbose"])
         .status()
         .expect("Failed to run compiler command");
 
@@ -192,6 +192,7 @@ fn test_modules_example() {
         cmd.push("-o");
         cmd.push(output_bin);
         cmd.push("--nostd");
+        cmd.push("--verbose");
     println!("Running compiler command: cargo {:?}", cmd);
 
     let compile_output = Command::new("cargo")
@@ -240,6 +241,7 @@ fn test_structs_example() {
         cmd.push("-o");
         cmd.push(output_bin);
         cmd.push("--nostd");
+        cmd.push("--verbose");
     println!("Running compiler command: cargo {:?}", cmd);
 
     let compile_output = Command::new("cargo")

@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, process::{Command, exit}, sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}, mpsc::{self, Sender}}, time::Instant};
+use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, process::{Command, exit}, sync::{Arc, Mutex, RwLock, atomic::{AtomicUsize, Ordering}, mpsc::{self, Sender}}, time::Instant};
 
 use clap::{FromArgMatches, Parser};
 use colored::Colorize;
@@ -139,7 +139,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         struct_tabs.push(p.structs);
         trait_tabs.push(p.traits);
         genfunc_tabs.push(p.generic_funcs);
-    }    
+    }   
 
     let functab    = Arc::new(FuncTable::from_several(func_tabs));
     let struct_tab = Arc::new(StructTable::from_several(&struct_tabs));
@@ -198,7 +198,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         Err(_e) => {}
     }
 
-    let global_gens = Arc::new(Mutex::new(IndexSet::new()));
+    let global_gens = Arc::new(RwLock::new(IndexSet::new()));
     
     let counter = Arc::new(AtomicUsize::new(0));
     let nat_fnames: Vec<String> = asts.par_iter().enumerate().map(|(idx, ast)| {
@@ -221,15 +221,10 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
             struct_tab.clone(),
             flags.target,
             genfunc_tab.clone(),
-            gens.lock().unwrap().clone(), 
+            gens, 
         );
 
         gene.gen_everything(flags.shared);
-
-        {
-            let mut lock = gens.lock().unwrap();
-            lock.extend(gene.prev_gen.iter().cloned());
-        }
 
         let temp_fname = format!("{}_temp.ssa", fname.replace(".fcy", ""));
         gene.write_file(&temp_fname).unwrap();

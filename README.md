@@ -37,10 +37,9 @@ is in `ci-bin/` directory of repo, you may grab one for yourself). This branch a
 target support without removing other arches. 
 For info about qbe and building it, visit [QBE website](https://c9x.me/compile/).    
 Without win target you may get QBE from your package manager (apt/pacman/homebrew/etc) 
-2. `gcc` - to assemble and link native assemblies. Preinstalled on most linux 
-distributions, but for others/macos/windows you would likely need to 
-install this, also has to be in the PATH. 
-See [GNU website](https://gcc.gnu.org/install/) or get the binaries.
+2. `gcc`/`clang` - to assemble and link native assemblies. gcc is Preinstalled on most linux 
+distributions, but for others cases you may install gcc or clang. It also has to be in the PATH. 
+See [GNU website](https://gcc.gnu.org/install/)/[Clang website](https://clang.llvm.org/) or get the binaries.
 3. Fency runtime lib - you would have fencyc runtime C library precompiled and installed 
 as `$HOME/.fency/runtime/libfcyrt.a` (or not `.a`, depends on your OS). 
 See [runtime lib repo](https://github.com/The-Fency-Project/runtime).    

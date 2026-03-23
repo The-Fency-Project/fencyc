@@ -312,7 +312,7 @@ impl Logger {
                             help, name, ft)
                     }
                     ErrKind::NotPubFieldAddr(name) => {
-                        format!("Attempting to address field {} which isnt public\
+                        format!("Attempting to address field {} which isnt public\n\
                             addressing private field possible only in `impl`\n\
                             {}: consider doing this field public, e.g. `pub {}: ..`",
                             name, help, name)
@@ -326,6 +326,10 @@ impl Logger {
                         {}: library {} was found in {} but it has no subdirectory \
                         src/ for source files",
                         nm, help, nm, path)
+                    }
+                    ErrKind::StructNonField(astn) => {
+                        format!("Expected struct field, found {:?}",
+                            astn)
                     }
                     ErrKind::ParseExpectedIdt(tk) => {
                         format!("Parse error: expected identifier, found {:?}",
@@ -355,6 +359,11 @@ impl Logger {
                         format!("Type {} can't be used in {} operation\n\
                         {}: possible types for this op: {:?}",
                         found, opname, help, possible)
+                    }
+                    ErrKind::NonArrIndex(ft) => {
+                        format!("Type {} can't be indexed\n\
+                        {}: indexable types are arrays and strs",
+                        ft, help)
                     }
                     ErrKind::UnknownTrait(nm) => {
                         format!("Attempting to implement unknown trait {}",
@@ -536,6 +545,8 @@ pub enum ErrKind {
     NotFuncInImpl(Box<AstNode>), // found 
     MainRetIncompat(FType), // found 
     BitsCastErr(String, FType, Vec<FType>), // op name, found type, possible fts
+    StructNonField(Box<AstNode>), // found 
+    NonArrIndex(FType),
 
     UnknownTrait(String), // name 
     TraitFuncArgsLen(String, String, usize, usize), // func name, trait name, expected, got 

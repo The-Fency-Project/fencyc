@@ -50,7 +50,8 @@ pub enum FType {
     heapptr = 6,
     none = 7,                       // No ftype!
     nil = 8,                        // real voxvm thing!
-    Array(usize, usize, usize) = 9, // typeid, count, arridx
+    Array(usize, usize, Option<&'static str>) = 9, // typeid, count, optional arr
+                                                          // name
     Struct(&'static str) = 10, // idx in structs table
     StructPtr(&'static str) = 11,
     StructHeapPtr(&'static str),
@@ -108,8 +109,8 @@ impl fmt::Display for FType {
             FType::heapptr => write!(f, "heapptr"),
             FType::none => write!(f, "none"),
             FType::nil => write!(f, "nil"),
-            FType::Array(typeid, count, arridx) => {
-                write!(f, "Array(typeid={}, count={}, arridx={})", typeid, count, arridx)
+            FType::Array(typeid, count, sname) => {
+                write!(f, "Array(typeid={}, count={}, sname={:?})", typeid, count, sname)
             }
             FType::Struct(name)        => write!(f, "s_{}", name),
             FType::StructPtr(name)     => write!(f, "ptr_{}", name),
@@ -148,9 +149,28 @@ impl FType {
             4 => Some(FType::strconst),
             5 => Some(FType::dsptr),
             6 => Some(FType::heapptr),
-            7 => Some(FType::none), // No ftype!
-            8 => Some(FType::nil),  // real voxvm thing! (obsolute since fencyc 0.5 though) 
+            7 => Some(FType::none),
+            8 => Some(FType::nil),
+            9 => Some(FType::Array(0, 0, None)),        // placeholder
+            13 => Some(FType::ubyte),
+            14 => Some(FType::ibyte),
+            15 => Some(FType::u32),
+            16 => Some(FType::i32),
+            17 => Some(FType::single),
+            18 => Some(FType::any),
+            19 => Some(FType::Ptr),
+            20 => Some(FType::ushort),
+            21 => Some(FType::ishort),
             _ => None,
+        }
+    }
+
+    pub fn from_idx_patched(idx: usize, name: Option<&'static str>) -> Option<FType> {
+        match (idx, name) {
+            (10, Some(nm)) => Some(FType::Struct(nm)),
+            (11, Some(nm)) => Some(FType::StructPtr(nm)),
+            (12, Some(nm)) => Some(FType::StructHeapPtr(nm)),
+            other => Self::from_idx(idx)
         }
     }
 
@@ -165,8 +185,32 @@ impl FType {
             FType::heapptr => 6,
             FType::none => 7,
             FType::nil => 8,
-            _other => unimplemented!(),
-            // FType::Array(_, _) => 9, 
+            FType::Array(_, _, _) => 9,
+            FType::Struct(_) => 10,
+            FType::StructPtr(_) => 11,
+            FType::StructHeapPtr(_) => 12,
+            FType::ubyte => 13,
+            FType::ibyte => 14,
+            FType::u32 => 15,
+            FType::i32 => 16,
+            FType::single => 17,
+            FType::any => 18,
+            FType::Ptr => 19,
+            FType::ushort => 20,
+            FType::ishort => 21,
+        }
+    }
+
+    pub fn array_from(&self, count: usize) -> FType {
+        let el_idx = self.to_idx();
+        match self {
+            other if other.if_struct().is_some() => {
+                let name = other.if_struct().unwrap();
+                FType::Array(el_idx, count, Some(name))
+            }
+            other => {
+                FType::Array(el_idx, count, None)
+            }
         }
     }
 
@@ -471,8 +515,8 @@ impl SemAn {
 
                 match (res_ft, rightdat.ftype) {
                     //// Array(usize, usize, usize) = 9, // typeid, count, arridx
-                    (FType::Array(fti1, _c1, _), FType::Array(fti2, _c2, _)) => {
-                       if fti1 != fti2 {
+                    (FType::Array(fti1, _c1, sn1), FType::Array(fti2, _c2, sn2)) => {
+                       if fti1 != fti2 && sn1 != sn2 {
                            logger.send(LogMessage::new(
                                 LogLevel::Error(ErrKind::MismatchedTypes(res_ft, rightdat.ftype)),
                                 line,
@@ -532,7 +576,7 @@ impl SemAn {
                 exprdat.ftype = FType::ibyte;
             }
             AstNode::Array(ft, nodes) => {
-                exprdat.ftype = FType::Array(ft.to_idx(), nodes.len(), 0);
+                exprdat.ftype = FType::array_from(&ft, nodes.len());
             }
             AstNode::BinaryOp { op, left, right } => {
                 let leftd = self.analyze_expr(&AstRoot::new(*left.clone(), line), logger);
@@ -657,8 +701,9 @@ impl SemAn {
                 );
                 let newval_data = self.analyze_expr(&newval, logger);
                 let res_type: FType = match val.ftype {
-                    FType::Array(el_ft, _, _) if idx.is_some() => {
-                        FType::from_idx(el_ft).unwrap_or(FType::nil)
+                    FType::Array(el_ft, _, nm) if idx.is_some() => {
+                        FType::from_idx_patched(el_ft, nm)
+                            .unwrap_or(FType::none)
                     }
                     other => other
                 };
@@ -717,7 +762,7 @@ impl SemAn {
                             other => {
                                 logger.send(LogMessage::new(
                                     LogLevel::Error(
-                                        ErrKind::MismatchedTypes(FType::Array(0, 0, 0), other)
+                                        ErrKind::MismatchedTypes(FType::Array(0, 0, None), other)
                                     ),
                                     line,
                                     self.fname.clone()
@@ -1149,35 +1194,36 @@ impl SemAn {
                         ));
                     }
                 }
-                let ft_idx = ft.to_idx();
 
-                // TODO
                 //// Array(usize, usize, usize) = 9, // typeid, count, arridx
-                exprdat.ftype = FType::Array(ft_idx, nodes.len(), 0 );
+                exprdat.ftype = FType::array_from(&ft, nodes.len());
             }
-            AstNode::ArrayElem(arr_name, idx) => {
-                let array_symb = match self.symb_table.get(&arr_name) {
-                    Some(v) => v.clone().1,
-                    None => {
+            AstNode::ArrayElem(arr, idx) => {
+                let val_dat = self.analyze_expr(
+                    &AstRoot::new(*arr.clone(), self.line), 
+                    &mut logger.clone()
+                );
+
+                let elem_type = match val_dat.ftype {
+                    FType::Array(fti, _, nm) => FType::from_idx_patched(fti, nm),
+                    FType::strconst          => Some(FType::ubyte),
+                    _other => {
                         logger.send(LogMessage::new(
-                            LogLevel::Error(ErrKind::UndeclaredVar(arr_name.to_owned())),
-                            line,
+                            LogLevel::Error(ErrKind::NonArrIndex(_other)),
+                            self.line,
                             self.fname.clone()
                         ));
                         return exprdat;
-                    }
-                };
-
-                let elem_type = match array_symb.ftype {
-                    FType::Array(fti, _, _) => FType::from_idx(fti),
-                    FType::strconst         => Some(FType::ubyte),
-                    _other => unreachable!("Indexing for {}", _other),
+                    },
                 };
 
                 let idx_exprdat = self.analyze_expr(&idx, logger);
                 if idx_exprdat.ftype != FType::uint {
                     logger.send(LogMessage::new(
-                        LogLevel::Error(ErrKind::ArrIdxType(arr_name.clone(), idx_exprdat.ftype)),
+                        LogLevel::Error(ErrKind::ArrIdxType(
+                            format!("{:?}", arr), 
+                            idx_exprdat.ftype
+                        )),
                         line,
                         self.fname.clone()
                     ));
@@ -1322,6 +1368,35 @@ impl SemAn {
                         self.fname.clone()
                     ));
                     return exprdat;
+                }
+            }
+            AstNode::Structure { name, fields, public, attrs } => {
+                for f in fields {
+                    match f {
+                        AstNode::StructField { name, ftype, public } => {
+                            if let Some(sn) = ftype.if_struct() {
+                                let paths = self.get_use_paths();
+                                if self.struct_tab.get(sn, &paths).is_none() {
+                                    logger.send(LogMessage::new(
+                                        LogLevel::Error(ErrKind::UnknownStruct(
+                                            sn.to_owned()
+                                        )),
+                                        self.line,
+                                        self.fname.clone()
+                                    ));
+                                }
+                            };
+                        } 
+                        other => {
+                            logger.send(LogMessage::new(
+                                LogLevel::Error(ErrKind::StructNonField(
+                                    Box::new(other.clone())
+                                )),
+                                self.line,
+                                self.fname.clone()
+                            ));
+                        }
+                    } 
                 }
             }
             AstNode::StructImpl { name, body, Trait } => {
@@ -1742,8 +1817,9 @@ impl StructInfo {
                 8
             }
             FType::i32 | FType::u32 | FType::single => 4,
-            FType::Array(el_ft_idx, _ctr, _) => {
-                let el_ft = FType::from_idx(el_ft_idx).unwrap();
+            FType::Array(el_ft_idx, _ctr, nm) => {
+                let el_ft = FType::from_idx_patched(el_ft_idx, nm)
+                    .unwrap();
                 Self::alignment_of(el_ft)
             }
             FType::Struct(_usize) => {
