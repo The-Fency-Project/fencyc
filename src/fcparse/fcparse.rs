@@ -33,7 +33,6 @@ pub struct FcParser {
     curmod: String, // cur module name
     pub funcs: FuncTable,
     pub structs: StructTable,
-    nm_interner: NameInterner,
     pub traits: TraitTable,
     pub generic_funcs: HashMap<String, AstRoot>,
 }
@@ -51,7 +50,6 @@ impl FcParser {
             curmod: "main".to_owned(),
             funcs: FuncTable::new(),
             structs: StructTable::new(),
-            nm_interner: NameInterner { map: HashMap::new() },
             traits: TraitTable::new(),
             generic_funcs: HashMap::new(),
         }
@@ -246,11 +244,6 @@ impl FcParser {
                     vals.push(self.parse_expr(0).node);
                 };
                 self.allowed_tok = None;
-                // let typename = self.expect_idt().unwrap_or_else(|| {
-                //     panic!("{}: expected typename after array end (e.g. [1, 2]int)", self.line);
-                // }); 
-                // let ft = match_ftype(&typename, &mut self.nm_interner)
-                //     .unwrap_or(FType::none);
                 let ft = self.parse_ftype();
 
                 AstNode::Array(ft, vals)
@@ -660,8 +653,7 @@ impl FcParser {
                 st
             }
         };
-        if let Some(ft) = match_ftype(&path, 
-            &mut self.nm_interner) {
+        if let Some(ft) = match_ftype(&path) {
             ftype = ft;
         };
         return ftype;
@@ -1007,11 +999,14 @@ impl FcParser {
                     let arg_typename = self.expect_idt().unwrap_or_else(|| {
                         panic!("{}: expected typename for arg", self.line)}
                     );
-                    let el_ft = match_ftype(&arg_typename, &mut self.nm_interner)
+                    let el_ft = match_ftype(&arg_typename)
                         .unwrap_or_else(|| {
                         panic!("{}: unknown type {}", self.line, arg_typename)}
                     );
-                    let ft = FType::array_from(&el_ft, 0);
+                    let ft = FType::Array(
+                        Box::new(el_ft.clone()), 
+                        0
+                    );
 
                     res.push(FuncArg::new(arg_name, ft));
                     self.expect(Tok::RBr);
@@ -1077,14 +1072,17 @@ impl FcParser {
             }
         };
 
-        let ft = match_ftype(&arg_typename, &mut self.nm_interner)
+        let ft = match_ftype(&arg_typename)
             .unwrap_or_else(|| {
             panic!("{}: unknown type {}", self.line, arg_typename)}
         );
 
         if is_arr {
             self.expect(Tok::RBr);
-            FType::array_from(&ft, 0)
+            FType::Array(
+                Box::new(ft), 
+                0
+            )
         } else {
             ft
         }
@@ -1646,23 +1644,7 @@ pub enum ParseFlags {
     TraitImpl(String),
 }
 
-/// for more memory efficiency
-struct NameInterner {
-    map: HashMap<String, &'static str>,
-}
-
-impl NameInterner {
-    fn intern(&mut self, s: &str) -> &'static str {
-        if let Some(&existing) = self.map.get(s) {
-            return existing;
-        }
-        let static_ref = Box::leak(s.to_owned().into_boxed_str());
-        self.map.insert(s.to_owned(), static_ref);
-        static_ref
-    }
-}
-
-pub fn match_ftype(lit: &str, interner: &mut NameInterner) -> Option<FType> {
+pub fn match_ftype(lit: &str) -> Option<FType> {
     match lit {
         "uint" => Some(FType::uint),
         "int" => Some(FType::int),
@@ -1679,20 +1661,14 @@ pub fn match_ftype(lit: &str, interner: &mut NameInterner) -> Option<FType> {
         "ibyte" => Some(FType::ibyte),
         "ptr" => Some(FType::Ptr),
         other if lit.starts_with("s_") => Some(
-            FType::Struct(interner.intern(&lit[2..]))
+            FType::Struct(lit[2..].to_owned())
         ),
-        other if lit.starts_with("ptr_") => {
-            let slice = &lit[4..];
-            Some(
-                FType::StructPtr(interner.intern(slice))
-            )
-        }
-        other if lit.starts_with("h_") => {
-            let slice = &lit[2..];
-            Some(
-                FType::StructHeapPtr(interner.intern(slice))
-            )
-        }
+        other if lit.starts_with("ptr_") => Some(
+            FType::StructPtr(lit[4..].to_owned())
+        ),
+        other if lit.starts_with("h_") => Some(
+            FType::StructHeapPtr(lit[2..].to_owned())
+        ),
         _other => None,
     }
 }
@@ -1756,7 +1732,7 @@ impl FuncDat {
         let res = match node {
             AstNode::Function { name, args, ret_type, body: _, public } => {
                 let mut fdat = FuncDat::new(
-                    *name.clone(), args.clone(), *ret_type, false
+                    *name.clone(), args.clone(), ret_type.clone(), false
                 );
                 fdat.public = *public;
                 Some(fdat)
@@ -1768,7 +1744,7 @@ impl FuncDat {
             }
             AstNode::ExternedFunc { name, args, ret_type, public, real_name } => {
                 let mut fdat = FuncDat::new(
-                    *name.clone(), args.clone(), *ret_type, false
+                    *name.clone(), args.clone(), ret_type.clone(), false
                 );
                 fdat.public = *public;
                 fdat.real_name = Some(real_name.path_to_string());

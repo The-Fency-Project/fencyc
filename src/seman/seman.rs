@@ -38,32 +38,34 @@ impl FSymbol {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-#[repr(usize)]
+#[derive(Debug, Clone)]
 pub enum FType {
-    uint = 0,
-    int = 1,
-    double = 2,
-    bool = 3,
-    strconst = 4,
-    dsptr = 5,
-    heapptr = 6,
-    none = 7,                       // No ftype!
-    nil = 8,                        // real voxvm thing!
-    Array(usize, usize, Option<&'static str>) = 9, // typeid, count, optional arr
-                                                          // name
-    Struct(&'static str) = 10, // idx in structs table
-    StructPtr(&'static str) = 11,
-    StructHeapPtr(&'static str),
+    uint,
+    int,
+    double,
+    bool,
+    strconst,
+    dsptr,
+    heapptr,
+    none,                       // No ftype!
+    nil,                        // real voxvm thing! (good old times, now deprecated)
+    Array(Box<FType>, usize), // type, count 
+                                                          
+    Struct(String),
+    StructPtr(String),
+    StructHeapPtr(String),
     ubyte,
     ibyte,
     u32,
     i32,
     single,
     any, // some kind of wildcard for seman 
-    Ptr, // ftype id 
+    Ptr, 
     ushort,
     ishort,
+    TypePtr(Box<FType>),
+
+    Generic(String),
 }
 
 impl Into<qbe::Type> for FType {
@@ -75,12 +77,12 @@ impl Into<qbe::Type> for FType {
             FType::u32 | FType::i32   => qbe::Type::Word,
             FType::bool | FType::ubyte | FType::ibyte 
                 => qbe::Type::Word, // qbe assignment rule
-            FType::Array(el, _, _)    => {
-                Self::from_idx(el).unwrap().into()
+            FType::Array(el, count)    => {
+                Into::<qbe::Type>::into(*el)
             },
             FType::strconst | FType::StructPtr(_) | FType::StructHeapPtr(_) 
                 => qbe::Type::Long, // ptr
-            _other => todo!("Match ft qbf for {:?}", self)
+            ref _other => todo!("Match ft qbf for {:?}", self)
         }
     }
 }
@@ -109,8 +111,8 @@ impl fmt::Display for FType {
             FType::heapptr => write!(f, "heapptr"),
             FType::none => write!(f, "none"),
             FType::nil => write!(f, "nil"),
-            FType::Array(typeid, count, sname) => {
-                write!(f, "Array(typeid={}, count={}, sname={:?})", typeid, count, sname)
+            FType::Array(el, count) => {
+                write!(f, "Array[{};{}]", el, count)
             }
             FType::Struct(name)        => write!(f, "s_{}", name),
             FType::StructPtr(name)     => write!(f, "ptr_{}", name),
@@ -124,6 +126,8 @@ impl fmt::Display for FType {
             FType::Ptr        => write!(f, "Ptr"),
             FType::ushort     => write!(f, "ushort"),
             FType::ishort     => write!(f, "ishort"),
+            FType::TypePtr(t) => write!(f, "*{}", t),
+            FType::Generic(t) => write!(f, "generic type {}", t),
         }
     }
 }
@@ -137,88 +141,14 @@ impl FType {
     }
 
     pub fn size(&self) -> u64 {
-        CodeGen::match_ft_qbf_t(*self, true).size()
-    }
-
-    pub fn from_idx(idx: usize) -> Option<FType> {
-        match idx {
-            0 => Some(FType::uint),
-            1 => Some(FType::int),
-            2 => Some(FType::double),
-            3 => Some(FType::bool),
-            4 => Some(FType::strconst),
-            5 => Some(FType::dsptr),
-            6 => Some(FType::heapptr),
-            7 => Some(FType::none),
-            8 => Some(FType::nil),
-            9 => Some(FType::Array(0, 0, None)),        // placeholder
-            13 => Some(FType::ubyte),
-            14 => Some(FType::ibyte),
-            15 => Some(FType::u32),
-            16 => Some(FType::i32),
-            17 => Some(FType::single),
-            18 => Some(FType::any),
-            19 => Some(FType::Ptr),
-            20 => Some(FType::ushort),
-            21 => Some(FType::ishort),
-            _ => None,
-        }
-    }
-
-    pub fn from_idx_patched(idx: usize, name: Option<&'static str>) -> Option<FType> {
-        match (idx, name) {
-            (10, Some(nm)) => Some(FType::Struct(nm)),
-            (11, Some(nm)) => Some(FType::StructPtr(nm)),
-            (12, Some(nm)) => Some(FType::StructHeapPtr(nm)),
-            other => Self::from_idx(idx)
-        }
-    }
-
-    pub fn to_idx(&self) -> usize {
-        match self {
-            FType::uint => 0,
-            FType::int => 1,
-            FType::double => 2,
-            FType::bool => 3,
-            FType::strconst => 4,
-            FType::dsptr => 5,
-            FType::heapptr => 6,
-            FType::none => 7,
-            FType::nil => 8,
-            FType::Array(_, _, _) => 9,
-            FType::Struct(_) => 10,
-            FType::StructPtr(_) => 11,
-            FType::StructHeapPtr(_) => 12,
-            FType::ubyte => 13,
-            FType::ibyte => 14,
-            FType::u32 => 15,
-            FType::i32 => 16,
-            FType::single => 17,
-            FType::any => 18,
-            FType::Ptr => 19,
-            FType::ushort => 20,
-            FType::ishort => 21,
-        }
-    }
-
-    pub fn array_from(&self, count: usize) -> FType {
-        let el_idx = self.to_idx();
-        match self {
-            other if other.if_struct().is_some() => {
-                let name = other.if_struct().unwrap();
-                FType::Array(el_idx, count, Some(name))
-            }
-            other => {
-                FType::Array(el_idx, count, None)
-            }
-        }
+        CodeGen::match_ft_qbf_t(self, true).size()
     }
 
     /// Checks whether it is a struct type and if so returns name 
-    pub fn if_struct(&self) -> Option<&'static str> {
+    pub fn if_struct(&self) -> Option<String> {
         match self {
             FType::Struct(st) | FType::StructPtr(st) | FType::StructHeapPtr(st) 
-                => Some(st),
+                => Some(st.clone()),
             _other => None,
         }
     }
@@ -348,7 +278,11 @@ impl SymbolTable {
     pub fn push_funcargs(&mut self, fargs: Vec<FuncArg>) {
         for (_idx, fa) in fargs.iter().enumerate() {
             // varposition is obsolete
-            let symb = FSymbol::new(fa.name.clone(), VarPosition::None, fa.ftype);
+            let symb = FSymbol::new(
+                fa.name.clone(), 
+                VarPosition::None, 
+                fa.ftype.clone()
+            );
             self.newsymb(symb);
         }
     }
@@ -430,7 +364,7 @@ impl SemAn {
                         false => {
                             logger.send(LogMessage::new(
                                 LogLevel::Error(ErrKind::MainRetIncompat(
-                                    fv[0].ret_type
+                                    fv[0].ret_type.clone()
                                 )),
                                 0,
                                 self.fname.clone()
@@ -469,7 +403,7 @@ impl SemAn {
 
         match &node.node {
             AstNode::Assignment { name, val, ft } => {
-                self.expect_type = *ft;
+                self.expect_type = ft.clone();
                 let rightdat = self.analyze_expr(&AstRoot::new(*val.clone(), line), logger);
                 self.expect_type = FType::none;
 
@@ -484,16 +418,11 @@ impl SemAn {
 
                 let res_ft = match ft {
                     FType::none => {
-                        // logger.send(LogMessage::new(
-                        //     LogLevel::Error(ErrKind::NoneTypeAssign(name.clone(), rightdat.ftype)),
-                        //     line,
-                        //     self.fname.clone()
-                        // ));
-                        rightdat.ftype
+                        rightdat.ftype.clone()
                     }
                     ft if ft.if_struct().is_some() => {
                         let name = ft.if_struct().unwrap();
-                        if let Some(si) = self.struct_tab.get(name, &paths) {
+                        if let Some(si) = self.struct_tab.get(&name, &paths) {
                             if !si.public && !name.contains(&self.module) {
                                 logger.send(LogMessage::new(
                                     LogLevel::Error(ErrKind::NotPubStruct(name.to_owned())),
@@ -508,17 +437,19 @@ impl SemAn {
                                 self.fname.clone()
                             ));
                         }
-                        *ft
+                        ft.clone()
                     }
-                    _other => {*ft}
+                    _other => {ft.clone()}
                 };
 
-                match (res_ft, rightdat.ftype) {
-                    //// Array(usize, usize, usize) = 9, // typeid, count, arridx
-                    (FType::Array(fti1, _c1, sn1), FType::Array(fti2, _c2, sn2)) => {
-                       if fti1 != fti2 && sn1 != sn2 {
+                match (&res_ft, &rightdat.ftype) {
+                    (FType::Array(ft1, c1), FType::Array(ft2, c2)) => {
+                       if *ft1 != *ft2 {
                            logger.send(LogMessage::new(
-                                LogLevel::Error(ErrKind::MismatchedTypes(res_ft, rightdat.ftype)),
+                                LogLevel::Error(ErrKind::MismatchedTypes(
+                                    res_ft.clone(), 
+                                    rightdat.ftype.clone()
+                                )),
                                 line,
                                 self.fname.clone()
                            ));
@@ -527,7 +458,10 @@ impl SemAn {
                     (other1, other2) => {
                         if other1 != other2 {
                             logger.send(LogMessage::new(
-                                LogLevel::Error(ErrKind::MismatchedTypes(res_ft, rightdat.ftype)),
+                                LogLevel::Error(ErrKind::MismatchedTypes(
+                                    res_ft.clone(), 
+                                    rightdat.ftype.clone()
+                                )),
                                 line,
                                 self.fname.clone()
                             ));
@@ -536,8 +470,12 @@ impl SemAn {
                 }
 
                 self.symb_table
-                    .newsymb(FSymbol::new(name.to_owned(), VarPosition::None, res_ft));
-                exprdat.ftype = res_ft;
+                    .newsymb(FSymbol::new(
+                                name.to_owned(), 
+                                VarPosition::None, 
+                                res_ft.clone()
+                            ));
+                exprdat.ftype = res_ft.clone();
             }
             AstNode::Int(_iv) => {
                 exprdat.ftype = FType::int;
@@ -576,7 +514,10 @@ impl SemAn {
                 exprdat.ftype = FType::ibyte;
             }
             AstNode::Array(ft, nodes) => {
-                exprdat.ftype = FType::array_from(&ft, nodes.len());
+                exprdat.ftype = FType::Array(
+                    Box::new(ft.clone()), 
+                    nodes.len()
+                );
             }
             AstNode::BinaryOp { op, left, right } => {
                 let leftd = self.analyze_expr(&AstRoot::new(*left.clone(), line), logger);
@@ -602,7 +543,11 @@ impl SemAn {
                     // For non-shift operations, types must match
                     if leftd.ftype != rightd.ftype {
                         logger.send(LogMessage::new(
-                            LogLevel::Error(ErrKind::BinOpDifTypes(*op, leftd.ftype, rightd.ftype)),
+                            LogLevel::Error(ErrKind::BinOpDifTypes(
+                                *op, 
+                                leftd.ftype.clone(),
+                                rightd.ftype.clone()
+                            )),
                             line,
                             self.fname.clone()
                         ));
@@ -631,7 +576,7 @@ impl SemAn {
             }
             AstNode::UnaryOp { op, expr } => {
                 let rdat = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
-                exprdat.ftype = rdat.ftype;
+                exprdat.ftype = rdat.ftype.clone();
 
                 if *op == UnaryOp::Negate
                     && !matches!(
@@ -640,7 +585,9 @@ impl SemAn {
                     )
                 {
                     logger.send(LogMessage::new(
-                        LogLevel::Error(ErrKind::NegateBounds(exprdat.ftype)),
+                        LogLevel::Error(ErrKind::NegateBounds(
+                            exprdat.ftype.clone()
+                        )),
                         line,
                         self.fname.clone(),
                     ));
@@ -673,7 +620,7 @@ impl SemAn {
             AstNode::Variable(var) => {
                 let paths = self.get_use_paths();
                 if let Some(_v) = self.struct_tab.get(var, &paths) {
-                    exprdat.ftype = FType::Struct("");
+                    exprdat.ftype = FType::Struct(var.to_owned());
                     return exprdat;
                 }
     
@@ -683,7 +630,7 @@ impl SemAn {
                 }
 
                 exprdat.ftype = match self.symb_table.get(&var) {
-                    Some(v) => v.1.ftype,
+                    Some(v) => v.1.ftype.clone(),
                     None => {
                         logger.send(LogMessage::new(
                             LogLevel::Error(ErrKind::UndeclaredVar(var.to_owned())),
@@ -701,9 +648,8 @@ impl SemAn {
                 );
                 let newval_data = self.analyze_expr(&newval, logger);
                 let res_type: FType = match val.ftype {
-                    FType::Array(el_ft, _, nm) if idx.is_some() => {
-                        FType::from_idx_patched(el_ft, nm)
-                            .unwrap_or(FType::none)
+                    FType::Array(el, count) if idx.is_some() => {
+                        *el.clone()
                     }
                     other => other
                 };
@@ -734,14 +680,17 @@ impl SemAn {
             }
             AstNode::VariableCast { name, target_type } => {
                 if let Some(var) = self.symb_table.get(&name) {
-                    if var.1.ftype == *target_type {
+                    let var_ft = var.1.ftype.clone();
+                    if var_ft == *target_type {
                         logger.send(LogMessage::new(
-                            LogLevel::Warning(WarnKind::ConvSame(var.1.ftype)), 
+                            LogLevel::Warning(WarnKind::ConvSame(
+                                var_ft.clone()
+                            )), 
                             line,
                             self.fname.clone()
                         ));
                     }
-                    self.chk_cast(var.1.ftype, *target_type, logger.clone());
+                    self.chk_cast(&var_ft, target_type, logger.clone());
                 } else {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::UndeclaredVar(name.to_owned())),
@@ -750,19 +699,25 @@ impl SemAn {
                     ));
                 }
 
-                exprdat.ftype = *target_type;
+                exprdat.ftype = target_type.clone();
             }
             AstNode::Intrinsic { intr, val } => {
                 let rdat = self.analyze_expr(&AstRoot::new(*val.clone(), line), logger);
                 match intr {
                     Intrinsic::Len => {
                         match rdat.ftype {
-                            FType::Array(_, _, _) => {},
+                            FType::Array(el, count) => {},
                             FType::strconst => {},
                             other => {
                                 logger.send(LogMessage::new(
                                     LogLevel::Error(
-                                        ErrKind::MismatchedTypes(FType::Array(0, 0, None), other)
+                                        ErrKind::MismatchedTypes(
+                                            FType::Array(
+                                                Box::new(FType::any), 
+                                                0,
+                                            ), 
+                                            other
+                                        )
                                     ),
                                     line,
                                     self.fname.clone()
@@ -907,11 +862,11 @@ impl SemAn {
                 let generic_names = name.get_generic_names();
 
                 for arg in args {
-                    match arg.ftype {
+                    match &arg.ftype {
                         ft if ft.if_struct().is_some() => {
                             let name = ft.if_struct().unwrap();
                             let paths = self.get_use_paths();
-                            if let Some(si) = self.struct_tab.get(name, &paths) {
+                            if let Some(si) = self.struct_tab.get(&name, &paths) {
                                 if !si.public && !name.contains(&self.module) {
                                     logger.send(LogMessage::new(
                                         LogLevel::Error(ErrKind::NotPubStruct(name.to_owned())),
@@ -1073,7 +1028,7 @@ impl SemAn {
                                         LogLevel::Error(ErrKind::GenericFuncInimpl(
                                             f_name_s.clone(),
                                             b.to_owned(),
-                                            argdat.ftype
+                                            argdat.ftype.clone()
                                         )),
                                         self.line,
                                         self.fname.clone()
@@ -1118,9 +1073,9 @@ impl SemAn {
                             return exprdat;
                         } 
                         self.matched_overloads.insert(*idx, 
-                            (ov_idx_op, overload.ret_type)
+                            (ov_idx_op, overload.ret_type.clone())
                         );
-                        exprdat.ftype = overload.ret_type;
+                        exprdat.ftype = overload.ret_type.clone();
                         return exprdat;
                     }
                 }
@@ -1143,8 +1098,8 @@ impl SemAn {
                             logger.send(LogMessage::new(
                                 LogLevel::Error(ErrKind::IncompatReturn(
                                     curf.0.to_owned(),
-                                    f.ret_type,
-                                    retval.ftype,
+                                    f.ret_type.clone(),
+                                    retval.ftype.clone(),
                                 )),
                                 line,
                                 self.fname.clone()
@@ -1172,8 +1127,8 @@ impl SemAn {
             }
             AstNode::ExprCast { expr, target_type } => {
                 let expr = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
-                self.chk_cast(expr.ftype, *target_type, logger.clone());
-                if expr.ftype == *target_type {
+                self.chk_cast(&expr.ftype, target_type, logger.clone());
+                if &expr.ftype == target_type {
                     logger.send(LogMessage::new(
                         LogLevel::Warning(WarnKind::ConvSame(expr.ftype)), 
                         line,
@@ -1181,14 +1136,15 @@ impl SemAn {
                     ));
                 }
 
-                exprdat.ftype = *target_type;
+                exprdat.ftype = target_type.clone();
             }
             AstNode::Array(ft, nodes) => {
                 for (idx, node) in nodes.iter().enumerate() {
                     let ndat = self.analyze_expr(&AstRoot::new(node.clone(), line), logger);
                     if ndat.ftype != *ft {
                         logger.send(LogMessage::new(
-                            LogLevel::Error(ErrKind::IncompatArrType(*ft, ndat.ftype, idx)),
+                            LogLevel::Error(ErrKind::IncompatArrType(ft.clone(),
+                                                    ndat.ftype, idx)),
                             line,
                             self.fname.clone()
                         ));
@@ -1196,7 +1152,10 @@ impl SemAn {
                 }
 
                 //// Array(usize, usize, usize) = 9, // typeid, count, arridx
-                exprdat.ftype = FType::array_from(&ft, nodes.len());
+                exprdat.ftype = FType::Array(
+                    Box::new(ft.clone()), 
+                    nodes.len()
+                );
             }
             AstNode::ArrayElem(arr, idx) => {
                 let val_dat = self.analyze_expr(
@@ -1205,7 +1164,7 @@ impl SemAn {
                 );
 
                 let elem_type = match val_dat.ftype {
-                    FType::Array(fti, _, nm) => FType::from_idx_patched(fti, nm),
+                    FType::Array(ft, count)  => Some(*ft.clone()),
                     FType::strconst          => Some(FType::ubyte),
                     _other => {
                         logger.send(LogMessage::new(
@@ -1254,9 +1213,9 @@ impl SemAn {
 
             }
             AstNode::StructCreate { name, field_vals } => {
-                exprdat.ftype = FType::Struct(Box::leak(
-                    name.path_to_string().into_boxed_str()
-                ));
+                exprdat.ftype = FType::Struct(
+                    name.path_to_string()
+                );
 
                 let struct_data = match self.struct_tab.tab
                     .get(&name.path_to_string()) {
@@ -1274,7 +1233,7 @@ impl SemAn {
                 };
                 if struct_data.attrs.contains(&Attr::Heap) {
                     logger.send(LogMessage::new(
-                        LogLevel::Error(ErrKind::HeapOnlyStack(exprdat.ftype)),
+                        LogLevel::Error(ErrKind::HeapOnlyStack(exprdat.ftype.clone())),
                         line,
                         self.fname.clone()
                     ));
@@ -1304,7 +1263,7 @@ impl SemAn {
                     if expected.ftype != field_ed.ftype {
                         logger.send(LogMessage::new(
                             LogLevel::Error(ErrKind::MismatchFieldsTypes(
-                                field_name.clone(), expected.ftype, field_ed.ftype
+                                field_name.clone(), expected.ftype.clone(), field_ed.ftype
                             )), 
                             line, 
                             self.fname.clone()
@@ -1359,7 +1318,7 @@ impl SemAn {
                         return exprdat;
                     }
                 };
-                exprdat.ftype = field_info.ftype;
+                exprdat.ftype = field_info.ftype.clone();
 
                 if !field_info.public && (self.in_impl != struct_name) {
                     logger.send(LogMessage::new(
@@ -1376,7 +1335,7 @@ impl SemAn {
                         AstNode::StructField { name, ftype, public } => {
                             if let Some(sn) = ftype.if_struct() {
                                 let paths = self.get_use_paths();
-                                if self.struct_tab.get(sn, &paths).is_none() {
+                                if self.struct_tab.get(&sn, &paths).is_none() {
                                     logger.send(LogMessage::new(
                                         LogLevel::Error(ErrKind::UnknownStruct(
                                             sn.to_owned()
@@ -1439,7 +1398,7 @@ impl SemAn {
                     }
                 };
 
-                let self_ft = ft.1.ftype;
+                let self_ft = ft.1.ftype.clone();
                 let struct_name = match self_ft.if_struct() {
                     Some(v) => v.to_owned(),
                     None => {
@@ -1596,8 +1555,8 @@ impl SemAn {
                     LogLevel::Error(ErrKind::TraitRetTypeIncompat(
                         si_k.clone(),
                         traitname.to_owned(),
-                        f.ret_type,
-                        si_v.ret_type
+                        f.ret_type.clone(),
+                        si_v.ret_type.clone(),
                     )),
                     self.line,
                     self.fname.clone()
@@ -1620,7 +1579,7 @@ impl SemAn {
                         LogLevel::Error(ErrKind::TraitFuncArgsIncompat(
                             f.name.path_to_segs().last().unwrap().to_owned(),
                             traitname.to_owned(),
-                            fa.ftype, sa.ftype
+                            fa.ftype.clone(), sa.ftype.clone()
                         )),
                         self.line,
                         self.fname.clone()
@@ -1699,7 +1658,7 @@ impl SemAn {
         matches!(*op, BinaryOp::Compare(_))
     }
 
-    pub fn chk_cast(&mut self, from: FType, to: FType, logger: Sender<LogMessage>) {
+    pub fn chk_cast(&mut self, from: &FType, to: &FType, logger: Sender<LogMessage>) {
         match (from, to) {
             (FType::Struct(st1), FType::Struct(st2)) |
             (FType::StructPtr(st1), FType::StructPtr(st2)) |
@@ -1708,7 +1667,9 @@ impl SemAn {
             (FType::StructHeapPtr(st1), FType::StructHeapPtr(st2))
             if st1 != st2 => {
                 logger.send(LogMessage::new(
-                    LogLevel::Error(ErrKind::IllegalCast(from, to)),
+                    LogLevel::Error(ErrKind::IllegalCast(
+                        from.clone(), to.clone()
+                    )),
                     self.line,
                     self.fname.clone(),
                 ));
@@ -1740,7 +1701,6 @@ pub struct StructInfo {
     pub fields: HashMap<String, StructField>,
     pub size: usize, 
     pub max_alignment: usize,
-    pub static_name: &'static str,
     pub public: bool,
     pub attrs: Vec<Attr>,
 }
@@ -1750,13 +1710,11 @@ impl StructInfo {
         match astn {
             AstNode::Structure { name, fields, public, attrs } => {
                 let (parsed_fields, size, max_al) = Self::parse_ast_fields(fields);
-                let leaked = Box::leak(name.path_to_string().into_boxed_str());
                 StructInfo { 
                     name: name.path_to_string(), 
                     fields: parsed_fields,
                     size,
                     max_alignment: max_al,
-                    static_name: leaked,
                     public: *public,
                     attrs: attrs.clone()
                 }
@@ -1782,18 +1740,19 @@ impl StructInfo {
                         _other => {}
                     }
 
-                    let alignment = Self::alignment_of(*ftype);
+                    let alignment = Self::alignment_of(ftype);
                     if alignment > max_alignment {
                         max_alignment = alignment;
                     }
                     let offset = Self::align_up(tot_size, alignment);
-                    tot_size += CodeGen::match_ft_qbf_t(*ftype, true).size()
+                    tot_size += CodeGen::match_ft_qbf_t(&ftype, true)
+                        .size()
                         as usize;
 
                     let entry = StructField {
                         name: name.clone(), 
                         offset: offset,
-                        ftype: *ftype,
+                        ftype: ftype.clone(),
                         public: *public,
                     };
                     res.insert(name.clone(), entry);
@@ -1810,17 +1769,15 @@ impl StructInfo {
         (offset + align - 1) & !(align - 1)
     }
 
-    fn alignment_of(ft: FType) -> usize {
+    fn alignment_of(ft: &FType) -> usize {
         match ft {
             FType::strconst | FType::int | FType::uint | FType::double 
                 | FType::StructPtr(_) | FType::StructHeapPtr(_) | FType::Ptr => {
                 8
             }
             FType::i32 | FType::u32 | FType::single => 4,
-            FType::Array(el_ft_idx, _ctr, nm) => {
-                let el_ft = FType::from_idx_patched(el_ft_idx, nm)
-                    .unwrap();
-                Self::alignment_of(el_ft)
+            FType::Array(el, _ctr) => {
+                Self::alignment_of(&el)
             }
             FType::Struct(_usize) => {
                 todo!()

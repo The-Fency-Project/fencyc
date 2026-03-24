@@ -1,5 +1,4 @@
 ## Current:
-- ftype rework (no copy!) 
 - sizes recomputing (for embedded structs)
 - just `T` 
 - generic structs 
