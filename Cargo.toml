@@ -9,11 +9,10 @@ colored = "3.0.0"
 indexmap = "2.13.0"
 indexset = "0.15.0"
 
-inkwell = { version = "0.7.0", features = ["llvm21-1"] }
+# inkwell = { version = "0.7.0", features = ["llvm21-1"] } # for future, maybe
 
 itertools = "0.14.0"
 qbe = { git = "https://github.com/Freemorger/qbe-rs.git" }
-# qbe = { path = "/home/alex/CodeStuff/Rust/qbe-rs" }
 rayon = "1.11.0"
 strum = "0.28.0"
 strum_macros = "0.28.0"

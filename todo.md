@@ -30,5 +30,6 @@
 - stdlib 
 - wiki
 - macros 
-- other features 
+- other features
+- maybe move to LLVM from QBE 
 - maybe rewrite fencyc in fency itself, which may achieve cleaning code and better integration

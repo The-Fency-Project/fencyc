@@ -4,3 +4,4 @@ v0.12.0:
 - dense arrays (`[s_T]`) now works (+move semantics, somewhat)
 - fixes 
 - now trait may require other traits impl 
+additional second commit patch: fixed deps so inkwell not needed for now
