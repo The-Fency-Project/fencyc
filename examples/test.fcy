@@ -3,9 +3,24 @@ use main::Person;
 module libc {
     pub extern func malloc(n: uint) -> ptr;
     pub extern func free(p: ptr);
+    pub extern func memcpy(dst: ptr, src: ptr, n: uint);
 }
 
-#[heap]
+module std {
+    module mem {
+        pub trait Clone<T> {
+            pub func clone(self: *T) -> *T;
+        }
+
+        pub trait Drop<T> {
+            pub func drop(self: *T);
+        }
+
+        pub trait Copy<T: [Clone]> {
+        }
+    }
+}
+
 struct Person {
     name: str
     pub age: uint
@@ -22,71 +37,53 @@ impl Person {
     }
 }
 
-pub trait Drop<T> {
-    pub func drop(self: *T);
+impl std::mem::Clone for Person {
+    pub func clone(self: *Person) -> h_Person {
+        let p2 = main::Person::new_person("", 0u);
+        libc::memcpy(p2$ptr, self$ptr, sizeof @s_Person);
+        return p2;
+    }
 }
 
-impl Drop for Person {
+impl std::mem::Drop for Person {
     pub func drop(self: *Person) {
         printintrin self.name;
         return;
     }
 }
 
-pub trait Printable<T> {
-    pub func printable(self: *T);
-}
-
-impl Printable for Person {
-    pub func printable(self: *Person) {
-        printintrin self.name;
-        printintrin self.age;
-
-        return;
-    }
-}
-
-pub trait GetAge<T> {
-    pub func getAge(self: *T) -> uint;
-}
-
-impl GetAge for Person {
-    pub func getAge(self: *Person) -> uint {
-        return self.age;
-    }
-}
-
-pub func print<T: [Printable, GetAge], B: [GetAge]>(s: *T, s2: *B) {
-    s.printable();
-
-    let a = s.getAge() + s2.getAge();
-    printintrin a;
-
-    return;
-}
-
-// now just for array tests,
-// later - for generic structs test
-struct VecPerson {
-    data: [*Person]
-    len: uint 
-    capacity: uint
-}
-
-impl Vec {
-    pub func get(self: *Vec, idx: uint) -> *Person {
-        let res = self.data[idx];
-        return res;
-    }
+impl std::mem::Copy for Person {
 }
 
 func main(argc: uint, argv: [str]) -> int { 
     let p = Person::new_person("John", 69u);
     let p2 = Person::new_person("NotJohn", 67u);
-    let arr = [p, p2]*Person;
+    let arr = [p, p2]h_Person;
     printintrin arr[0u].age;
 
-    print(p, p2);
+    let p3s = Person {
+        name: "Don";
+        age: 20u;
+    };
+
+    let p4s = Person {
+        name: "Ron";
+        age: 21u;
+    };
+
+    let arr2 = [p3s, *(p4s.clone())]s_Person;
+
+    printintrin p4s.age; // 21 
+    printintrin arr2[1u].age; // 21
+
+    let p5s = Person {
+        name: "Idk";
+        age: 22u;
+    };
+
+    arr2[0u] = *p5s.clone();
+    printintrin arr2[0u].age;
+    p5s.age = 55u;
 
     return 0;
 }

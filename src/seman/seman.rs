@@ -23,6 +23,7 @@ pub struct FSymbol {
     pub dsname: Option<String>,
     pub len: Option<usize>, // for arrays and strings
     pub owner: bool, // for ptrs: does symbol own memory
+    pub moved: Option<usize>, // if was moved, on which line (moved val cant be used after)
 }
 
 impl FSymbol {
@@ -34,6 +35,7 @@ impl FSymbol {
             dsname: None,
             len: None,
             owner: false,
+            moved: None,
         }
     }
 }
@@ -262,9 +264,9 @@ impl SymbolTable {
         None
     }
 
-    pub fn get_mut(&mut self, var_name: String) -> Option<(usize, &mut FSymbol)> {
+    pub fn get_mut(&mut self, var_name: &str) -> Option<(usize, &mut FSymbol)> {
         for (idx, scv) in self.st.iter_mut().enumerate() {
-            if let Some(v) = scv.get_mut(&var_name) {
+            if let Some(v) = scv.get_mut(var_name) {
                 return Some((idx, v));
             };
         }
@@ -513,12 +515,6 @@ impl SemAn {
             AstNode::Ibyte(_) => {
                 exprdat.ftype = FType::ibyte;
             }
-            AstNode::Array(ft, nodes) => {
-                exprdat.ftype = FType::Array(
-                    Box::new(ft.clone()), 
-                    nodes.len()
-                );
-            }
             AstNode::BinaryOp { op, left, right } => {
                 let leftd = self.analyze_expr(&AstRoot::new(*left.clone(), line), logger);
                 let rightd = self.analyze_expr(&AstRoot::new(*right.clone(), line), logger);
@@ -605,7 +601,8 @@ impl SemAn {
                         }
                     },
                     UnaryOp::Deref => match rdat.ftype {
-                        FType::StructPtr(s) => exprdat.ftype = FType::Struct(s),
+                        FType::StructPtr(s) | FType::StructHeapPtr(s) 
+                            => exprdat.ftype = FType::Struct(s),
                         other => {
                             logger.send(LogMessage::new(
                                 LogLevel::Error(ErrKind::NoStructAddress("Dereference".to_owned(), other)),
@@ -629,17 +626,8 @@ impl SemAn {
                     return exprdat;
                 }
 
-                exprdat.ftype = match self.symb_table.get(&var) {
-                    Some(v) => v.1.ftype.clone(),
-                    None => {
-                        logger.send(LogMessage::new(
-                            LogLevel::Error(ErrKind::UndeclaredVar(var.to_owned())),
-                            line,
-                            self.fname.clone()
-                        ));
-                        FType::none
-                    }
-                }
+                exprdat.var_name = Some(var.clone());
+                self.chk_move(&mut logger.clone(), &var, &mut exprdat, line); 
             }
             AstNode::Reassignment { name, idx, newval } => {
                 let val = self.analyze_expr(
@@ -647,6 +635,16 @@ impl SemAn {
                     &logger.clone()
                 );
                 let newval_data = self.analyze_expr(&newval, logger);
+                match &newval_data.ftype {
+                    FType::Struct(s) if newval_data.var_name.is_some() => {
+                        self.try_move(
+                            &mut logger.clone(),
+                            &newval_data.var_name.unwrap(),
+                            line
+                        );
+                    },
+                    other => {}
+                }
                 let res_type: FType = match val.ftype {
                     FType::Array(el, count) if idx.is_some() => {
                         *el.clone()
@@ -1140,6 +1138,10 @@ impl SemAn {
             }
             AstNode::Array(ft, nodes) => {
                 for (idx, node) in nodes.iter().enumerate() {
+                    if matches!(*node, AstNode::ArrRep(_)) {
+                        continue;
+                    }
+
                     let ndat = self.analyze_expr(&AstRoot::new(node.clone(), line), logger);
                     if ndat.ftype != *ft {
                         logger.send(LogMessage::new(
@@ -1148,6 +1150,13 @@ impl SemAn {
                             line,
                             self.fname.clone()
                         ));
+                    }
+                    if ndat.var_name.is_some() {
+                        self.try_move(
+                            &mut logger.clone(), 
+                            ndat.var_name.as_ref().unwrap(),
+                            line
+                        ); 
                     }
                 }
 
@@ -1366,7 +1375,7 @@ impl SemAn {
                 let _ed = self.analyze_expr(&*body, &logger.clone());
                 if let Some(tp) = Trait {
                     self.verify_trait(
-                        &name.path_to_string(), 
+                        &name, 
                         &*body, 
                         &tp.path_to_string(), 
                         &mut logger.clone()
@@ -1478,8 +1487,9 @@ impl SemAn {
         }
     }
 
-    pub fn verify_trait(&mut self, sname: &str, bd: &AstRoot, traitname: &str,
+    pub fn verify_trait(&mut self, sname_n: &AstNode, bd: &AstRoot, traitname: &str,
         logger: &mut Sender<LogMessage>) {
+        let sname = &sname_n.path_to_string();
         let trait_info = match self.traits.t.get(traitname) {
             Some(v) => v.clone(),
             None => {
@@ -1491,6 +1501,26 @@ impl SemAn {
                 return;
             }
         };
+        
+        let generics = trait_info.path.get_generics();
+        for g in generics {
+            let empty = HashSet::new();
+            let impls = self.traits.impls.get(sname)
+                .unwrap_or(&empty);
+            for b in g.bounds {
+                if impls.get(&b).is_none() {
+                    logger.send(LogMessage::new(
+                        LogLevel::Error(ErrKind::SupertraitBoundUnsat(
+                            sname.to_owned(),
+                            traitname.to_owned(),
+                            b.to_owned()
+                        )),
+                        self.line, 
+                        self.fname.clone()
+                    ));
+                } 
+            }
+        }; 
 
         let exprs = match &bd.node {
             AstNode::CodeBlock { exprs } => exprs,
@@ -1678,12 +1708,103 @@ impl SemAn {
             
         }
     }
+
+    pub fn has_trait(&mut self, struct_name: &str, trait_name: &str) -> bool {
+        let traits = match self.traits.impls.get(struct_name) {
+            Some(v) => v,
+            None => {return false;}
+        };
+        traits.contains(trait_name)
+    }
+
+    fn chk_move(&mut self, logger: &mut Sender<LogMessage>, var: &str,
+        exprdat: &mut ExprDat, line: usize) {
+
+        let mut moved = None;
+        (exprdat.ftype, moved) = match self.symb_table.get(var) {
+            Some(v) => (v.1.ftype.clone(), v.1.moved),
+            None => {
+                logger.send(LogMessage::new(
+                    LogLevel::Error(ErrKind::UndeclaredVar(var.to_owned())),
+                    line,
+                    self.fname.clone()
+                ));
+                (FType::none, None)
+            }
+        };
+
+        if let Some(stnm) = exprdat.ftype.if_struct() {
+            if let Some(movline) = moved {
+                let (has_clone,) = match self.traits.impls.get(&stnm) {
+                    Some(tab) => (
+                        tab.contains("std::mem::Clone".into()),
+                    ),
+                    None => (false,),
+                };
+
+                logger.send(LogMessage::new(
+                    LogLevel::Error(ErrKind::MovedValUse(
+                        var.to_owned(),
+                        exprdat.ftype.clone(),
+                        movline,  
+                        has_clone
+                    )),
+                    self.line,
+                    self.fname.clone()
+                ));
+            }
+        };
+    }
+
+    fn try_move(&mut self, logger: &mut Sender<LogMessage>, var: &str, line: usize) {
+        let var_ref = match self.symb_table.get_mut(var) {
+            Some(v) => v.1,
+            None => {
+                logger.send(LogMessage::new(
+                    LogLevel::Error(ErrKind::UndeclaredVar(var.to_owned())),
+                    line,
+                    self.fname.clone()
+                ));
+                return;
+            }
+        };
+
+        if let Some(movline) = var_ref.moved {
+            let stnm = var_ref.ftype.if_struct()
+                .unwrap_or("".into());
+            let (has_clone,) = match self.traits.impls.get(&stnm) {
+                    Some(tab) => (
+                        tab.contains("std::mem::Clone".into()),
+                    ),
+                    None => (false,),
+                };
+
+            logger.send(LogMessage::new(
+                LogLevel::Error(ErrKind::MovedValUse(
+                    var.to_owned(),
+                    var_ref.ftype.clone(),
+                    movline,  
+                    has_clone
+                )),
+                self.line,
+                self.fname.clone()
+            ));
+        }
+
+        match &var_ref.ftype {
+            FType::Struct(_) => {
+               var_ref.moved = Some(line);
+            }
+            other => {}
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct ExprDat {
     ftype: FType,
     has_returned: bool,
+    var_name: Option<String>,
 }
 
 impl ExprDat {
@@ -1691,6 +1812,7 @@ impl ExprDat {
         ExprDat { 
             ftype: ftype,
             has_returned: false,
+            var_name: None,
         }
     }
 }

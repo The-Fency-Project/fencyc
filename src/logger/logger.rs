@@ -365,6 +365,21 @@ impl Logger {
                         {}: indexable types are arrays and strs",
                         ft, help)
                     }
+                    ErrKind::MovedValUse(nm, ft, ln, has_clone) => {
+                        if has_clone {
+                            format!("Use of moved value\n\
+                                {} was moved at line {}\n\
+                                {}: {} implements Clone, try using it where it was moved \
+                                if cost is acceptable: `{}.clone()`",
+                            nm, ln, help, ft, nm
+                            )
+                        } else {
+                            format!("Use of moved value\n\
+                                {} (of structure type {}) was moved at line {}",
+                            nm, ft, ln
+                            )
+                        }
+                    }
                     ErrKind::UnknownTrait(nm) => {
                         format!("Attempting to implement unknown trait {}",
                             nm)
@@ -396,6 +411,12 @@ impl Logger {
                         format!("Trait implementation function return type incompat\n\
                         function {} of trait {} expects to return {}, but {} was found",
                         fnname, tname, exp, got)
+                    }
+                    ErrKind::SupertraitBoundUnsat(stname, supername, reqname) => {
+                        format!("Supertrait bound is unsatisfied\n\
+                        {} requires {} to be also implemented, but {} doesn't \
+                        implement it",
+                        supername, reqname, stname)
                     }
                     ErrKind::GenericFuncInimpl(fnname, tname, found) => {
                         format!("Trait bound isn't satisified\n\
@@ -547,6 +568,7 @@ pub enum ErrKind {
     BitsCastErr(String, FType, Vec<FType>), // op name, found type, possible fts
     StructNonField(Box<AstNode>), // found 
     NonArrIndex(FType),
+    MovedValUse(String, FType, usize, bool), // var name, var type, move line, has clone
 
     UnknownTrait(String), // name 
     TraitFuncArgsLen(String, String, usize, usize), // func name, trait name, expected, got 
@@ -554,6 +576,7 @@ pub enum ErrKind {
     TraitFuncArgsIncompat(String, String, FType, FType), // func name, trait name, expected, got                     
     TraitIncompleteImpl(String, Vec<String>), // trait name, func names
     TraitRetTypeIncompat(String, String, FType, FType), // func name, trait name, expected, got   
+    SupertraitBoundUnsat(String, String, String), // struct name, supertrait, unsatisfied trait
     GenericFuncInimpl(String, String, FType), // func name, trait name, found ftype
 
     ParseExpectedIdt(Tok), // tok 

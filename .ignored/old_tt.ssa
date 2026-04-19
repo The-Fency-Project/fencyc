@@ -1,0 +1,182 @@
+type :main_Person = align 8 { l 8, l 8 }
+type :main_VecPerson = align 8 { l 8, l 8, l 8 }
+type :main_ptrdummy = align 8 { l 8 }
+export function l $main_Person_new_person_0(l %name, l %age) {
+@start
+	%tmp_0 =l copy 16
+	%s =l copy %tmp_0
+	%tmp_1 =l call $malloc(l %s)
+	%pt =l copy %tmp_1
+	%tmp_2 =l copy %pt
+	%res =l copy %tmp_2
+	%tmp_3 =l add %res, 0
+	storel %name, %tmp_3
+	%tmp_4 =l add %res, 8
+	storel %age, %tmp_4
+	ret %res
+}
+export function $main_Person_drop_0(l %self) {
+@start
+	%tmp_5 =l add %self, 0
+	%tmp_6 =l loadl %tmp_5
+	call $printf(l $fmt_str, l %tmp_6)
+	ret
+}
+export function $main_Person_printable_0(l %self) {
+@start
+	%tmp_7 =l add %self, 0
+	%tmp_8 =l loadl %tmp_7
+	call $printf(l $fmt_str, l %tmp_8)
+	%tmp_9 =l add %self, 8
+	%tmp_10 =l loadl %tmp_9
+	call $printf(l $fmt_uint, l %tmp_10)
+	ret
+}
+export function l $main_Person_getAge_0(l %self) {
+@start
+	%tmp_11 =l add %self, 8
+	%tmp_12 =l loadl %tmp_11
+	ret %tmp_12
+}
+export function l $main_VecPerson_new_0() {
+@start
+	%tmp_13 =l copy 24
+	%tmp_14 =l call $malloc(l %tmp_13)
+	%pt =l copy %tmp_14
+	%tmp_15 =l copy %pt
+	%res =l copy %tmp_15
+	%tmp_16 =l copy 8
+	%ptr_size =l copy %tmp_16
+	%tmp_17 =l add %res, 0
+	%tmp_18 =l mul %ptr_size, 16
+	%tmp_19 =l call $malloc(l %tmp_18)
+	%tmp_20 =l copy %tmp_19
+	storel %tmp_20, %tmp_17
+	%tmp_21 =l copy %res
+	%tmp_22 =l copy %tmp_21
+	%tmp_24 =w ceql %tmp_22, 0
+	%tmp_25 =l extub %tmp_24
+	%tmp_26 =l ceql %tmp_25, 1
+	jnz %tmp_26, @label_0, @label_2
+@label_0
+	call $printf(l $fmt_str, l $dsval_0)
+	jmp @label_2
+@label_2
+	%tmp_27 =l add %res, 8
+	storel 0, %tmp_27
+	%tmp_28 =l add %res, 16
+	storel 16, %tmp_28
+	ret %res
+}
+export function $main_VecPerson_push_0(l %s, l %p) {
+@start
+	%tmp_29 =l add %s, 8
+	%pos =l copy %tmp_29
+	%tmp_30 =l add %s, 8
+	%tmp_31 =l loadl %tmp_30
+	call $printf(l $fmt_uint, l %tmp_31)
+	%tmp_32 =l add %s, 16
+	%tmp_33 =l loadl %tmp_32
+	%tmp_35 =w cugel %pos, %tmp_33
+	%tmp_36 =l extub %tmp_35
+	%tmp_37 =l ceql %tmp_36, 1
+	jnz %tmp_37, @label_3, @label_5
+@label_3
+	%tmp_38 =l add %s, 16
+	%tmp_39 =l loadl %tmp_38
+	%tmp_40 =l mul %tmp_39, 2
+	%new_cap =l copy %tmp_40
+	%tmp_42 =w ceql %new_cap, 0
+	%tmp_43 =l extub %tmp_42
+	%tmp_44 =l ceql %tmp_43, 1
+	jnz %tmp_44, @label_6, @label_8
+@label_6
+	%new_cap =l copy 8
+	jmp @label_8
+@label_8
+	%tmp_45 =l copy %s
+	%tmp_46 =l copy 8
+	%tmp_47 =l mul %new_cap, %tmp_46
+	%tmp_48 =l call $realloc(l %tmp_45, l %tmp_47)
+	%new_ptr =l copy %tmp_48
+	%tmp_49 =l copy %new_ptr
+	%tmp_51 =w ceql %tmp_49, 0
+	%tmp_52 =l extub %tmp_51
+	%tmp_53 =l ceql %tmp_52, 1
+	jnz %tmp_53, @label_9, @label_11
+@label_9
+	call $printf(l $fmt_str, l $dsval_1)
+	jmp @label_11
+@label_11
+	%tmp_54 =l add %s, 0
+	%tmp_55 =l copy %new_ptr
+	storel %tmp_55, %tmp_54
+	jmp @label_5
+@label_5
+	%tmp_56 =l add %s, 0
+	%tmp_57 =l mul %pos, 8
+	%tmp_57 =l add %tmp_57, %tmp_56
+	storel %p, %tmp_57
+	%tmp_58 =l add %s, 8
+	%tmp_59 =l add %s, 8
+	%tmp_60 =l loadl %tmp_59
+	%tmp_61 =l add %tmp_60, 1
+	storel %tmp_61, %tmp_58
+	ret
+}
+export function l $main_VecPerson_get_0(l %self, l %idx) {
+@start
+	%tmp_62 =l add %self, 0
+	%tmp_63 =l mul %idx, 8
+	%tmp_63 =l add %tmp_63, %tmp_62
+	%res =l copy %tmp_63
+	ret %res
+}
+export function w $main(w %argc, l %argv) {
+@start
+	%tmp_64 =l call $main_main_0(w %argc, l %argv)
+	ret %tmp_64
+}
+function l $main_main_0(l %argc, l %argv) {
+@start
+	%tmp_65 =l call $main_Person_new_person_0(l $dsval_2, l 69)
+	%p =l copy %tmp_65
+	%tmp_66 =l call $main_Person_new_person_0(l $dsval_3, l 67)
+	%p2 =l copy %tmp_66
+	%tmp_67 =l call $main_VecPerson_new_0()
+	%v =l copy %tmp_67
+	%tmp_68 =l copy %v
+	%tmp_69 =l copy %p
+	call $main_VecPerson_push_0(l %tmp_68, l %tmp_69)
+	%tmp_71 =l copy %v
+	%tmp_72 =l copy %p2
+	call $main_VecPerson_push_0(l %tmp_71, l %tmp_72)
+	call $main_print_main_Person_main_Person_0(l %p, l %p2)
+	call $free(l %v)
+	call $main_Person_drop_0(l %p2)
+	call $free(l %p2)
+	call $main_Person_drop_0(l %p)
+	call $free(l %p)
+	ret 0
+}
+export function $main_print_main_Person_main_Person_0(l %s, l %s2) {
+@start
+	%tmp_75 =l copy %s
+	call $main_Person_printable_0(l %tmp_75)
+	%tmp_77 =l copy %s
+	%tmp_78 =l call $main_Person_getAge_0(l %tmp_77)
+	%tmp_79 =l copy %s2
+	%tmp_80 =l call $main_Person_getAge_0(l %tmp_79)
+	%tmp_81 =l add %tmp_78, %tmp_80
+	%a =l copy %tmp_81
+	call $printf(l $fmt_uint, l %a)
+	ret
+}
+data $fmt_uint = { b "%lu\n" }
+data $fmt_int = { b "%ld\n" }
+data $fmt_float = { b "%f\n" }
+data $fmt_str = { b "%s\n" }
+data $dsval_0 = align 8 { b "null ptr malloc", b 0 }
+data $dsval_1 = align 8 { b "null ptr realloc", b 0 }
+data $dsval_2 = align 8 { b "John", b 0 }
+data $dsval_3 = align 8 { b "NotJohn", b 0 }

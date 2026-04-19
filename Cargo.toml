@@ -1,6 +1,6 @@
 [package]
 name = "fencyc"
-version = "0.11.3"
+version = "0.12.0"
 edition = "2024"
 
 [dependencies]
@@ -8,9 +8,12 @@ clap = { version = "4.5.53", features = ["derive"] }
 colored = "3.0.0"
 indexmap = "2.13.0"
 indexset = "0.15.0"
+
+inkwell = { version = "0.7.0", features = ["llvm21-1"] }
+
 itertools = "0.14.0"
 qbe = { git = "https://github.com/Freemorger/qbe-rs.git" }
+# qbe = { path = "/home/alex/CodeStuff/Rust/qbe-rs" }
 rayon = "1.11.0"
 strum = "0.28.0"
 strum_macros = "0.28.0"
-# voxvm = { git = "https://github.com/Freemorger/voxvm.git" } # good old times

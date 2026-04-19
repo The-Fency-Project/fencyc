@@ -1,13 +1,13 @@
 ## Current:
-- sizes recomputing (for embedded structs)
-- just `T` 
+- size recalc for embedded structs
 - generic structs 
-- op overload
 - check ret type trait compat in seman
 - traits example 
-### Future:
-Small/medium (unsorted):
+# Future:
+## Small/medium (unsorted):
+- unions
 - incremential compilation
+- maybe move keyword
 - glob for input
 - unsafe stuff
 - imports?
@@ -20,9 +20,15 @@ Small/medium (unsorted):
 - stack strs
 - slices
 - ptrs for primitives
-- array assigm bug
-Major:
+## Long-term:
 - generics
     - generic structs
+- smaller features 
+    - unions 
+    - enums 
+    - matches 
+- stdlib 
 - wiki
-- stdlib
+- macros 
+- other features 
+- maybe rewrite fencyc in fency itself, which may achieve cleaning code and better integration

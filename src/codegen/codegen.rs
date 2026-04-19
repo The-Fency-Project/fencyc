@@ -42,7 +42,6 @@ pub struct CodeGen {
     loop_exits: Vec<String>,
     loop_conts: Vec<String>,
     matched_overloads: OverloadTable, // call idx -> overload idx, ret type
-    first: bool, // is cur file first
     need_addr: bool,
     expected_type: FType,
     usedmods: Vec<String>,
@@ -75,7 +74,6 @@ impl CodeGen {
             loop_conts: Vec::new(),
             matched_overloads: mo,
             funcs: HashMap::new(),
-            first: first,
             need_addr: false,
             expected_type: FType::none,
             usedmods: Vec::new(),
@@ -493,10 +491,18 @@ impl CodeGen {
                 res.ftype = FType::strconst;
             }
             AstNode::Array(ft, elems) => {
+                let (mut el_size, agg) = match &ft {
+                    FType::Struct(sn) => {
+                        let paths = self.get_use_paths();
+                        let dat = self.struct_tab.get(&sn, &paths).unwrap();
+                        (dat.size as u64, Some(sn.clone()))
+                    }
+                    other => (0, None)
+                }; 
+
                 let tmp = self.new_temp();
 
                 let mut total_size: u64 = 0;
-                let mut el_size: u64    = 0;
                 let mut vals = Vec::new();
 
                 for el in elems {
@@ -542,11 +548,32 @@ impl CodeGen {
                         )
                     );
 
-                    self.fbuild.add_instr(Instr::Store(
-                        qtype.clone(),
-                        idx_tmp.clone(),
-                        v.clone()
-                    ));
+                    if let Some(sn) = &agg {
+                        // If dense array, rely on libc memcpy or copy if present 
+                        let args = vec![
+                            (Type::Long, idx_tmp.clone()),
+                            (Type::Long, v.clone()),
+                            (Type::Long, Value::Const(el_size))
+                        ];
+
+                        let clone_tmp = self.new_temp();
+                        self.fbuild.assign_instr(
+                            clone_tmp.clone(),
+                            Type::Long,
+                            Instr::Call(
+                                "memcpy".into(),
+                                args,
+                                None 
+                            )
+                        );
+                        // Original value will be dropped at the end of scope
+                    } else {
+                        self.fbuild.add_instr(Instr::Store(
+                            qtype.clone(),
+                            idx_tmp.clone(),
+                            v.clone()
+                        ));
+                    }
                 }
 
                 res.val = Some(tmp);
@@ -556,16 +583,28 @@ impl CodeGen {
                 let idx_gd   = self.gen_expr(idx_val.node);
                 let tmp      = self.new_temp();
 
-                let el_ftype = match val_dat.ftype {
+                // agg - whether element ftype is aggregate (dense array)
+                let (el_ftype, agg) = match val_dat.ftype {
                     FType::Array(el, _ctr) => {
-                        *el.clone()
+                        let res = *el.clone();
+                        let agg = match &res {
+                            FType::Struct(s) => Some(s.clone()),
+                            other => None,
+                        };
+                        (res, agg)
                     }
-                    FType::strconst => FType::ubyte, // byte-wise indexing
+                    FType::strconst => (FType::ubyte, None), // byte-wise indexing
                     _other => unreachable!()
                 };
 
-                let el_size  = Self::sizeof(&el_ftype);
-                let el_qtype = Self::match_ft_qbf(&el_ftype);
+                let el_size  = match &agg {
+                    Some(v) => {
+                        let paths = self.get_use_paths();
+                        let dat = self.struct_tab.get(&v, &paths).unwrap();
+                        dat.size as u64
+                    } 
+                    None => Self::sizeof(&el_ftype)
+                };
 
                 self.fbuild.assign_instr(
                     tmp.clone(),
@@ -579,8 +618,8 @@ impl CodeGen {
                     Instr::Add(tmp.clone(), val_dat.val.unwrap().clone())
                 );
                 
-                res.by_addr = self.need_addr;
-                if !self.need_addr {
+                res.by_addr = self.need_addr || agg.is_some();
+                if !res.by_addr {
                     let el_qtype = Self::match_ft_qbf_t(&el_ftype, true);
                     self.fbuild.assign_instr(
                         tmp.clone(),
@@ -590,7 +629,10 @@ impl CodeGen {
                 }
 
                 res.val   = Some(tmp);
-                res.ftype = el_ftype;
+                res.ftype = match agg {
+                    Some(nm) => FType::StructPtr(nm),
+                    None     => el_ftype
+                };
             }
             AstNode::UnaryOp { op, expr } => {
                 let mut gd = self.gen_expr(*expr);
@@ -601,6 +643,7 @@ impl CodeGen {
                 ));
 
                 let tmp = self.new_temp();
+                res.val = Some(tmp.clone());
 
                 match op {
                     UnaryOp::Negate => {
@@ -611,7 +654,6 @@ impl CodeGen {
                                 gd.val.unwrap()
                             ))
                         ));
-                        res.val = Some(tmp);
                         res.ftype = gd.ftype;
                     }
                     UnaryOp::Not => {
@@ -623,7 +665,6 @@ impl CodeGen {
                                 Value::Const(u64::MAX)
                             ))
                         ));
-                        res.val = Some(tmp);
                         res.ftype = gd.ftype;
                     }
                     UnaryOp::LogicalNot => {
@@ -637,7 +678,6 @@ impl CodeGen {
                                 Value::Const(0)
                             ))
                         ));
-                        res.val = Some(tmp);
                         res.ftype = gd.ftype;
                     }
                     UnaryOp::AddressOf => {
@@ -653,19 +693,37 @@ impl CodeGen {
                         res.val = gd.val;
                     }
                     UnaryOp::Deref => {
-                        let qtype_exp = Self::match_ft_qbf_t(
-                            &self.expected_type, 
+                        let ftype_exp = match &self.expected_type {
+                            FType::none => match gd.ftype {
+                                FType::StructPtr(s) | FType::StructHeapPtr(s) => 
+                                    FType::Struct(s),
+                                other => panic!("Deref of type {}", other)
+                            },
+                            other => other.clone(),
+                        };
+                        let (qtype_exp, instr) = match Self::match_ft_qbf_t(
+                            &ftype_exp, 
                             true
-                        );
+                        ) {
+                            Type::Aggregate(_) => (
+                                Type::Long, // ptr
+                                Instr::Copy(gd.val.clone().unwrap())
+                            ),
+                            other => (
+                                other.clone(),
+                                Instr::Load(
+                                    other,
+                                    gd.val.clone().unwrap()
+                                )
+                            ), 
+                        };
+
                         self.fbuild.assign_instr(
                             tmp.clone(),
                             qtype_exp.clone(),
-                            Instr::Load(
-                                qtype_exp,
-                                gd.val.unwrap()
-                            )
+                            instr 
                         );
-                        res.ftype = self.expected_type.clone();
+                        res.ftype = ftype_exp;
                     }
                     other => todo!("unary op {:#?}", other)
                 }
@@ -864,45 +922,18 @@ impl CodeGen {
                     "expected value for left side",
                 );
 
-                self.expected_type = leftdat.ftype.clone();
                 let gd = self.gen_expr(newval.node);
-                self.expected_type = FType::none;
 
-                match leftdat.ftype {
-                    FType::Array(el, ctr) if idx.is_some() => {
-                        let el_idx_node = idx.unwrap();
-                        let el_idx_gd = self.gen_expr(el_idx_node.node);
-
-                        let offset_tmp = self.new_temp();
-                        let el_size = Self::sizeof(&el);
-
-                        self.fbuild.assign_instr(
-                            offset_tmp.clone(),
-                            Type::Long,
-                            Instr::Mul(
-                                Value::Const(el_size),
-                                el_idx_gd.val.unwrap()
-                            )
-                        );
-
-                        self.fbuild.assign_instr(
-                            offset_tmp.clone(),
-                            Type::Long,
-                            Instr::Add(
-                                offset_tmp.clone(),
-                                val.clone()
-                            )
-                        );
-
-                        self.fbuild.add_instr(
-                            Instr::Store(
-                                Self::match_ft_qbf(&el),
-                                offset_tmp,
-                                gd.val.unwrap()
-                            ) // type dst val          
-                        );
+                match (leftdat.ftype, &gd.ftype) {
+                    (other, FType::Struct(_)) if leftdat.by_addr => {
+                        self.gen_array_store(
+                            &gd.ftype, 
+                            None, 
+                            &gd.val.unwrap(),
+                            &val
+                        ); 
                     }
-                    other if leftdat.by_addr => {
+                    (other, _) if leftdat.by_addr => {
                         // type dst val 
                         let qtype = Self::match_ft_qbf_tl(&gd.ftype, true, true);
                         self.fbuild.add_instr(Instr::Store(
@@ -911,7 +942,7 @@ impl CodeGen {
                             gd.val.expect("Internal: can't get reas value"), 
                         ));
                     }
-                    _other => {
+                    (_other, _) => {
                         self.fbuild.add_instr(Instr::Assign(
                             val.clone(),
                             Self::match_ft_qbf(&gd.ftype), 
@@ -1137,7 +1168,7 @@ impl CodeGen {
                 };
                 
                 res.val = Some(res_tmp.clone());
-                res.ftype = FType::StructPtr(
+                res.ftype = FType::Struct(
                     name_st
                 );
                 self.fbuild.assign_instr(
@@ -1303,10 +1334,10 @@ impl CodeGen {
         self.fbuild.args_passed = args.clone();
 
         let mut args_qbe = Vec::new();
-        for arg in args {
+        for arg in &args {
             args_qbe.push((
                 Self::match_ft_qbf_t(&arg.ftype, true),
-                Value::Temporary(arg.name.into())
+                Value::Temporary(arg.name.to_owned())
             ));
         }
 
@@ -1328,7 +1359,7 @@ impl CodeGen {
             ret_t_qbe
         );
         func.add_block("start");
-        self.fbuild.func = Some(func);
+        self.fbuild.add_func(func, args.clone());
         self.fbuild.ready = false;
         self.should_push = false;
         {
@@ -1563,68 +1594,76 @@ impl CodeGen {
         }).collect();
 
         full_except.extend(except);
-        let paths = self.get_use_paths();
 
         for s in dropped {
-            if !s.owner {
-                continue;
-            }     
-            if full_except.iter().any(|v| {v == &Value::Temporary(s.name.clone())}) {
-                continue;
-            }
+            self.try_drop(s, &full_except);
+        }
+    }
 
-            let mut args: Vec<(Type, Value)> = Vec::new();
+    /// Attempts to drop value and returns whether it was actually dropped in result 
+    fn try_drop(&mut self, s: &FSymbol, excepts: &Vec<Value>) -> bool {
+        let paths = self.get_use_paths();
+        if !s.owner {
+            return false;
+        }     
+        if excepts.iter().any(|v| {v == &Value::Temporary(s.name.clone())}) {
+            return false;
+        }
 
-            match &s.ftype {
-                FType::Struct(st) | FType::StructPtr(st) => {
-                    let drop_funcname = format!("{}::drop::0", st);
+        let mut args: Vec<(Type, Value)> = Vec::new();
 
-                    if self.func_tab.get_func(&drop_funcname, &paths).is_some() {
-                        args.push((Type::Long, Value::Temporary(s.name.clone())));
+        match &s.ftype {
+            FType::Struct(st) | FType::StructPtr(st) => {
+                let drop_funcname = format!("{}::drop::0", st);
 
-                        self.fbuild.add_instr(Instr::Call(
-                            drop_funcname.replace("::", "_"),
-                            args.clone(),
-                            None
-                        ));
-                    }
-
-                    if let Some(si) = self.struct_tab.get(st, &paths) {
-                        if si.attrs.contains(&fparse::Attr::Heap) {
-                            args.push((Type::Long, Value::Temporary(s.name.clone())));
-
-                            self.fbuild.add_instr(Instr::Call(
-                                "free".to_owned(),
-                                args,
-                                None
-                            ));       
-                        }
-                    }
-                }
-                // heap ptr 
-                other if other.if_struct().is_some() => {
-                    let st = other.if_struct().unwrap();
-                    let drop_funcname = format!("{}::drop", st);
-
+                if self.func_tab.get_func(&drop_funcname, &paths).is_some() {
                     args.push((Type::Long, Value::Temporary(s.name.clone())));
 
-                    if self.func_tab.get_func(&drop_funcname, &paths).is_some() {
-                        self.fbuild.add_instr(Instr::Call(
-                            format!("{}_0", drop_funcname.replace("::", "_")),
-                            args.clone(),
-                            None
-                        ));
-                    }
-
                     self.fbuild.add_instr(Instr::Call(
-                        "free".to_owned(),
-                        args,
+                        drop_funcname.replace("::", "_"),
+                        args.clone(),
                         None
                     ));
                 }
-                other => {}
+
+                if let Some(si) = self.struct_tab.get(st, &paths) {
+                    if si.attrs.contains(&fparse::Attr::Heap) {
+                        args.push((Type::Long, Value::Temporary(s.name.clone())));
+
+                        self.fbuild.add_instr(Instr::Call(
+                            "free".to_owned(),
+                            args,
+                            None
+                        ));
+                    }
+                }
+                return true;
             }
+            // heap ptr 
+            other if other.if_struct().is_some() => {
+                let st = other.if_struct().unwrap();
+                let drop_funcname = format!("{}::drop", st);
+
+                args.push((Type::Long, Value::Temporary(s.name.clone())));
+
+                if self.func_tab.get_func(&drop_funcname, &paths).is_some() {
+                    self.fbuild.add_instr(Instr::Call(
+                        format!("{}_0", drop_funcname.replace("::", "_")),
+                        args.clone(),
+                        None
+                    ));
+                }
+
+                self.fbuild.add_instr(Instr::Call(
+                    "free".to_owned(),
+                    args,
+                    None
+                ));
+                return true;
+            }
+            other => {}
         }
+        return false;
     }
 
     fn should_gen(&self, r: &AstRoot) -> bool {
@@ -1745,6 +1784,66 @@ impl CodeGen {
             None,
             items[3..4].to_vec()
         ));
+    }
+
+    fn gen_array_store(&mut self, el_type: &FType, idx_r: Option<AstRoot>, from: &Value,
+        to: &Value) {
+        let el_size = match &el_type {
+            anyft if anyft.if_struct().is_some() => {
+                let usemods = self.get_use_paths();
+                let stnm = anyft.if_struct().unwrap();
+                let struct_info = self.struct_tab.get(&stnm, &usemods)
+                    .expect(&format!("Unknown struct type {}", stnm));
+                struct_info.size as u64 
+            },
+            other => Self::sizeof(other)
+        };
+
+        if let Some(idx_rv) = idx_r {
+            let el_idx_gd = self.gen_expr(idx_rv.node);
+
+            let offset_tmp = self.new_temp();
+
+            self.fbuild.assign_instr(
+                offset_tmp.clone(),
+                Type::Long,
+                Instr::Mul(
+                    Value::Const(el_size),
+                    el_idx_gd.val.unwrap()
+                )
+            );
+
+            self.fbuild.assign_instr(
+                offset_tmp.clone(),
+                Type::Long,
+                Instr::Add(
+                    offset_tmp.clone(),
+                    from.clone()
+                )
+            );
+        }
+
+        if matches!(*el_type, FType::Struct(_)) {
+            let args = vec![
+                (Type::Long, to.clone()), // dst
+                (Type::Long, from.clone()), // src 
+                (Type::Long, Value::Const(el_size)) // size 
+            ];
+
+            self.fbuild.add_instr(Instr::Call(
+                "memcpy".into(),
+                args,
+                None
+            ));
+        } else {
+            self.fbuild.add_instr(
+                Instr::Store(
+                    Self::match_ft_qbf(&el_type),
+                    to.clone(),
+                    from.clone()
+                ) 
+            );
+        }
     }
     
     fn gen_intrinsic(&mut self, intrin: Intrinsic, rightdat: GenData) 
@@ -1955,6 +2054,11 @@ impl FuncBuilder {
             ready: false,
             args_passed: Vec::new(),
         }
+    }
+
+    pub fn add_func(&mut self, f: Function, args: Vec<FuncArg>) {
+        self.func = Some(f);
+        self.args_passed = args;
     }
 
     pub fn add_instr(&mut self, i: Instr) {
