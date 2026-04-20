@@ -1,10 +1,9 @@
-## Current:
-- size recalc for embedded structs
+## Current
 - generic structs 
 - check ret type trait compat in seman
-- traits example 
-# Future:
-## Small/medium (unsorted):
+- traits example + update struct example 
+# Future
+## Small/medium (unsorted)
 - unions
 - incremential compilation
 - maybe move keyword
@@ -20,7 +19,7 @@
 - stack strs
 - slices
 - ptrs for primitives
-## Long-term:
+## Long-term
 - generics
     - generic structs
 - smaller features 

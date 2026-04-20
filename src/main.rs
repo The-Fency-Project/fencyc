@@ -142,7 +142,12 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     }   
 
     let functab    = Arc::new(FuncTable::from_several(func_tabs));
-    let struct_tab = Arc::new(StructTable::from_several(&struct_tabs));
+    
+    let mut struct_tab = StructTable::from_several(&struct_tabs);
+    struct_tab.recalc_layouts()
+        .map_err(CompilationError::LayoutErr)?;
+    let struct_tab = Arc::new(struct_tab);
+
     let trait_tab  = Arc::new(TraitTable::from_several(trait_tabs)); 
     let genfunc_tab: Arc<HashMap<String, AstRoot>> = Arc::new(genfunc_tabs
         .into_iter()
@@ -268,6 +273,7 @@ enum CompilationError {
     LinkError(),
     AsmFault,
     Compilation,
+    LayoutErr(String),
     Unknown,
 }
 

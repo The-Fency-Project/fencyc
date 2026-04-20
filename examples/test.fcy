@@ -24,6 +24,12 @@ module std {
 struct Person {
     name: str
     pub age: uint
+    pub someints: [int; 3u]
+}
+
+struct Superman {
+    pub p: s_Person
+    pub ability_id: uint
 }
 
 impl Person {
@@ -33,6 +39,16 @@ impl Person {
         let res = pt$h_Person;
         res.name = name;
         res.age = age;
+        return res;
+    }
+
+    pub func new_stack_person(name: str, age: uint) -> s_Person {
+        let res = main::Person {
+            name: name;
+            age: age;
+            someints: [0, 1, 2]int;
+        };
+
         return res;
     }
 }
@@ -64,11 +80,13 @@ func main(argc: uint, argv: [str]) -> int {
     let p3s = Person {
         name: "Don";
         age: 20u;
+        someints: [1, 2, 3]int;
     };
 
     let p4s = Person {
         name: "Ron";
         age: 21u;
+        someints: [2, 3, 4]int;
     };
 
     let arr2 = [p3s, *(p4s.clone())]s_Person;
@@ -79,11 +97,34 @@ func main(argc: uint, argv: [str]) -> int {
     let p5s = Person {
         name: "Idk";
         age: 22u;
+        someints: [3, 4, 5]int;
     };
 
+    p5s.someints[2u] = 7;
+    printintrin p5s.someints[2u];
+
     arr2[0u] = *p5s.clone();
-    printintrin arr2[0u].age;
+    printintrin arr2[0u].age; // 22
     p5s.age = 55u;
+
+
+    let p_sm = Person {
+        name: "R.R. III"; // reference
+        age: 31u;
+        someints: [1, 1, 1]int;
+    };
+
+    let sm = Superman {
+        p: p_sm;
+        ability_id: 1u;
+    };
+
+    sm.p = p4s;
+
+    printintrin sm.p.age;
+
+    let p6s = Person::new_stack_person("Stack", 30u);
+    printintrin p6s.age;
 
     return 0;
 }

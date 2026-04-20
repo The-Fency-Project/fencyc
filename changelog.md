@@ -1,7 +1,6 @@
-v0.12.0:
-- i returned, hopefully
-- refactor for ftype: does not implement copy now for sake of sanity 
-- dense arrays (`[s_T]`) now works (+move semantics, somewhat)
-- fixes 
-- now trait may require other traits impl 
-additional second commit patch: fixed deps so inkwell not needed for now
+v0.12.1:
+- fixed bug in qbe typedefs
+- embedded arrays in structs
+- move semantics now also applied for dense arrays of structs
+- embedded structs now finally works!
+- now you also can return stack struct

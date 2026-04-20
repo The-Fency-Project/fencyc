@@ -209,6 +209,35 @@ impl CodeGen {
             }
             AstNode::ReturnVal { val } => {
                 let rightd = self.gen_expr(val.node);
+                let ret_val = if matches!(rightd.ftype, FType::Struct(_)) {
+                    // if stack struct being returned, do sret
+                    let snm = rightd.ftype.if_struct().unwrap();
+                    let (tot_size, max_al) = self.get_struct_size(&snm);
+
+                    let to_ptr = self.fbuild.args_passed.get(0)
+                        .unwrap()
+                        .name
+                        .clone()
+                        ;
+                    let to_val = Value::Temporary(to_ptr);
+
+                    let args = vec![
+                        (Type::Long, to_val.clone()), //dst 
+                        (Type::Long, rightd.val.clone().unwrap()), // src 
+                        (Type::Long, Value::Const(tot_size as u64))
+                    ];
+                    
+                    self.fbuild.add_instr(Instr::Call(
+                        "memcpy".into(),
+                        args,
+                        None
+                    ));
+                    
+                    Some(to_val)
+                } else {
+                    rightd.val.clone()
+                };
+
                 res.returned = true;
 
                 let dropped = self.symb_table.to_drop();
@@ -219,7 +248,7 @@ impl CodeGen {
 
                 self.leave_scope_clean(&dropped, except);
 
-                self.fbuild.add_instr(Instr::Ret(rightd.val));
+                self.fbuild.add_instr(Instr::Ret(ret_val));
                 self.symb_table.exit_scope();
             }
             AstNode::Call { func_name, args, idx } => {
@@ -234,7 +263,7 @@ impl CodeGen {
                 };
 
                 let paths = self.get_use_paths();
-                let func_dat = self.func_tab
+                let mut func_dat = self.func_tab
                     .get_func(&func_name.path_to_string(), &paths)
                     .unwrap()
                     .get(ov_idx.unwrap())
@@ -243,6 +272,22 @@ impl CodeGen {
 
                 let mut args_qbe = Vec::new();
                 let mut args_ft = Vec::new(); // vec of args ftypes (for generics)
+
+                match func_dat.ret_type {
+                    FType::Struct(snm) => {
+                        let (size, al) = self.get_struct_size(&snm);
+
+                        let stack_tmp = self.new_temp();
+                        self.fbuild.assign_instr(
+                            stack_tmp.clone(),
+                            Type::Long,
+                            Self::allocalign(size, al)
+                        );
+
+                        args_qbe.push((Type::Long, stack_tmp.clone()));
+                    }
+                    other => {}
+                };
 
                 for (idx, arg) in args.iter().enumerate() {
                     self.expected_type = func_dat.args
@@ -579,7 +624,11 @@ impl CodeGen {
                 res.val = Some(tmp);
             }
             AstNode::ArrayElem(arr, idx_val) => {
+                let old_needaddr = self.need_addr;
+                self.need_addr = true;
                 let val_dat  = self.gen_expr(*arr);
+                self.need_addr = old_needaddr;
+
                 let idx_gd   = self.gen_expr(idx_val.node);
                 let tmp      = self.new_temp();
 
@@ -1138,14 +1187,18 @@ impl CodeGen {
                     name: name.path_to_segs().join("_"),
                     align: Some(struct_dat.max_alignment as u64),
                     items: struct_dat.fields.iter()
-                        .map(|f| (
+                        .map(|f| { 
+                            let count = match &f.1.ftype {
+                                FType::Array(el, ct) => *ct,
+                                other => 1,
+                            };
+                            (
                                 CodeGen::qtype_lose_sign(
                                     CodeGen::match_ft_qbf_t(&f.1.ftype, true)
                                 ),
-                                CodeGen::qtype_lose_sign(
-                                    CodeGen::match_ft_qbf_t(&f.1.ftype, true)
-                                ).size() as usize,
-                            ))
+                                count,
+                            )
+                        })
                         .collect(),
                 }; 
                 self.module.add_type(typedef);
@@ -1192,12 +1245,52 @@ impl CodeGen {
                     );   
 
                     let gd = self.gen_expr(*v);
-                    // type dst val
-                    self.fbuild.add_instr(Instr::Store(
-                        CodeGen::match_ft_qbf_tl(&gd.ftype, true, true),
-                        field_tmp.clone(),
-                        gd.val.unwrap()
-                    ));
+                    match &field_info.ftype {
+                        FType::Array(el, ct) if *ct != 0 => {
+                            let tot_size = 
+                                CodeGen::match_ft_qbf_t(&el, true).size() 
+                                * (*ct as u64);
+                            let args = vec![
+                                (Type::Long, field_tmp.clone()), // dst 
+                                (Type::Long, gd.val.unwrap()), // src 
+                                (Type::Long, Value::Const(tot_size)), // len 
+                            ];
+
+                            self.fbuild.add_instr(Instr::Call(
+                                "memcpy".into(),
+                                args,
+                                None
+                            ));
+                        }
+                        FType::Struct(snm) => {
+                            let tot_size = {
+                                let paths = self.get_use_paths();
+                                let struct_info = self.struct_tab.get(snm, &paths)
+                                    .expect(&format!("Unknown struct {}", snm));
+                                struct_info.size as u64
+                            };
+
+                            let args = vec![
+                                (Type::Long, field_tmp.clone()), // dst 
+                                (Type::Long, gd.val.unwrap()), // src 
+                                (Type::Long, Value::Const(tot_size)), // len 
+                            ];
+
+                            self.fbuild.add_instr(Instr::Call(
+                                "memcpy".into(),
+                                args,
+                                None
+                            ));
+                        }
+                        other => {
+                            // type dst val
+                            self.fbuild.add_instr(Instr::Store(
+                                CodeGen::match_ft_qbf_tl(&gd.ftype, true, true),
+                                field_tmp.clone(),
+                                gd.val.unwrap()
+                            ));
+                        }
+                    } 
                 }
             }
             AstNode::StructFieldAddr { val, field_name } => {
@@ -1229,7 +1322,17 @@ impl CodeGen {
                 );
                 res.val = Some(tmp.clone());
 
-                if !self.need_addr {
+                let holds_ptr = match &field_info.ftype {
+                    FType::Array(el, ct) if *ct == 0 => true,
+                    FType::Ptr | FType::TypePtr(_) | FType::StructPtr(_) | 
+                        FType::StructHeapPtr(_) => true,
+                    other => false
+                };
+
+                let is_emb = matches!(field_info.ftype, FType::Struct(_));
+
+                if (!self.need_addr || (self.need_addr && holds_ptr))
+                && !is_emb {
                     let load_tmp = self.new_temp();
                     res.val = Some(load_tmp.clone());
 
@@ -1330,11 +1433,23 @@ impl CodeGen {
 
     fn gen_func(&mut self, name: &AstNode, args: Vec<FuncArg>, 
             ret_type: FType, body: Box<AstNode>, over_idx: usize, public: bool)  {
+        let mut res_args = args.clone();
+        match &ret_type {
+            FType::Struct(snm) => {
+                let argdat = FuncArg::new(
+                    "__hidden_sret".into(), 
+                    FType::StructPtr(snm.clone())
+                );
+                res_args.insert(0, argdat);
+            }
+            other => {}
+        }
+
         self.symb_table.push_funcargs(args.clone());
-        self.fbuild.args_passed = args.clone();
+        self.fbuild.args_passed = res_args.clone();
 
         let mut args_qbe = Vec::new();
-        for arg in &args {
+        for arg in &res_args {
             args_qbe.push((
                 Self::match_ft_qbf_t(&arg.ftype, true),
                 Value::Temporary(arg.name.to_owned())
@@ -1359,7 +1474,7 @@ impl CodeGen {
             ret_t_qbe
         );
         func.add_block("start");
-        self.fbuild.add_func(func, args.clone());
+        self.fbuild.add_func(func, res_args.clone());
         self.fbuild.ready = false;
         self.should_push = false;
         {
@@ -1844,6 +1959,22 @@ impl CodeGen {
                 ) 
             );
         }
+    }
+
+    fn allocalign(size: usize, max_al: usize) -> Instr {
+        match max_al {
+            ..5 => Instr::Alloc4(size as u32),
+            5..9 => Instr::Alloc8(size as u64),
+            9.. => Instr::Alloc16(size as u128)
+        }
+    }
+
+    /// Return struct size and max alignment 
+    fn get_struct_size(&mut self, name: &str) -> (usize, usize) {
+        let paths = self.get_use_paths();
+        let struct_info = self.struct_tab.get(name, &paths)
+            .expect(&format!("Unknown struct {}", name));
+        (struct_info.size, struct_info.max_alignment)
     }
     
     fn gen_intrinsic(&mut self, intrin: Intrinsic, rightdat: GenData) 

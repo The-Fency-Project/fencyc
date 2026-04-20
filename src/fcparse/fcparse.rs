@@ -1078,11 +1078,21 @@ impl FcParser {
         );
 
         if is_arr {
-            self.expect(Tok::RBr);
-            FType::Array(
-                Box::new(ft), 
-                0
-            )
+            if self.peek_is(Tok::Semicol) {
+                self.consume();
+                let ct = self.expect_uint();
+                self.expect(Tok::RBr);
+                FType::Array(
+                    Box::new(ft),
+                    ct.1 as usize
+                )
+            } else {
+                self.expect(Tok::RBr);
+                FType::Array(
+                    Box::new(ft), 
+                    0
+                )
+            }
         } else {
             ft
         }

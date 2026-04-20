@@ -1269,14 +1269,37 @@ impl SemAn {
                         &logger.clone()
                     );
 
-                    if expected.ftype != field_ed.ftype {
-                        logger.send(LogMessage::new(
-                            LogLevel::Error(ErrKind::MismatchFieldsTypes(
-                                field_name.clone(), expected.ftype.clone(), field_ed.ftype
-                            )), 
-                            line, 
-                            self.fname.clone()
-                        ));
+                    match &expected.ftype {
+                        FType::Array(el, ct) if (expected.ftype == field_ed.ftype)
+                            && (*ct != 0) => {
+                            if let Some(vn) = field_ed.var_name {
+                                self.try_move(
+                                    &mut logger.clone(),
+                                    &vn,
+                                    line
+                                );
+                            };
+                        }
+                        FType::Struct(snm) => {
+                            if let Some(vn) = field_ed.var_name {
+                                self.try_move(
+                                    &mut logger.clone(),
+                                    &vn,
+                                    line
+                                );
+                            };
+                        }
+                        other if *other != field_ed.ftype => {
+                            logger.send(LogMessage::new(
+                                LogLevel::Error(ErrKind::MismatchFieldsTypes(
+                                    field_name.clone(), expected.ftype.clone(), field_ed.ftype
+                                )), 
+                                line, 
+                                self.fname.clone()
+                            ));
+
+                        }
+                        other => {}
                     }
                 }
             }
@@ -1770,8 +1793,16 @@ impl SemAn {
         };
 
         if let Some(movline) = var_ref.moved {
-            let stnm = var_ref.ftype.if_struct()
-                .unwrap_or("".into());
+            let stnm = match &var_ref.ftype {
+                FType::Array(el, ct) if el.if_struct().is_some() => {
+                    el.if_struct().unwrap()
+                },    
+                other if other.if_struct().is_some() => {
+                    other.if_struct().unwrap()
+                }
+                other => "".into()
+            };
+
             let (has_clone,) = match self.traits.impls.get(&stnm) {
                     Some(tab) => (
                         tab.contains("std::mem::Clone".into()),
@@ -1794,6 +1825,9 @@ impl SemAn {
         match &var_ref.ftype {
             FType::Struct(_) => {
                var_ref.moved = Some(line);
+            }
+            FType::Array(el, _) if matches!(**el, FType::Struct(_)) => {
+                var_ref.moved = Some(line);
             }
             other => {}
         }
@@ -1820,7 +1854,7 @@ impl ExprDat {
 #[derive(Debug, Clone)]
 pub struct StructInfo {
     pub name: String,
-    pub fields: HashMap<String, StructField>,
+    pub fields: IndexMap<String, StructField>,
     pub size: usize, 
     pub max_alignment: usize,
     pub public: bool,
@@ -1831,60 +1865,39 @@ impl StructInfo {
     pub fn from_astn(astn: &AstNode) -> StructInfo {
         match astn {
             AstNode::Structure { name, fields, public, attrs } => {
-                let (parsed_fields, size, max_al) = Self::parse_ast_fields(fields);
-                StructInfo { 
-                    name: name.path_to_string(), 
+                let parsed_fields = Self::parse_ast_fields(fields);
+                StructInfo {
+                    name: name.path_to_string(),
                     fields: parsed_fields,
-                    size,
-                    max_alignment: max_al,
+                    size: 0,
+                    max_alignment: 1,
                     public: *public,
-                    attrs: attrs.clone()
+                    attrs: attrs.clone(),
                 }
             }
-            other => panic!("Internal: expected struct, found {:?}", other)
+            other => panic!("Internal: expected struct, found {:?}", other),
         }
     }
 
-    /// Returns fields and struct size, with alignment + max alignment 
-    fn parse_ast_fields(fields: &Vec<AstNode>) 
-        -> (HashMap<String, StructField>, usize, usize) {
-        let mut res: HashMap<String, StructField> = HashMap::new();
-        let mut tot_size: usize = 0;
-        let mut max_alignment = 1;
+    fn parse_ast_fields(fields: &Vec<AstNode>) -> IndexMap<String, StructField> {
+        let mut res: IndexMap<String, StructField> = IndexMap::new();
 
         for v in fields {
             match v {
                 AstNode::StructField { name, ftype, public } => {
-                    match ftype {
-                        FType::Struct(_) => {
-                            unimplemented!("Embedded structs; use pointers/refs instead")
-                        }
-                        _other => {}
-                    }
-
-                    let alignment = Self::alignment_of(ftype);
-                    if alignment > max_alignment {
-                        max_alignment = alignment;
-                    }
-                    let offset = Self::align_up(tot_size, alignment);
-                    tot_size += CodeGen::match_ft_qbf_t(&ftype, true)
-                        .size()
-                        as usize;
-
                     let entry = StructField {
-                        name: name.clone(), 
-                        offset: offset,
+                        name: name.clone(),
+                        offset: 0,
                         ftype: ftype.clone(),
                         public: *public,
                     };
                     res.insert(name.clone(), entry);
                 }
-                other => panic!("Internal: expected struct, found {:?}", other)
+                other => panic!("Internal: expected struct field, found {:?}", other),
             }
         }
-        // tail padding 
-        let struct_size = Self::align_up(tot_size, max_alignment);
-        (res, struct_size, max_alignment)
+
+        res
     }
 
     fn align_up(offset: usize, align: usize) -> usize {
@@ -1918,6 +1931,12 @@ pub struct StructField {
     pub offset: usize,
     pub ftype: FType,
     pub public: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayoutMark {
+    Visiting,
+    Done,
 }
 
 #[derive(Debug, Clone)]
@@ -1961,6 +1980,102 @@ impl StructTable {
             }
             other => panic!("Internal: ast node {:?} isnt struct", other)
         }
+    }
+
+    pub fn recalc_layouts(&mut self) -> Result<(), String> {
+        let names: Vec<String> = self.tab.keys().cloned().collect();
+        let mut marks: HashMap<String, LayoutMark> = HashMap::new();
+
+        for name in names {
+            self.layout_struct(&name, &mut marks)?;
+        }
+
+        Ok(())
+    }
+
+    fn layout_struct(
+        &mut self,
+        name: &str,
+        marks: &mut HashMap<String, LayoutMark>,
+    ) -> Result<(usize, usize), String> {
+        if matches!(marks.get(name), Some(LayoutMark::Done)) {
+            let info = self.tab.get(name).unwrap();
+            return Ok((info.size, info.max_alignment));
+        }
+
+        if matches!(marks.get(name), Some(LayoutMark::Visiting)) {
+            return Err(format!("recursive by-value struct detected: `{}`", name));
+        }
+
+        marks.insert(name.to_string(), LayoutMark::Visiting);
+
+        let fields_snapshot: Vec<(String, FType)> = {
+            let info = self
+                .tab
+                .get(name)
+                .ok_or_else(|| format!("unknown struct `{}`", name))?;
+
+            info.fields
+                .values()
+                .map(|f| (f.name.clone(), f.ftype.clone()))
+                .collect()
+        };
+
+        let mut offset = 0usize;
+        let mut max_align = 1usize;
+        let mut computed_offsets: Vec<(String, usize)> = Vec::with_capacity(fields_snapshot.len());
+
+        for (field_name, ftype) in fields_snapshot {
+            let (field_size, field_align) = self.type_layout(&ftype, marks)?;
+
+            max_align = max_align.max(field_align);
+            offset = Self::align_up(offset, field_align);
+            computed_offsets.push((field_name, offset));
+            offset += field_size;
+        }
+
+        let struct_size = Self::align_up(offset, max_align);
+
+        let info = self.tab.get_mut(name).unwrap();
+        for (field_name, off) in computed_offsets {
+            if let Some(field) = info.fields.get_mut(&field_name) {
+                field.offset = off;
+            }
+        }
+        info.size = struct_size;
+        info.max_alignment = max_align;
+
+        marks.insert(name.to_string(), LayoutMark::Done);
+        Ok((struct_size, max_align))
+    }
+
+    fn type_layout(
+        &mut self,
+        ft: &FType,
+        marks: &mut HashMap<String, LayoutMark>,
+    ) -> Result<(usize, usize), String> {
+        match ft {
+            FType::strconst | FType::int | FType::uint | FType::double
+            | FType::StructPtr(_) | FType::StructHeapPtr(_) | FType::Ptr => Ok((8, 8)),
+
+            FType::i32 | FType::u32 | FType::single => Ok((4, 4)),
+            FType::bool | FType::ubyte | FType::ibyte => Ok((1, 1)),
+
+            FType::Array(el, ct) => {
+                let (elem_size, elem_align) = self.type_layout(el, marks)?;
+                Ok((elem_size * *ct, elem_align))
+            }
+
+            FType::Struct(sn) => {
+                self.layout_struct(&sn, marks)
+            }
+
+            other => Err(format!("layout not implemented for {:?}", other)),
+        }
+    }
+
+    fn align_up(offset: usize, align: usize) -> usize {
+        (offset + align - 1) & !(align - 1)
     }
 }
 
