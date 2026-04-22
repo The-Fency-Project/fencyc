@@ -1,10 +1,12 @@
 ## Current
+- further diagnostics (trait incompl func signature)
 - generic structs 
 - check ret type trait compat in seman
 - traits example + update struct example 
 # Future
 ## Small/medium (unsorted)
 - unions
+- move in loops
 - incremential compilation
 - maybe move keyword
 - glob for input

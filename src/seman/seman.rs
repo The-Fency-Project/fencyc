@@ -406,13 +406,13 @@ impl SemAn {
         match &node.node {
             AstNode::Assignment { name, val, ft } => {
                 self.expect_type = ft.clone();
-                let rightdat = self.analyze_expr(&AstRoot::new(*val.clone(), line), logger);
+                let rightdat = self.analyze_expr(&AstRoot::new(*val.clone(), self.line), logger);
                 self.expect_type = FType::none;
 
                 if self.symb_table.get(&name).is_some() {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::Redeclaration(name.to_owned())),
-                        line,
+                        self.line,
                         self.fname.clone()
                     ));
                 };
@@ -425,17 +425,22 @@ impl SemAn {
                     ft if ft.if_struct().is_some() => {
                         let name = ft.if_struct().unwrap();
                         if let Some(si) = self.struct_tab.get(&name, &paths) {
-                            if !si.public && !name.contains(&self.module) {
+                            let supermod = {
+                                let mut spl: Vec<&str> = name.split("::").collect();
+                                spl.pop();
+                                spl.join("::")
+                            };
+                            if !si.public && !self.module.contains(&supermod) {
                                 logger.send(LogMessage::new(
                                     LogLevel::Error(ErrKind::NotPubStruct(name.to_owned())),
-                                    line,
+                                    self.line,
                                     self.fname.clone()
                                 ));                                
                             }
                         } else {
                             logger.send(LogMessage::new(
                                 LogLevel::Error(ErrKind::UnknownStruct(name.to_owned())),
-                                line,
+                                self.line,
                                 self.fname.clone()
                             ));
                         }
@@ -452,7 +457,7 @@ impl SemAn {
                                     res_ft.clone(), 
                                     rightdat.ftype.clone()
                                 )),
-                                line,
+                                self.line,
                                 self.fname.clone()
                            ));
                        }
@@ -464,7 +469,7 @@ impl SemAn {
                                     res_ft.clone(), 
                                     rightdat.ftype.clone()
                                 )),
-                                line,
+                                self.line,
                                 self.fname.clone()
                             ));
                         }
@@ -516,8 +521,8 @@ impl SemAn {
                 exprdat.ftype = FType::ibyte;
             }
             AstNode::BinaryOp { op, left, right } => {
-                let leftd = self.analyze_expr(&AstRoot::new(*left.clone(), line), logger);
-                let rightd = self.analyze_expr(&AstRoot::new(*right.clone(), line), logger);
+                let leftd = self.analyze_expr(&AstRoot::new(*left.clone(), self.line), logger);
+                let rightd = self.analyze_expr(&AstRoot::new(*right.clone(), self.line), logger);
 
                 let is_shift_op =
                     (*op == BinaryOp::BitShiftLeft) || (*op == BinaryOp::BitShiftRight);
@@ -530,7 +535,7 @@ impl SemAn {
                     if !is_valid_shift_right_type {
                         logger.send(LogMessage::new(
                             LogLevel::Error(ErrKind::BitShiftRHSType(*op, rightd.ftype)),
-                            line,
+                            self.line,
                             self.fname.clone()
                         ));
                     }
@@ -544,7 +549,7 @@ impl SemAn {
                                 leftd.ftype.clone(),
                                 rightd.ftype.clone()
                             )),
-                            line,
+                            self.line,
                             self.fname.clone()
                         ));
                     }
@@ -558,7 +563,7 @@ impl SemAn {
                 {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::BoolBounds(*op)), 
-                        line,
+                        self.line,
                         self.fname.clone()
                     ));
                 }
@@ -571,7 +576,7 @@ impl SemAn {
                 }
             }
             AstNode::UnaryOp { op, expr } => {
-                let rdat = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
+                let rdat = self.analyze_expr(&AstRoot::new(*expr.clone(), self.line), logger);
                 exprdat.ftype = rdat.ftype.clone();
 
                 if *op == UnaryOp::Negate
@@ -584,7 +589,7 @@ impl SemAn {
                         LogLevel::Error(ErrKind::NegateBounds(
                             exprdat.ftype.clone()
                         )),
-                        line,
+                        self.line,
                         self.fname.clone(),
                     ));
                 }
@@ -595,7 +600,7 @@ impl SemAn {
                         other => {
                             logger.send(LogMessage::new(
                                 LogLevel::Error(ErrKind::NoStructAddress("Address Of".to_owned(), other)),
-                                line,
+                                self.line,
                                 self.fname.clone(),
                             ));
                         }
@@ -606,7 +611,7 @@ impl SemAn {
                         other => {
                             logger.send(LogMessage::new(
                                 LogLevel::Error(ErrKind::NoStructAddress("Dereference".to_owned(), other)),
-                                line,
+                                self.line,
                                 self.fname.clone(),
                             ));
                         }
@@ -627,11 +632,11 @@ impl SemAn {
                 }
 
                 exprdat.var_name = Some(var.clone());
-                self.chk_move(&mut logger.clone(), &var, &mut exprdat, line); 
+                self.chk_move(&mut logger.clone(), &var, &mut exprdat, self.line); 
             }
             AstNode::Reassignment { name, idx, newval } => {
                 let val = self.analyze_expr(
-                    &AstRoot::new(*name.clone(), line), 
+                    &AstRoot::new(*name.clone(), self.line), 
                     &logger.clone()
                 );
                 let newval_data = self.analyze_expr(&newval, logger);
@@ -640,7 +645,7 @@ impl SemAn {
                         self.try_move(
                             &mut logger.clone(),
                             &newval_data.var_name.unwrap(),
-                            line
+                            self.line
                         );
                     },
                     other => {}
@@ -654,7 +659,7 @@ impl SemAn {
                 if res_type != newval_data.ftype {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::IncompatTypes(res_type, newval_data.ftype)),
-                        line,
+                        self.line,
                         self.fname.clone()
                     ));
                 }
@@ -668,7 +673,7 @@ impl SemAn {
                 if cond_an.ftype != FType::bool {
                     let lerr = LogLevel::Error(ErrKind::IfStmtNotBool(cond_an.ftype));
                     let lwarn = LogLevel::Warning(log::WarnKind::IfStmtNotBool);
-                    self.permissive_error(line, logger.clone(), lerr, lwarn);
+                    self.permissive_error(self.line, logger.clone(), lerr, lwarn);
                 }
 
                 self.analyze_expr(*&if_true, logger);
@@ -684,7 +689,7 @@ impl SemAn {
                             LogLevel::Warning(WarnKind::ConvSame(
                                 var_ft.clone()
                             )), 
-                            line,
+                            self.line,
                             self.fname.clone()
                         ));
                     }
@@ -692,7 +697,7 @@ impl SemAn {
                 } else {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::UndeclaredVar(name.to_owned())),
-                        line,
+                        self.line,
                         self.fname.clone()
                     ));
                 }
@@ -700,7 +705,7 @@ impl SemAn {
                 exprdat.ftype = target_type.clone();
             }
             AstNode::Intrinsic { intr, val } => {
-                let rdat = self.analyze_expr(&AstRoot::new(*val.clone(), line), logger);
+                let rdat = self.analyze_expr(&AstRoot::new(*val.clone(), self.line), logger);
                 match intr {
                     Intrinsic::Len => {
                         match rdat.ftype {
@@ -717,7 +722,7 @@ impl SemAn {
                                             other
                                         )
                                     ),
-                                    line,
+                                    self.line,
                                     self.fname.clone()
                                 ));
                             }
@@ -782,7 +787,7 @@ impl SemAn {
                 let cond_dat = self.analyze_expr(&cond, logger);
                 if cond_dat.ftype != FType::bool {
                     self.permissive_error(
-                        line,
+                        self.line,
                         logger.clone(),
                         LogLevel::Error(ErrKind::WhileLoopNotBool(cond_dat.ftype)),
                         LogLevel::Warning(WarnKind::WhileLoopNotBool),
@@ -814,7 +819,7 @@ impl SemAn {
                 if self.parsing_loop.len() == 0 {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::BreakNotLoop), 
-                        line,
+                        self.line,
                         self.fname.clone()
                     ));
                 }
@@ -823,7 +828,7 @@ impl SemAn {
                 if self.parsing_loop.len() == 0 {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::ContinueNotLoop), 
-                        line,
+                        self.line,
                         self.fname.clone()
                     ));
                 }
@@ -848,12 +853,12 @@ impl SemAn {
                         logger.send(LogMessage::new(
                             LogLevel::Error(ErrKind::FuncRedecl(name.path_to_string(),
                                 *func_line)),
-                            line,
+                            self.line,
                             self.fname.clone()
                         ));
                     }
                 } else {
-                    self.declared_parse.insert(name.path_to_string(), line);
+                    self.declared_parse.insert(name.path_to_string(), self.line);
                 }
 
                 let generics = name.get_generics();
@@ -865,10 +870,15 @@ impl SemAn {
                             let name = ft.if_struct().unwrap();
                             let paths = self.get_use_paths();
                             if let Some(si) = self.struct_tab.get(&name, &paths) {
-                                if !si.public && !name.contains(&self.module) {
+                                let supermod = {
+                                    let mut spl: Vec<&str> = name.split("::").collect();
+                                    spl.pop();
+                                    spl.join("::")
+                                };
+                                if !si.public && !self.module.contains(&supermod) {
                                     logger.send(LogMessage::new(
                                         LogLevel::Error(ErrKind::NotPubStruct(name.to_owned())),
-                                        line,
+                                        self.line,
                                         self.fname.clone()
                                     ));                                
                                 }
@@ -877,7 +887,7 @@ impl SemAn {
                                 if !(generic_names.iter().any(|g| g == last_seg)) {
                                     logger.send(LogMessage::new(
                                         LogLevel::Error(ErrKind::UnknownStruct(name.to_owned())),
-                                        line,
+                                        self.line,
                                         self.fname.clone()
                                     ));
                                 }
@@ -903,7 +913,7 @@ impl SemAn {
                 if !fdat.has_returned {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::NoReturn()),
-                        line,
+                        self.line,
                         self.fname.clone()
                     ));
                 }
@@ -928,12 +938,12 @@ impl SemAn {
                         logger.send(LogMessage::new(
                             LogLevel::Error(ErrKind::FuncRedecl(name.path_to_string(),
                                 *func_line)),
-                            line,
+                            self.line,
                             self.fname.clone()
                         ));
                     }
                 } else {
-                    self.declared_parse.insert(name.path_to_string(), line);
+                    self.declared_parse.insert(name.path_to_string(), self.line);
                 }
 
                 self.symb_table.enter_scope();
@@ -944,7 +954,7 @@ impl SemAn {
             }
             AstNode::FunctionOverload { func, idx, public: _ } => {
                 self.parsing_func = Some(("".to_owned(), *idx));
-                self.analyze_expr(&AstRoot::new(*func.clone(), line), logger);
+                self.analyze_expr(&AstRoot::new(*func.clone(), self.line), logger);
             }
             AstNode::Call {
                 func_name,
@@ -981,7 +991,7 @@ impl SemAn {
                             LogLevel::Error(ErrKind::UndeclaredFunc(
                                 func_name.path_to_string()
                             )),
-                            line,
+                            self.line,
                             self.fname.clone()
                         ));
                         return exprdat;
@@ -1007,6 +1017,19 @@ impl SemAn {
 
                     for (idx, arg) in args.iter().enumerate() {
                         let argdat = self.analyze_expr(arg, logger); 
+                        match &argdat.ftype {
+                            FType::Struct(_) => {
+                                if let Some(vnm) = argdat.var_name {
+                                    self.try_move(
+                                        &mut logger.clone(),
+                                        &vnm,
+                                        self.line
+                                    );
+                                };
+                            }
+                            other => {}
+                        }
+                        
 
                         let arg_typename = format!("{}", overload.args[idx].ftype)
                             .rsplit("::").next().unwrap().to_owned();
@@ -1065,7 +1088,7 @@ impl SemAn {
                             // TODO: also iterate overloads till we find public one
                             logger.send(LogMessage::new(
                                 LogLevel::Error(ErrKind::NotPub(func_name.path_to_string())),
-                                line,
+                                self.line,
                                 self.fname.clone()
                             ));
                             return exprdat;
@@ -1080,7 +1103,7 @@ impl SemAn {
 
                 logger.send(LogMessage::new(
                     LogLevel::Error(ErrKind::FuncArgsTypeIncompat(func_name.path_to_string())),
-                    line,
+                    self.line,
                     self.fname.clone()
                 ));
             }
@@ -1099,7 +1122,7 @@ impl SemAn {
                                     f.ret_type.clone(),
                                     retval.ftype.clone(),
                                 )),
-                                line,
+                                self.line,
                                 self.fname.clone()
                             ));
                         }
@@ -1107,7 +1130,7 @@ impl SemAn {
                             FType::StructPtr(_) => {
                                 logger.send(LogMessage::new(
                                     LogLevel::Warning(WarnKind::RawPtrRet(retval.ftype)),
-                                    line,
+                                    self.line,
                                     self.fname.clone()
                                 ));
                             },
@@ -1118,18 +1141,18 @@ impl SemAn {
                 } else {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::ReturnOutOfFunc), 
-                        line,
+                        self.line,
                         self.fname.clone()
                     ));
                 };
             }
             AstNode::ExprCast { expr, target_type } => {
-                let expr = self.analyze_expr(&AstRoot::new(*expr.clone(), line), logger);
+                let expr = self.analyze_expr(&AstRoot::new(*expr.clone(), self.line), logger);
                 self.chk_cast(&expr.ftype, target_type, logger.clone());
                 if &expr.ftype == target_type {
                     logger.send(LogMessage::new(
                         LogLevel::Warning(WarnKind::ConvSame(expr.ftype)), 
-                        line,
+                        self.line,
                         self.fname.clone()
                     ));
                 }
@@ -1142,12 +1165,12 @@ impl SemAn {
                         continue;
                     }
 
-                    let ndat = self.analyze_expr(&AstRoot::new(node.clone(), line), logger);
+                    let ndat = self.analyze_expr(&AstRoot::new(node.clone(), self.line), logger);
                     if ndat.ftype != *ft {
                         logger.send(LogMessage::new(
                             LogLevel::Error(ErrKind::IncompatArrType(ft.clone(),
                                                     ndat.ftype, idx)),
-                            line,
+                            self.line,
                             self.fname.clone()
                         ));
                     }
@@ -1155,7 +1178,7 @@ impl SemAn {
                         self.try_move(
                             &mut logger.clone(), 
                             ndat.var_name.as_ref().unwrap(),
-                            line
+                            self.line
                         ); 
                     }
                 }
@@ -1167,6 +1190,11 @@ impl SemAn {
                 );
             }
             AstNode::ArrayElem(arr, idx) => {
+                let arr_nm = match &**arr {
+                    AstNode::Variable(nm) => nm.clone(),
+                    other => "".into()
+                };
+
                 let val_dat = self.analyze_expr(
                     &AstRoot::new(*arr.clone(), self.line), 
                     &mut logger.clone()
@@ -1189,10 +1217,10 @@ impl SemAn {
                 if idx_exprdat.ftype != FType::uint {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::ArrIdxType(
-                            format!("{:?}", arr), 
+                            format!("{}", arr_nm), 
                             idx_exprdat.ftype
                         )),
-                        line,
+                        self.line,
                         self.fname.clone()
                     ));
                 }
@@ -1202,7 +1230,7 @@ impl SemAn {
                     None => {
                         logger.send(LogMessage::new(
                             LogLevel::Error(ErrKind::Internal("Can't match type".to_owned())),
-                            line,
+                            self.line,
                             self.fname.clone()
                         ));
                         return exprdat;
@@ -1234,7 +1262,7 @@ impl SemAn {
                                 LogLevel::Error(ErrKind::UnknownStruct(
                                     name.path_to_string()
                                 )), 
-                                line, 
+                                self.line, 
                                 self.fname.clone()
                         ));
                         return exprdat;
@@ -1243,7 +1271,7 @@ impl SemAn {
                 if struct_data.attrs.contains(&Attr::Heap) {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::HeapOnlyStack(exprdat.ftype.clone())),
-                        line,
+                        self.line,
                         self.fname.clone()
                     ));
                 }
@@ -1254,7 +1282,7 @@ impl SemAn {
                             struct_data.fields.len(),
                             field_vals.len()
                         )), 
-                        line, 
+                        self.line, 
                         self.fname.clone()
                     ));
                     return exprdat;
@@ -1265,7 +1293,7 @@ impl SemAn {
                         .unwrap();
 
                     let field_ed = self.analyze_expr(
-                        &AstRoot::new(*field_val.clone(), line), 
+                        &AstRoot::new(*field_val.clone(), self.line), 
                         &logger.clone()
                     );
 
@@ -1276,7 +1304,7 @@ impl SemAn {
                                 self.try_move(
                                     &mut logger.clone(),
                                     &vn,
-                                    line
+                                    self.line
                                 );
                             };
                         }
@@ -1285,7 +1313,7 @@ impl SemAn {
                                 self.try_move(
                                     &mut logger.clone(),
                                     &vn,
-                                    line
+                                    self.line
                                 );
                             };
                         }
@@ -1294,7 +1322,7 @@ impl SemAn {
                                 LogLevel::Error(ErrKind::MismatchFieldsTypes(
                                     field_name.clone(), expected.ftype.clone(), field_ed.ftype
                                 )), 
-                                line, 
+                                self.line, 
                                 self.fname.clone()
                             ));
 
@@ -1314,7 +1342,7 @@ impl SemAn {
                             LogLevel::Error(ErrKind::NonStructField(
                                 other
                             )),
-                            line,
+                            self.line,
                             self.fname.clone()
                         ));
                         return exprdat;
@@ -1329,7 +1357,7 @@ impl SemAn {
                             LogLevel::Error(ErrKind::UnknownStruct(
                                 struct_name.clone(),
                             )),
-                            line,
+                            self.line,
                             self.fname.clone()
                         ));
                         return exprdat;
@@ -1344,7 +1372,7 @@ impl SemAn {
                                 struct_name.clone(),
                                 field_name.clone(),
                             )),
-                            line,
+                            self.line,
                             self.fname.clone()
                         ));
                         return exprdat;
@@ -2063,7 +2091,11 @@ impl StructTable {
 
             FType::Array(el, ct) => {
                 let (elem_size, elem_align) = self.type_layout(el, marks)?;
-                Ok((elem_size * *ct, elem_align))
+                let (arr_size, arr_align) = match ct {
+                    0 => self.type_layout(&FType::uint, marks)?, // ptr 
+                    other => (elem_size * *ct, elem_align),
+                };
+                Ok((arr_size, arr_align))
             }
 
             FType::Struct(sn) => {

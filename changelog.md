@@ -1,6 +1,7 @@
-v0.12.1:
-- fixed bug in qbe typedefs
-- embedded arrays in structs
-- move semantics now also applied for dense arrays of structs
-- embedded structs now finally works!
-- now you also can return stack struct
+v0.12.2:
+- fixed array size bug in structs
+- fixed drops for `s_T`, `*T`
+- `s_T` are now being moved (consumed) in func arg calls
+- path resolve fix
+- nicer diagnostics, a bit
+- fixed same type conv

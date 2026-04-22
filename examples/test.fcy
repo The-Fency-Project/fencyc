@@ -2,8 +2,10 @@ use main::Person;
 
 module libc {
     pub extern func malloc(n: uint) -> ptr;
+    pub extern func realloc(p: ptr, n: uint) -> ptr;
     pub extern func free(p: ptr);
     pub extern func memcpy(dst: ptr, src: ptr, n: uint);
+    pub extern func abort();
 }
 
 module std {
@@ -15,21 +17,12 @@ module std {
         pub trait Drop<T> {
             pub func drop(self: *T);
         }
-
-        pub trait Copy<T: [Clone]> {
-        }
     }
 }
 
 struct Person {
     name: str
     pub age: uint
-    pub someints: [int; 3u]
-}
-
-struct Superman {
-    pub p: s_Person
-    pub ability_id: uint
 }
 
 impl Person {
@@ -39,16 +32,6 @@ impl Person {
         let res = pt$h_Person;
         res.name = name;
         res.age = age;
-        return res;
-    }
-
-    pub func new_stack_person(name: str, age: uint) -> s_Person {
-        let res = main::Person {
-            name: name;
-            age: age;
-            someints: [0, 1, 2]int;
-        };
-
         return res;
     }
 }
@@ -68,63 +51,72 @@ impl std::mem::Drop for Person {
     }
 }
 
-impl std::mem::Copy for Person {
+// not really generic rn
+struct Vec<T> {
+    pub buf: [s_Person]
+    cap: uint 
+    pub len: uint 
+}
+
+impl Vec<T> {
+    pub func new() -> s_Vec {
+        let init_cap = 16u;
+        let buf = libc::malloc(init_cap * sizeof @s_main::Person);
+        
+        let res = main::Vec {
+            buf: buf$[s_T];
+            cap: init_cap;
+            len: 0u;
+        };
+        return res;
+    }
+
+    pub func push(self: *Vec, item: s_main::Person) {
+        if ((self.len + 1u) >= self.cap) {
+            let new_size = self.cap * 2u;
+            let new_buf = libc::realloc((self.buf)$ptr, new_size * sizeof @s_main::Person);
+            self.buf = new_buf$[s_Person];
+            self.cap = new_size;
+        }
+        self.buf[self.len] = item;
+        self.len = self.len + 1u;
+        return;
+    }
+}
+
+impl std::mem::Drop for Vec {
+    pub func drop(self: *Vec) {
+        if ((self.buf)$ptr)$uint == 0u {
+            return;
+        }
+
+        for let i = 0 in i < self.len; i += 1u {
+            let cur = self.buf[i];
+            cur.drop();
+        }
+        libc::free((self.buf)$ptr);
+
+        return;
+    }
 }
 
 func main(argc: uint, argv: [str]) -> int { 
     let p = Person::new_person("John", 69u);
-    let p2 = Person::new_person("NotJohn", 67u);
-    let arr = [p, p2]h_Person;
-    printintrin arr[0u].age;
 
-    let p3s = Person {
-        name: "Don";
-        age: 20u;
-        someints: [1, 2, 3]int;
-    };
+    let vec = Vec::new();
+    vec.push(*p);
 
-    let p4s = Person {
-        name: "Ron";
-        age: 21u;
-        someints: [2, 3, 4]int;
-    };
-
-    let arr2 = [p3s, *(p4s.clone())]s_Person;
-
-    printintrin p4s.age; // 21 
-    printintrin arr2[1u].age; // 21
-
-    let p5s = Person {
-        name: "Idk";
-        age: 22u;
-        someints: [3, 4, 5]int;
-    };
-
-    p5s.someints[2u] = 7;
-    printintrin p5s.someints[2u];
-
-    arr2[0u] = *p5s.clone();
-    printintrin arr2[0u].age; // 22
-    p5s.age = 55u;
-
-
-    let p_sm = Person {
-        name: "R.R. III"; // reference
-        age: 31u;
-        someints: [1, 1, 1]int;
-    };
-
-    let sm = Superman {
-        p: p_sm;
-        ability_id: 1u;
-    };
-
-    sm.p = p4s;
-
-    printintrin sm.p.age;
-
-    let p6s = Person::new_stack_person("Stack", 30u);
-    printintrin p6s.age;
+    for let i = 0 in i < 17; i += 1 {
+        let p2 = Person {
+            name: "NotJohn";
+            age: 67u + i$uint;
+        };
+        
+        vec.push(p2);
+    } 
+    
+    printintrin vec.len;
+    printintrin vec.buf[4u].age; 
 
     return 0;
 }

@@ -147,6 +147,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     struct_tab.recalc_layouts()
         .map_err(CompilationError::LayoutErr)?;
     let struct_tab = Arc::new(struct_tab);
+    // println!("DBG Structs: {:#?}", struct_tab);
 
     let trait_tab  = Arc::new(TraitTable::from_several(trait_tabs)); 
     let genfunc_tab: Arc<HashMap<String, AstRoot>> = Arc::new(genfunc_tabs

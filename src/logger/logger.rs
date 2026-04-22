@@ -1,4 +1,4 @@
-use std::{sync::mpsc::{Receiver, Sender}, thread::{JoinHandle, spawn}, time::Instant};
+use std::{collections::HashMap, fs::{self, File}, io::{Read, SeekFrom}, sync::mpsc::{Receiver, Sender}, thread::{JoinHandle, spawn}, time::Instant};
 
 use colored::Colorize;
 
@@ -9,12 +9,18 @@ pub struct Logger {
     warnc: usize,
     time: Instant,
     pub extrn_err: CompilationError,
+    cached_files: HashMap<String, Vec<String>>, // fname -> lines 
 }
 
 impl Logger {
     pub fn new() -> Logger {
-        Logger { errc: 0, warnc: 0, time: Instant::now(), 
-            extrn_err: CompilationError::Ok }
+        Logger { 
+            errc: 0, 
+            warnc: 0, 
+            time: Instant::now(), 
+            extrn_err: CompilationError::Ok,
+            cached_files: HashMap::new()
+        }
     }
 
     pub fn start_timer(&mut self) {
@@ -43,9 +49,27 @@ impl Logger {
                         }
                         _other => {}
                     }
-
-                    println!("In {}:", m.filename);
-                    self.emit(m.level, m.line);
+    
+                    if self.cached_files.get(&m.filename).is_none() {
+                        let conts = match fs::read_to_string(&m.filename) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                eprintln!("logger: failed to read {}: {}",
+                                    m.filename, e);
+                                "".into()
+                            }
+                        };
+                        if !conts.is_empty() {
+                            let lines: Vec<String> = conts.split('\n')
+                                .map(|st| {st.to_owned()})
+                                .collect();
+                            self.cached_files.insert(
+                                m.filename.clone(), 
+                                lines
+                            );
+                        }
+                    }
+                    self.emit(m.level, m.line, m.filename);
                 }
                 Err(e) => {
                     eprintln!("{}", e);
@@ -65,16 +89,59 @@ impl Logger {
         let _res = tx.send(resp);
     }
 
-    pub fn emit(&mut self, l: LogLevel, line: usize) {
+    pub fn emit(&mut self, l: LogLevel, line: usize, fname: String) {
+        let (line_contents, caret_start, caret_reps) = {
+            match self.cached_files.get(&fname) {
+                Some(ls) => {
+                    let res = ls.get(line.saturating_sub(1))
+                        .cloned()
+                        .unwrap_or("(failed to get this line)".to_owned());
+
+                    let mut rep_start = 1;
+                    let mut rep_count = 0;            
+        
+                    for ch in res.chars() {
+                        match ch {
+                            ' ' => {rep_start += 1;}
+                            '\t' => {rep_start += 2;} // 4tab is healthier but 
+                                                      // we need to fit into terminals
+                            other => {break;}
+                        }
+                    }
+                    rep_count = res.len().saturating_sub(rep_start);
+                    (res, rep_start, rep_count)
+                },
+                None => ("(failed to open file)".into(), 0, 0)
+            }
+        };
+
         match l {
             LogLevel::Error(ek) => {
-                println!("{} at line {}: {}", "ERROR".red(), line, 
-                    Logger::get_err_msg(LogLevel::Error(ek)));
+                println!("{} at line {}: {}", 
+                    "ERROR".red(), line, 
+                    Logger::get_err_msg(LogLevel::Error(ek))
+                );
+                
+                println!("-> {}:", fname);
+                println!("| {}\n|{}{}", 
+                    line_contents, 
+                    " ".repeat(caret_start),
+                    "^".repeat(caret_reps)
+                );
+                
                 self.errc += 1;
             }
             LogLevel::Warning(wk) => {
                 println!("{} at line {}: {}", "Warning".yellow(), line, 
                     Logger::get_err_msg(LogLevel::Warning(wk)));
+                
+                println!("-> {}:", fname);
+                println!("| {}\n|{}{}", 
+                    line_contents, 
+                    " ".repeat(caret_start),
+                    "^".repeat(caret_reps)
+                );
+
                 self.warnc += 1;
             }
             LogLevel::Info(s) => {

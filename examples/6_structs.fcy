@@ -78,7 +78,7 @@ func main() {
 
     print_both(&test); // would change b to 289 btw
 
-    print_both_pass(test);
+    print_both_pass(*&test); // trick to avoid moving (unsafe)
 
     printintrin test.a;
     printintrin test.b;

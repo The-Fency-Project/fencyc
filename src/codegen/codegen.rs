@@ -301,6 +301,13 @@ impl CodeGen {
                     let gd = self.gen_expr(arg.node.clone());
                     self.expected_type = FType::none;
                     self.need_addr = old_needaddr;
+
+                    if matches!(gd.ftype, FType::Struct(_)) && gd.var.is_some() {
+                        let var_name = gd.var.clone().unwrap();
+                        if let Some(v) = self.symb_table.get_mut(&var_name) {
+                            v.1.moved = Some(0);
+                        };
+                    }
                     
                     args_ft.push(gd.ftype.clone());
                     let mut qtype = Self::match_ft_qbf(&gd.ftype);
@@ -627,9 +634,10 @@ impl CodeGen {
                 let old_needaddr = self.need_addr;
                 self.need_addr = true;
                 let val_dat  = self.gen_expr(*arr);
-                self.need_addr = old_needaddr;
+                self.need_addr = false;
 
                 let idx_gd   = self.gen_expr(idx_val.node);
+                self.need_addr = old_needaddr;
                 let tmp      = self.new_temp();
 
                 // agg - whether element ftype is aggregate (dense array)
@@ -778,8 +786,11 @@ impl CodeGen {
                 }
             }
             AstNode::BinaryOp { op, left, right } => {
+                let old_needaddr = self.need_addr;
+                self.need_addr = false;
                 let leftd = self.gen_expr(*left);
                 let rightd = self.gen_expr(*right);
+                self.need_addr = old_needaddr;
 
                 let tmp = self.new_temp();
 
@@ -882,6 +893,7 @@ impl CodeGen {
                 res.ftype = var_dat.1.ftype.clone();
                 res.qtype = Some(Self::match_ft_qbf(&var_dat.1.ftype));
                 res.val = Some(Value::Temporary(var.clone()));
+                res.var = Some(var.clone());
             }
             AstNode::VariableCast { name, target_type } => {
                 res.ftype = target_type.clone();
@@ -1346,6 +1358,7 @@ impl CodeGen {
                             tmp.clone(),
                         )
                     );
+                    res.by_addr = self.need_addr;
                 }
                 res.ftype = field_info.ftype.clone();
             }
@@ -1556,6 +1569,13 @@ impl CodeGen {
 
     fn get_conv(ft_src: &FType, target_type: &FType, src: Value) -> Instr {
         match (ft_src, target_type) {
+            (ft1, ft2) if *ft1 == *ft2 => {
+                Instr::Copy(src)
+            }
+            (FType::Ptr, FType::Array(_, _)) | (FType::Array(_, _), FType::Ptr) | 
+                (FType::Ptr, FType::uint) => {
+                Instr::Copy(src)
+            }
             (FType::StructPtr(st), FType::Ptr) | (FType::StructHeapPtr(st), 
                 FType::Ptr) => {
                 Instr::Copy(src)
@@ -1718,7 +1738,7 @@ impl CodeGen {
     /// Attempts to drop value and returns whether it was actually dropped in result 
     fn try_drop(&mut self, s: &FSymbol, excepts: &Vec<Value>) -> bool {
         let paths = self.get_use_paths();
-        if !s.owner {
+        if !s.owner || s.moved.is_some() {
             return false;
         }     
         if excepts.iter().any(|v| {v == &Value::Temporary(s.name.clone())}) {
@@ -1729,13 +1749,13 @@ impl CodeGen {
 
         match &s.ftype {
             FType::Struct(st) | FType::StructPtr(st) => {
-                let drop_funcname = format!("{}::drop::0", st);
+                let drop_funcname = format!("{}::drop", st);
 
                 if self.func_tab.get_func(&drop_funcname, &paths).is_some() {
                     args.push((Type::Long, Value::Temporary(s.name.clone())));
 
                     self.fbuild.add_instr(Instr::Call(
-                        drop_funcname.replace("::", "_"),
+                        format!("{}_0", drop_funcname.replace("::", "_")),
                         args.clone(),
                         None
                     ));
@@ -2234,7 +2254,7 @@ impl FuncBuilder {
 /// code generation data for each generated expression
 #[derive(Debug, Clone)]
 pub struct GenData {
-    pub symbols: HashMap<String, FSymbol>,
+    pub var: Option<String>,
     pub ftype: FType,
     pub cmp_op: Option<CmpOp>,
 
@@ -2252,7 +2272,7 @@ pub struct GenData {
 impl GenData {
     pub fn new() -> GenData {
         GenData {
-            symbols: HashMap::new(),
+            var: None,
             ftype: FType::none,
             cmp_op: None,
             instrs: Vec::new(),
@@ -2262,10 +2282,6 @@ impl GenData {
             returned: false,
             by_addr: false,
         }
-    }
-
-    pub fn push_symb(&mut self, s: FSymbol) {
-        self.symbols.insert(s.name.clone(), s);
     }
 }
 
