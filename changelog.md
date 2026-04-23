@@ -1,7 +1,3 @@
-v0.12.2:
-- fixed array size bug in structs
-- fixed drops for `s_T`, `*T`
-- `s_T` are now being moved (consumed) in func arg calls
-- path resolve fix
-- nicer diagnostics, a bit
-- fixed same type conv
+v0.13.0-a1:
+- Started working on MIR (middle IR). Currently experimental and may be invoked with 
+`fencyc devmode`. Does not affect compilation sequence right now in other situations.

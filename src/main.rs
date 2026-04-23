@@ -6,13 +6,14 @@ use indexmap::IndexSet;
 use rayon::prelude::*;
 
 mod fcparse {pub mod fcparse;}
-mod codegen {pub mod codegen;}
+mod codegen {pub mod codegen; pub mod mirtoqbe;}
 mod lexer {pub mod lexer;}
 mod seman {pub mod seman;}
 mod logger {pub mod logger;}
+mod mir {pub mod mir;}
 mod tests;
 mod cli;
-use crate::{cli::{Commands, InputFlags, Target, def_ldas}, codegen::codegen as cgen, fcparse::fcparse::{self as fparser, AstRoot, FcParser, FuncTable, TraitTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, seman::seman::{self as Seman, OverloadTable, SemanResult, StructTable}};
+use crate::{cli::{Commands, InputFlags, Target, def_ldas}, codegen::{codegen as cgen, mirtoqbe::QBEBackend}, fcparse::fcparse::{self as fparser, AstRoot, FcParser, FuncTable, TraitTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, mir::mir::{self as fmir, FFunction, FModule, MIRTranslator}, seman::seman::{self as Seman, OverloadTable, SemanResult, StructTable}};
 
 // prepend home here 
 const FENCY_DIR: &str = ".fency";
@@ -101,10 +102,57 @@ fn main() {
                 }
             }
         }
+        Some(Commands::Devmode {  }) => test_ir(),
         None => {
             eprintln!("Please, specify command or try fencyc --help.");
         }
     }
+}
+
+fn test_ir() {
+    let mut module = FModule::new();
+
+    let mut func = FFunction::new("add".into(), true, Seman::FType::int);
+    let blk = fmir::FBlock::new("start".into());
+    func.add_blk(blk);
+
+    let fields = vec![(Seman::FType::ushort, 1), (Seman::FType::u32, 2)];
+    let tdef = fmir::FTypeDef::new("somestruct".into(), Some(4), fields);
+    module.add_typedef(tdef);
+
+    let items = vec![(Seman::FType::strconst, fmir::FDataItem::Str("hello".into()))];
+    let def = fmir::FDataDef::new("dataval".into(), false, None, items);
+    module.add_datadef(def);
+
+    let v1 = fmir::FValue::VarTmp("a".into(), Seman::FType::int);
+    let v2 = fmir::FValue::VarTmp("b".into(), Seman::FType::int);
+
+    func.assign_instr(
+        v1.clone(),
+        Seman::FType::int,
+        fmir::FInstr::Copy(Seman::FType::int, fmir::FValue::IConst(5))
+    );
+    func.assign_instr(
+        v2.clone(),
+        Seman::FType::int,
+        fmir::FInstr::Copy(Seman::FType::int, fmir::FValue::IConst(-11))
+    );
+    
+    let retval = fmir::FValue::VarTmp("res".into(), Seman::FType::int);
+    func.assign_instr(
+        retval.clone(),
+        Seman::FType::int,
+        fmir::FInstr::BinaryOp(fmir::IRBinOp::Add, v1.clone(), v2.clone())
+    );
+
+    func.push_term(fmir::FTerm::Return(Some(retval)));
+
+    module.add_func(func);
+    println!("{}", module);
+
+    let mut transl = QBEBackend::new();
+    let res = transl.translate_module(&module);
+    println!("{}", res);
 }
 
 // 1st path is runtime dir, 2nd path is libs dir

@@ -43,6 +43,9 @@ pub enum Commands {
             num_args=1..)]
         args: Vec<String>,
     },
+
+    /// Only for fencyc developement
+    Devmode {},
 }
 
 #[derive(Args, Debug, Default, Clone)]
