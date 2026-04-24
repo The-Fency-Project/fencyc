@@ -67,11 +67,13 @@ pub struct FFunction {
 }
 
 impl FFunction {
-    pub fn new(name: String, public: bool, ret_ft: FType) -> FFunction {
+    pub fn new(name: String, public: bool, params: Vec<(FValue, FType)>, 
+        ret_ft: FType) 
+        -> FFunction {
         FFunction { 
             name, 
             public, 
-            params: Vec::new(), 
+            params, 
             ret_ft, 
             blocks: Vec::new(), 
             cur_blk: 0
@@ -121,7 +123,7 @@ impl std::fmt::Display for FFunction {
         write!(f, "{}func {}(", pub_sign, self.name)?;
         for (i, p) in self.params.iter().enumerate() {
             if i != 0 {
-                write!(f, ",")?;
+                write!(f, ", ")?;
             }
             write!(f, "{}: {}", p.0, p.1)?;
         }
@@ -233,9 +235,16 @@ pub enum FInstr {
     Assign(FValue, FType, Box<FInstr>), // name, type, val
     Copy(FType, FValue), // as ft, val
 
-    BinaryOp(IRBinOp, FValue, FValue),  
+    BinaryOp(IRBinOp, FValue, FValue), 
+    Neg(FValue), // arithmetical negation
 
-    Call(String, Vec<(FType, FValue)>), // name, args
+    Call(String, Vec<(FValue, FType)>), // name, args
+
+    Load(FValue, FType), // src, ft
+    Store(FValue, FValue, FType), // dst, src, ft  
+    GetAddr(FValue, FValue), // loads addr. args: base, offset 
+
+    Cast(FValue, FType, FType), // val, from, to
 }
 
 // for debug 
@@ -246,13 +255,25 @@ impl std::fmt::Display for FInstr {
             FInstr::Copy(ft, fv) => write!(f, "copy {ft} {fv}"),
 
             FInstr::BinaryOp(bop, v1, v2) => write!(f, "{v1} {bop} {v2}"),
+            FInstr::Neg(v1) => write!(f, "-{v1}"),
+
             FInstr::Call(nm, args) => {
                 write!(f, "call ${}(", nm)?;
-                for (ft, fv) in args {
+                for (idx, (fv, ft)) in args.iter().enumerate() {
+                    if idx != 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{} {}", ft, fv)?;
                 }
                 write!(f, ")")
             }
+
+            FInstr::Load(src, ft) => write!(f, "load {ft} {src}"),
+            FInstr::Store(dst, src, ft) => write!(f, "store {dst} {ft} {src}"),
+
+            FInstr::GetAddr(base, ofs) => write!(f, "compaddr {base} + {ofs}"),
+
+            FInstr::Cast(fv, ft_src, ft_dst) => write!(f, "cast {ft_src} {fv} into {ft_dst}"),
         }    
     }
 }
@@ -264,6 +285,10 @@ pub enum IRBinOp {
     Mul,
     Div,
     Rem,
+
+    And,
+    Or,
+    Xor,
 }
 
 impl std::fmt::Display for IRBinOp {
@@ -274,6 +299,10 @@ impl std::fmt::Display for IRBinOp {
             IRBinOp::Mul => write!(f, "*"),
             IRBinOp::Div => write!(f, "/"),
             IRBinOp::Rem => write!(f, "%"),
+
+            IRBinOp::And => write!(f, "&"),
+            IRBinOp::Or  => write!(f, "|"),
+            IRBinOp::Xor => write!(f, "^"),
         }
     }
 }

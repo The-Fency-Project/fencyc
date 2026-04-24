@@ -111,18 +111,38 @@ fn main() {
 
 fn test_ir() {
     let mut module = FModule::new();
+    let int_t = Seman::FType::int;
 
     // main 
 
-    let mut main_func = FFunction::new("main".into(), true, Seman::FType::uint);
+    let mut main_func = FFunction::new("main".into(), true, vec![], Seman::FType::uint);
     let main_blk = fmir::FBlock::new("start".into());
     main_func.add_blk(main_blk);
+
+    let v1 = fmir::FValue::VarTmp("a".into(), Seman::FType::int);
+    let v2 = fmir::FValue::VarTmp("b".into(), Seman::FType::int);
+
+    main_func.assign_instr(
+        v1.clone(),
+        Seman::FType::int,
+        fmir::FInstr::Copy(Seman::FType::int, fmir::FValue::IConst(5))
+    );
+    main_func.assign_instr(
+         v2.clone(),
+         Seman::FType::int,
+         fmir::FInstr::Copy(Seman::FType::int, fmir::FValue::IConst(4))
+    );
+
+    let add_args = vec![
+        (fmir::FValue::VarTmp("a".into(), int_t.clone()), int_t.clone()), 
+        (fmir::FValue::VarTmp("b".into(), int_t.clone()), int_t.clone()),
+    ];
 
     let res = fmir::FValue::VarTmp("res".into(), Seman::FType::int);
     main_func.assign_instr(
         res.clone(), 
         Seman::FType::int,
-        fmir::FInstr::Call("add".into(), Vec::new())
+        fmir::FInstr::Call("add".into(), add_args)
     );
 
     main_func.add_term(fmir::FTerm::Return(Some(res)));
@@ -131,7 +151,11 @@ fn test_ir() {
 
     // add 
 
-    let mut func = FFunction::new("add".into(), true, Seman::FType::int);
+    let add_params = vec![
+        (fmir::FValue::VarTmp("a".into(), int_t.clone()), int_t.clone()), 
+        (fmir::FValue::VarTmp("b".into(), int_t.clone()), int_t.clone()), 
+    ];
+    let mut func = FFunction::new("add".into(), true, add_params, Seman::FType::int);
     let blk = fmir::FBlock::new("start".into());
     func.add_blk(blk);
 
@@ -146,17 +170,6 @@ fn test_ir() {
     let v1 = fmir::FValue::VarTmp("a".into(), Seman::FType::int);
     let v2 = fmir::FValue::VarTmp("b".into(), Seman::FType::int);
 
-    func.assign_instr(
-        v1.clone(),
-        Seman::FType::int,
-        fmir::FInstr::Copy(Seman::FType::int, fmir::FValue::IConst(5))
-    );
-    func.assign_instr(
-        v2.clone(),
-        Seman::FType::int,
-        fmir::FInstr::Copy(Seman::FType::int, fmir::FValue::IConst(4))
-    );
-    
     let retval = fmir::FValue::VarTmp("res".into(), Seman::FType::int);
     func.assign_instr(
         retval.clone(),

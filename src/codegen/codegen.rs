@@ -1567,7 +1567,7 @@ impl CodeGen {
         name
     }
 
-    fn get_conv(ft_src: &FType, target_type: &FType, src: Value) -> Instr {
+    pub fn get_conv(ft_src: &FType, target_type: &FType, src: Value) -> Instr {
         match (ft_src, target_type) {
             (ft1, ft2) if *ft1 == *ft2 => {
                 Instr::Copy(src)

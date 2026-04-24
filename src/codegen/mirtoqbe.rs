@@ -213,7 +213,11 @@ impl QBEBackend {
                     IRBinOp::Sub => QInstr::Sub(qv1, qv2),
                     IRBinOp::Mul => QInstr::Mul(qv1, qv2),
                     IRBinOp::Div => QInstr::Div(qv1, qv2),
-                    IRBinOp::Rem => QInstr::Rem(qv1, qv2)
+                    IRBinOp::Rem => QInstr::Rem(qv1, qv2),
+
+                    IRBinOp::And => QInstr::And(qv1, qv2),
+                    IRBinOp::Or  => QInstr::Or(qv1, qv2),
+                    IRBinOp::Xor => QInstr::Xor(qv1, qv2),
                 };
 
                 self.emit_assign(tmp.clone(), qt, qinstr);
@@ -221,7 +225,7 @@ impl QBEBackend {
             }
             FInstr::Call(nm, args) => {
                 let qargs: Vec<(QType, QValue)> = args.iter()
-                    .map(|(ft, fv)| (
+                    .map(|(fv, ft)| (
                         CodeGen::match_ft_qbf_t(ft, true),
                         Self::transl_val(fv)
                     ))
@@ -239,8 +243,70 @@ impl QBEBackend {
                 );
                 tmp
             }
+            FInstr::Neg(fv) => {
+                let qv = Self::transl_val(fv);
+                let tmp = self.new_tmp();
+                self.emit_assign(
+                    tmp.clone(), 
+                    CodeGen::match_ft_qbf_t(need_type, true), 
+                    QInstr::Neg(qv)
+                );
+                tmp
+            }
+            FInstr::Load(fv, ft) => {
+                let qv = Self::transl_val(fv);
+                let qt = match ft {
+                    FType::none => CodeGen::match_ft_qbf_t(need_type, false),
+                    other => CodeGen::match_ft_qbf_t(other, false),
+                };
 
-            other => unreachable!("Value from instr {}", expr)
+                let tmp = self.new_tmp();
+                self.emit_assign(
+                    tmp.clone(), 
+                    qt.clone(), 
+                    QInstr::Load(qt, qv)
+                );
+
+                tmp
+            }
+            FInstr::GetAddr(fv_base, fv_offset) => {
+                let qv_base   = Self::transl_val(fv_base);
+                let qv_offset = Self::transl_val(fv_offset);
+                
+                let tmp = self.new_tmp();
+                self.emit_assign(
+                    tmp.clone(),
+                    QType::Long,
+                    QInstr::And(qv_base, qv_offset)
+                );
+                tmp
+            }
+            FInstr::Cast(fv, ft_from, ft_to) => {
+                let qv = Self::transl_val(fv);
+                
+                let ft_to = &Self::border_ft(ft_to);
+
+                let qt_to = CodeGen::match_ft_qbf_t(ft_to, false);
+
+                let cast_instr = CodeGen::get_conv(ft_from, ft_to, qv.clone());
+                
+                let tmp = self.new_tmp();
+                self.emit_assign(
+                    tmp.clone(),
+                    qt_to.clone(),
+                    cast_instr
+                );
+                tmp
+            }
+            other => panic!("Attempted to get value from instr {}", expr)
+        }
+    }
+
+    fn border_ft(ft: &FType) -> FType {
+        match ft {
+            FType::ubyte | FType::ushort => FType::u32,
+            FType::ibyte | FType::ishort => FType::i32,
+            other => other.clone(),
         }
     }
 
@@ -374,7 +440,7 @@ impl MIRTranslator for QBEBackend {
 
             FInstr::Call(nm, args) => {
                 let qargs: Vec<(QType, QValue)> = args.iter()
-                    .map(|(ft, fv)| (
+                    .map(|(fv, ft)| (
                         CodeGen::match_ft_qbf_t(ft, true),
                         Self::transl_val(fv)
                     ))
@@ -384,6 +450,19 @@ impl MIRTranslator for QBEBackend {
                     nm.clone(), 
                     qargs,
                     None // TODO: va args?
+                ));
+            }
+
+            FInstr::Store(dst, src, ft) => {
+                let q_dst = Self::transl_val(dst);
+                let q_src = Self::transl_val(src);
+
+                let qt = CodeGen::qtype_lose_sign(
+                    CodeGen::match_ft_qbf_t(ft, true)
+                );
+
+                self.emit(QInstr::Store(
+                    qt, q_dst, q_src
                 ));
             }
             
