@@ -112,6 +112,25 @@ fn main() {
 fn test_ir() {
     let mut module = FModule::new();
 
+    // main 
+
+    let mut main_func = FFunction::new("main".into(), true, Seman::FType::uint);
+    let main_blk = fmir::FBlock::new("start".into());
+    main_func.add_blk(main_blk);
+
+    let res = fmir::FValue::VarTmp("res".into(), Seman::FType::int);
+    main_func.assign_instr(
+        res.clone(), 
+        Seman::FType::int,
+        fmir::FInstr::Call("add".into(), Vec::new())
+    );
+
+    main_func.add_term(fmir::FTerm::Return(Some(res)));
+
+    module.add_func(main_func);
+
+    // add 
+
     let mut func = FFunction::new("add".into(), true, Seman::FType::int);
     let blk = fmir::FBlock::new("start".into());
     func.add_blk(blk);
@@ -135,7 +154,7 @@ fn test_ir() {
     func.assign_instr(
         v2.clone(),
         Seman::FType::int,
-        fmir::FInstr::Copy(Seman::FType::int, fmir::FValue::IConst(-11))
+        fmir::FInstr::Copy(Seman::FType::int, fmir::FValue::IConst(4))
     );
     
     let retval = fmir::FValue::VarTmp("res".into(), Seman::FType::int);
@@ -145,7 +164,7 @@ fn test_ir() {
         fmir::FInstr::BinaryOp(fmir::IRBinOp::Add, v1.clone(), v2.clone())
     );
 
-    func.push_term(fmir::FTerm::Return(Some(retval)));
+    func.add_term(fmir::FTerm::Return(Some(retval)));
 
     module.add_func(func);
     println!("{}", module);
@@ -195,7 +214,6 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     struct_tab.recalc_layouts()
         .map_err(CompilationError::LayoutErr)?;
     let struct_tab = Arc::new(struct_tab);
-    // println!("DBG Structs: {:#?}", struct_tab);
 
     let trait_tab  = Arc::new(TraitTable::from_several(trait_tabs)); 
     let genfunc_tab: Arc<HashMap<String, AstRoot>> = Arc::new(genfunc_tabs

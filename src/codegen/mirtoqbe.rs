@@ -1,5 +1,6 @@
-use crate::{codegen::codegen::CodeGen, mir::mir::{FBlock, FFunction, FInstr, FModule, FTerm, FValue, IRBinOp, MIRTranslator}, seman::seman::FType};
-use qbe::{Block as QBlock, Function as QFunction, Instr as QInstr, Linkage, Module as QModule, Type as QType, Value as QValue};
+use crate::{codegen::codegen::CodeGen, mir::mir::{FBlock, FDataDef, FDataItem, FFunction, FInstr, FModule, FTerm, FTypeDef, FValue, IRBinOp, MIRTranslator}, seman::seman::FType};
+use qbe::{Block as QBlock, Function as QFunction, Instr as QInstr, Linkage, Module as QModule, Type as QType, Value as QValue,
+    DataDef as QDataDef, DataItem as QDataItem, TypeDef as QTypeDef};
 
 pub struct QBEBackend {
     module: QModule,
@@ -191,7 +192,7 @@ impl QBEBackend {
         tmp
     }
 
-    fn lower_expr(&mut self, expr: &FInstr) -> QValue {
+    fn lower_expr(&mut self, expr: &FInstr, need_type: &FType) -> QValue {
         match expr {
             FInstr::Copy(ft, fv) => {
                 let tmp = self.new_tmp();
@@ -218,7 +219,74 @@ impl QBEBackend {
                 self.emit_assign(tmp.clone(), qt, qinstr);
                 tmp
             }
+            FInstr::Call(nm, args) => {
+                let qargs: Vec<(QType, QValue)> = args.iter()
+                    .map(|(ft, fv)| (
+                        CodeGen::match_ft_qbf_t(ft, true),
+                        Self::transl_val(fv)
+                    ))
+                    .collect();
+
+                let tmp = self.new_tmp();
+                self.emit_assign(
+                    tmp.clone(),
+                    CodeGen::match_ft_qbf(need_type),
+                    QInstr::Call(
+                        nm.clone(), 
+                        qargs,
+                        None // TODO: va args?
+                    )
+                );
+                tmp
+            }
+
             other => unreachable!("Value from instr {}", expr)
+        }
+    }
+
+    fn fdi_to_qdi(fdi: &FDataItem) -> QDataItem {
+        match fdi {
+            FDataItem::Str(s) => QDataItem::Str(s.clone()),
+            FDataItem::Zeroes(c) => QDataItem::Zero(*c as u64)
+        }
+    }
+
+    fn translate_datadef(&mut self, fddef: &FDataDef) -> QDataDef {
+        let linkage = match fddef.public {
+            true => Linkage::public(),
+            false => Linkage::private()
+        };
+
+        let mut qitems: Vec<(QType, QDataItem)> = fddef.items.iter()
+            .map(|(ft, fdi)| (
+                match ft {
+                    FType::strconst => QType::Byte,
+                    other => CodeGen::qtype_lose_sign(CodeGen::match_ft_qbf_t(ft, true)),
+                },
+                Self::fdi_to_qdi(fdi)
+            ))
+            .collect();
+
+        QDataDef {
+            linkage,
+            name: fddef.name.clone(),
+            align: fddef.align,
+            items: qitems,
+        }
+    }
+
+    fn translate_typedef(&mut self, ftd: &FTypeDef) -> QTypeDef {
+        let qitems: Vec<(QType, usize)> = ftd.items.iter()
+            .map(|(ft, ct)| (
+                CodeGen::qtype_lose_sign(CodeGen::match_ft_qbf_t(ft, true)),
+                *ct
+            ))
+            .collect();
+
+        QTypeDef {
+            name:  ftd.name.clone(),
+            align: ftd.align,
+            items: qitems,
         }
     }
 }
@@ -227,11 +295,20 @@ impl MIRTranslator for QBEBackend {
     type Output = QModule;
 
     fn translate_module(&mut self, module: &FModule) -> Self::Output {
-        for i in module.funcs.iter().cloned() {
-            self.translate_function(&i);
+        for i in module.funcs.iter() {
+            self.translate_function(i);
         }
         self.set_func(None);
-        // TODO: datadefs, typedefs
+
+        for d in module.datadefs.iter() {
+            let res = self.translate_datadef(d);
+            self.module.add_data(res);
+        }
+
+        for t in module.typedefs.iter() {
+            let res = self.translate_typedef(t);
+            self.module.add_type(res);
+        }
 
         std::mem::replace(&mut self.module, QModule::new())
     }
@@ -288,11 +365,26 @@ impl MIRTranslator for QBEBackend {
             FInstr::Assign(lhs, ft, rhs) => {
                 let q_lhs = Self::transl_val(&lhs);
                 let qt = CodeGen::match_ft_qbf(ft);
-                let q_rhs = self.lower_expr(&**rhs); 
+                let q_rhs = self.lower_expr(&**rhs, ft); 
 
                 let q_rhs = self.border_qtype(q_rhs, ft);
 
                 self.emit_assign(q_lhs, qt, QInstr::Copy(q_rhs));
+            }
+
+            FInstr::Call(nm, args) => {
+                let qargs: Vec<(QType, QValue)> = args.iter()
+                    .map(|(ft, fv)| (
+                        CodeGen::match_ft_qbf_t(ft, true),
+                        Self::transl_val(fv)
+                    ))
+                    .collect();
+
+                self.emit(QInstr::Call(
+                    nm.clone(), 
+                    qargs,
+                    None // TODO: va args?
+                ));
             }
             
             other => panic!("Unexpected {} in instr translate. Maybe it should \

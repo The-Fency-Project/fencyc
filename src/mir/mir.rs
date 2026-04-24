@@ -101,7 +101,7 @@ impl FFunction {
             .assign_instr(lhs, ft, rhs);
     }
 
-    pub fn push_term(&mut self, term: FTerm) {
+    pub fn add_term(&mut self, term: FTerm) {
         self.blocks.get_mut(self.cur_blk)
             .expect(&format!("Expected block in func {}", self.name))
             .set_term(term);
@@ -234,6 +234,8 @@ pub enum FInstr {
     Copy(FType, FValue), // as ft, val
 
     BinaryOp(IRBinOp, FValue, FValue),  
+
+    Call(String, Vec<(FType, FValue)>), // name, args
 }
 
 // for debug 
@@ -244,6 +246,13 @@ impl std::fmt::Display for FInstr {
             FInstr::Copy(ft, fv) => write!(f, "copy {ft} {fv}"),
 
             FInstr::BinaryOp(bop, v1, v2) => write!(f, "{v1} {bop} {v2}"),
+            FInstr::Call(nm, args) => {
+                write!(f, "call ${}(", nm)?;
+                for (ft, fv) in args {
+                    write!(f, "{} {}", ft, fv)?;
+                }
+                write!(f, ")")
+            }
         }    
     }
 }
@@ -271,10 +280,10 @@ impl std::fmt::Display for IRBinOp {
 
 #[derive(Debug, Clone)]
 pub struct FDataDef {
-    name: String,
-    public: bool,
-    align: Option<u64>,
-    items: Vec<(FType, FDataItem)>,
+    pub name: String,
+    pub public: bool,
+    pub align: Option<u64>,
+    pub items: Vec<(FType, FDataItem)>,
 }
 
 impl FDataDef {
@@ -333,9 +342,9 @@ impl std::fmt::Display for FDataItem {
 
 #[derive(Debug, Clone)]
 pub struct FTypeDef {
-    name: String, 
-    align: Option<u64>,
-    items: Vec<(FType, usize)>, // type, count 
+    pub name: String, 
+    pub align: Option<u64>,
+    pub items: Vec<(FType, usize)>, // type, count 
 }
 
 impl FTypeDef {
