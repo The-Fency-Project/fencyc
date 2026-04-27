@@ -13,7 +13,7 @@ mod logger {pub mod logger;}
 mod mir {pub mod mir;}
 mod tests;
 mod cli;
-use crate::{cli::{Commands, InputFlags, Target, def_ldas}, codegen::{codegen as cgen, mirtoqbe::QBEBackend}, fcparse::fcparse::{self as fparser, AstRoot, FcParser, FuncTable, TraitTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, mir::mir::{self as fmir, FFunction, FModule, MIRTranslator}, seman::seman::{self as Seman, OverloadTable, SemanResult, StructTable}};
+use crate::{cli::{Commands, CompBackend, InputFlags, Target, def_ldas}, codegen::{codegen::{self as cgen, CodeGen}, mirtoqbe::QBEBackend}, fcparse::fcparse::{self as fparser, AstRoot, FcParser, FuncTable, TraitTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, mir::mir::{self as fmir, FFunction, FModule, MIRTranslator}, seman::seman::{self as Seman, OverloadTable, SemanResult, StructTable}};
 
 // prepend home here 
 const FENCY_DIR: &str = ".fency";
@@ -102,89 +102,10 @@ fn main() {
                 }
             }
         }
-        Some(Commands::Devmode {  }) => test_ir(),
         None => {
             eprintln!("Please, specify command or try fencyc --help.");
         }
     }
-}
-
-fn test_ir() {
-    let mut module = FModule::new();
-    let int_t = Seman::FType::int;
-
-    // main 
-
-    let mut main_func = FFunction::new("main".into(), true, vec![], Seman::FType::uint);
-    let main_blk = fmir::FBlock::new("start".into());
-    main_func.add_blk(main_blk);
-
-    let v1 = fmir::FValue::VarTmp("a".into(), Seman::FType::int);
-    let v2 = fmir::FValue::VarTmp("b".into(), Seman::FType::int);
-
-    main_func.assign_instr(
-        v1.clone(),
-        Seman::FType::int,
-        fmir::FInstr::Copy(Seman::FType::int, fmir::FValue::IConst(5))
-    );
-    main_func.assign_instr(
-         v2.clone(),
-         Seman::FType::int,
-         fmir::FInstr::Copy(Seman::FType::int, fmir::FValue::IConst(4))
-    );
-
-    let add_args = vec![
-        (fmir::FValue::VarTmp("a".into(), int_t.clone()), int_t.clone()), 
-        (fmir::FValue::VarTmp("b".into(), int_t.clone()), int_t.clone()),
-    ];
-
-    let res = fmir::FValue::VarTmp("res".into(), Seman::FType::int);
-    main_func.assign_instr(
-        res.clone(), 
-        Seman::FType::int,
-        fmir::FInstr::Call("add".into(), add_args)
-    );
-
-    main_func.add_term(fmir::FTerm::Return(Some(res)));
-
-    module.add_func(main_func);
-
-    // add 
-
-    let add_params = vec![
-        (fmir::FValue::VarTmp("a".into(), int_t.clone()), int_t.clone()), 
-        (fmir::FValue::VarTmp("b".into(), int_t.clone()), int_t.clone()), 
-    ];
-    let mut func = FFunction::new("add".into(), true, add_params, Seman::FType::int);
-    let blk = fmir::FBlock::new("start".into());
-    func.add_blk(blk);
-
-    let fields = vec![(Seman::FType::ushort, 1), (Seman::FType::u32, 2)];
-    let tdef = fmir::FTypeDef::new("somestruct".into(), Some(4), fields);
-    module.add_typedef(tdef);
-
-    let items = vec![(Seman::FType::strconst, fmir::FDataItem::Str("hello".into()))];
-    let def = fmir::FDataDef::new("dataval".into(), false, None, items);
-    module.add_datadef(def);
-
-    let v1 = fmir::FValue::VarTmp("a".into(), Seman::FType::int);
-    let v2 = fmir::FValue::VarTmp("b".into(), Seman::FType::int);
-
-    let retval = fmir::FValue::VarTmp("res".into(), Seman::FType::int);
-    func.assign_instr(
-        retval.clone(),
-        Seman::FType::int,
-        fmir::FInstr::BinaryOp(fmir::IRBinOp::Add, v1.clone(), v2.clone())
-    );
-
-    func.add_term(fmir::FTerm::Return(Some(retval)));
-
-    module.add_func(func);
-    println!("{}", module);
-
-    let mut transl = QBEBackend::new();
-    let res = transl.translate_module(&module);
-    println!("{}", res);
 }
 
 // 1st path is runtime dir, 2nd path is libs dir
@@ -311,13 +232,15 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
 
         gene.gen_everything(flags.shared);
 
-        let temp_fname = format!("{}_temp.ssa", fname.replace(".fcy", ""));
-        gene.write_file(&temp_fname).unwrap();
+        println!("DBG module \n{}", gene.module);
 
-        match genasm(&temp_fname, flags.target) {
+        let temp_fname = format!("{}_temp.ssa", fname.replace(".fcy", ""));
+        match lower_mir(&gene, flags.backend, flags.target, &temp_fname) {
             CompilationError::OkFile(f) => f,
             _ => String::new(),
         }
+
+        
     }).collect();
 
     if !flags.check {
@@ -357,7 +280,34 @@ enum CompilationError {
     Unknown,
 }
 
-fn genasm(input_name: &str, t: Target)
+fn lower_mir(gene: &CodeGen, back: CompBackend, tgt: Target, temp_fname: &str) 
+    -> CompilationError {
+    match back {
+        CompBackend::QBE => {
+            //gene.write_file(&temp_fname).unwrap();
+            let mut qb = QBEBackend::new();
+            let qmod = gene.translate(&mut qb);
+
+            if let Some(parent) = std::path::Path::new(temp_fname).parent() {
+                match std::fs::create_dir_all(parent) {
+                    Ok(_) => {},
+                    Err(e) => eprintln!("{}", e),
+                }
+            }
+            match std::fs::write(temp_fname, &format!("{}", qmod)) {
+                Ok(_) => {},
+                Err(e) => {
+                    eprintln!("{}", e);
+                }
+            };
+
+            genasm_qbe(&temp_fname, tgt)
+        }
+        other => todo!("{:?}", other)
+    }
+}
+
+fn genasm_qbe(input_name: &str, t: Target)
         -> CompilationError {
     let nat_fname = input_name.replace(".ssa", ".s");
     

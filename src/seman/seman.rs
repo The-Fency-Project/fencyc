@@ -8,6 +8,7 @@ use indexmap::IndexMap;
 
 use crate::cli::Target;
 use crate::codegen::codegen::CodeGen;
+use crate::codegen::mirtoqbe;
 use crate::fcparse::fcparse::{AstNode, Attr, FuncDat, GenericType, TraitInfo, TraitTable};
 use crate::fcparse::fcparse::{AstRoot, BinaryOp, FuncArg, 
     FuncTable, UnaryOp};
@@ -142,8 +143,16 @@ impl FType {
         }
     }
 
-    pub fn size(&self) -> u64 {
-        CodeGen::match_ft_qbf_t(self, true).size()
+    pub fn size(&self, tgt: Option<Target>) -> u64 {
+        match self {
+            FType::Ptr if tgt.is_some() => {
+                let t = tgt.unwrap();
+                t.ptrsize()
+            }   
+            other => mirtoqbe::QBEBackend::match_ft_qbf_t(
+                other, true 
+            ).size()
+        }
     }
 
     /// Checks whether it is a struct type and if so returns name 
@@ -192,6 +201,14 @@ impl FType {
         }
 
         res
+    }
+
+    pub fn is_signed(&self) -> bool {
+        match self {
+            FType::ibyte | FType::ishort | FType::int 
+                | FType::single | FType::double => true,
+            _ => false,
+        }
     }
 }
 

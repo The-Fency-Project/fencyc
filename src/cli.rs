@@ -43,9 +43,6 @@ pub enum Commands {
             num_args=1..)]
         args: Vec<String>,
     },
-
-    /// Only for fencyc developement
-    Devmode {},
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -79,6 +76,9 @@ pub struct InputFlags {
                         
     #[arg(long, help = "Compile as shared library")]
     pub shared: bool, // compile as shared library
+
+    #[arg(long, default_value_t = get_backend(), help = "Compiler backend (qbe/llvm)")]
+    pub backend: CompBackend,
 }
 
 pub fn def_ldas() -> String {
@@ -146,6 +146,16 @@ impl Target {
             Self::get_def().to_string()
             );
     }
+
+    /// Returns target ptr size (in bytes)
+    pub fn ptrsize(&self) -> u64 {
+        match self {
+            Self::Amd64Sysv | Self::Amd64Win | Self::Aarch64Apple |
+            Self::Aarch64Sysv | Self::Riscv64Sysv 
+                => 8,
+            other => 4,
+        }
+    }
 }
 
 impl Into<String> for Target {
@@ -163,5 +173,25 @@ impl Into<String> for Target {
 impl ToString for Target {
     fn to_string(&self) -> String {
         Into::<String>::into(*self)
+    }
+}
+
+#[derive(Clone, ValueEnum, Copy, Debug, Default, EnumIter, PartialEq, Eq, Hash)]
+#[clap(rename_all = "snake_case")]
+pub enum CompBackend {
+    #[default]
+    QBE,
+    // TODO: when llvm will be added, add llvm option 
+}
+
+fn get_backend() -> CompBackend {
+    CompBackend::QBE
+}
+
+impl ToString for CompBackend {
+    fn to_string(&self) -> String {
+        match self {
+            Self::QBE => "qbe".into(),
+        }
     }
 }

@@ -2,6 +2,7 @@ use crate::seman::seman::FType;
 
 // Fencyc Medium IR 
 
+
 pub trait MIRTranslator {
     type Output;
 
@@ -83,7 +84,7 @@ impl FFunction {
     /// Push block and return its id   
     pub fn add_blk(&mut self, blk: FBlock) -> usize {
         self.blocks.push(blk);
-        self.blocks.len()
+        self.blocks.len().saturating_sub(1)
     }
 
     /// Set current block id
@@ -201,7 +202,7 @@ impl std::fmt::Display for FBlock {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FValue {
     VarTmp(String, FType), // temporary variable
     VarGlb(String, FType), // global variable 
@@ -236,15 +237,19 @@ pub enum FInstr {
     Copy(FType, FValue), // as ft, val
 
     BinaryOp(IRBinOp, FValue, FValue), 
+    Cmp(IRCmpOp, FType, FValue, FValue),
     Neg(FValue), // arithmetical negation
 
     Call(String, Vec<(FValue, FType)>), // name, args
+
+    Alloca(u64, u64), // alignment, count 
 
     Load(FValue, FType), // src, ft
     Store(FValue, FValue, FType), // dst, src, ft  
     GetAddr(FValue, FValue), // loads addr. args: base, offset 
 
     Cast(FValue, FType, FType), // val, from, to
+    ReinterpretBits(FValue, FType, FType), // val, from, to 
 }
 
 // for debug 
@@ -255,6 +260,8 @@ impl std::fmt::Display for FInstr {
             FInstr::Copy(ft, fv) => write!(f, "copy {ft} {fv}"),
 
             FInstr::BinaryOp(bop, v1, v2) => write!(f, "{v1} {bop} {v2}"),
+            FInstr::Cmp(cmpop, ft, fv1, fv2) => 
+                write!(f, "cmp_{ft} {fv1} {cmpop} {fv2}"),
             FInstr::Neg(v1) => write!(f, "-{v1}"),
 
             FInstr::Call(nm, args) => {
@@ -268,17 +275,42 @@ impl std::fmt::Display for FInstr {
                 write!(f, ")")
             }
 
+            FInstr::Alloca(align, ct) => write!(f, "alloc{align} {ct}"),
+
             FInstr::Load(src, ft) => write!(f, "load {ft} {src}"),
             FInstr::Store(dst, src, ft) => write!(f, "store {dst} {ft} {src}"),
 
             FInstr::GetAddr(base, ofs) => write!(f, "compaddr {base} + {ofs}"),
 
-            FInstr::Cast(fv, ft_src, ft_dst) => write!(f, "cast {ft_src} {fv} into {ft_dst}"),
+            FInstr::Cast(fv, ft_src, ft_dst) => 
+                write!(f, "cast {ft_src} {fv} into {ft_dst}"),
+            FInstr::ReinterpretBits(fv, ft_src, ft_dst) => 
+                write!(f, "reinterpret {ft_src} {fv} as {ft_dst}"),
         }    
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
+pub enum IRCmpOp {
+    Eq, Ne,
+    Lt, Le,
+    Gt, Ge,
+}
+
+impl std::fmt::Display for IRCmpOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IRCmpOp::Eq => write!(f, "=="),
+            IRCmpOp::Ne => write!(f, "!="),
+            IRCmpOp::Lt => write!(f, "<"),
+            IRCmpOp::Le => write!(f, "<="),
+            IRCmpOp::Gt => write!(f, ">"),
+            IRCmpOp::Ge => write!(f, ">="),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum IRBinOp {
     Add,
     Sub,
@@ -312,12 +344,12 @@ pub struct FDataDef {
     pub name: String,
     pub public: bool,
     pub align: Option<u64>,
-    pub items: Vec<(FType, FDataItem)>,
+    pub items: Vec<(FDataItem, FType)>,
 }
 
 impl FDataDef {
     pub fn new(nm: String, public: bool, align: Option<u64>,
-        items: Vec<(FType, FDataItem)>) 
+        items: Vec<(FDataItem, FType)>) 
         -> FDataDef {
         FDataDef { 
             name: nm, 
@@ -348,7 +380,7 @@ impl std::fmt::Display for FDataDef {
             if idx != 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{} {}", entry.0, entry.1)?;
+            write!(f, "{} {}", entry.1, entry.0)?;
         }
         writeln!(f, " }}")
     }
@@ -400,3 +432,5 @@ impl std::fmt::Display for FTypeDef {
         writeln!(f, " }}")
     }
 }
+
+

@@ -1,7 +1,7 @@
 # Current
-- finish MIR 
-- integrate MIR (ast -> mir -> qbe/llvm)
+- Optimize QBE code from redundant copies
 ## Next planned steps (likely)
+- maybe llvm backend
 - generic structs 
 - traits example + update struct example 
 # Future

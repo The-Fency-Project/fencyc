@@ -152,7 +152,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "fencyc"
-version = "0.13.0-a3"
+version = "0.13.0"
 dependencies = [
  "clap",
  "colored",
@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "qbe"
 version = "2.5.1"
-source = "git+https://github.com/Freemorger/qbe-rs.git#a6cb94522cecd379a1193aa1280f3347dd709a4d"
+source = "git+https://github.com/Freemorger/qbe-rs.git#b8f59573d539b0306c62d752e9f359ef8d786bf8"
 dependencies = [
  "ordered-float",
 ]
