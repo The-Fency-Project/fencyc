@@ -1147,7 +1147,7 @@ impl<'ctx> MIRTranslator for LLVMBackend<'ctx> {
             }
         }
    
-        // self.run_mem2reg();
+        self.run_mem2reg();
         if cfg!(debug_assertions) {
             println!("DBG llvm module \n{}\n", self.module.print_to_string().to_string());
         }

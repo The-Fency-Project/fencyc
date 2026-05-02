@@ -24,12 +24,16 @@ jobs:
         override: true
         components: rustfmt, clippy
 
-    - name: Install LLVM 21
+    - name: Install LLVM 21 
       run: |
-        wget https://apt.llvm.org/llvm.sh
+        wget https://llvm.org
         chmod +x llvm.sh
         sudo ./llvm.sh 21
-        sudo apt install -y llvm-21-dev libclang-21-dev
+        sudo apt install -y \
+          llvm-21-dev \
+          libclang-21-dev \
+          libpolly-21-dev \
+          libmlir-21-dev
 
     # --- Cargo Cache Steps ---
     - name: Cache Cargo registry
