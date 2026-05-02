@@ -90,7 +90,7 @@ impl std::mem::Drop for Vec {
             return;
         }
 
-        for let i = 0 in i < self.len; i += 1u {
+        for let i = 0u in i < self.len; i += 1u {
             let cur = self.buf[i];
             cur.drop();
         }

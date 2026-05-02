@@ -1,11 +1,9 @@
-# Current
-- Optimize QBE code from redundant copies
 ## Next planned steps (likely)
-- maybe llvm backend
 - generic structs 
 - traits example + update struct example 
 # Future
 ## Small/medium (unsorted)
+- Optimize QBE code (from `src/codegen/mirtoqbe.rs`) from redundant copies
 - unions
 - further diagnostics (trait incompl func signature)
 - move in loops
@@ -34,7 +32,6 @@
 - wiki
 - macros 
 - other features
-- maybe move to LLVM from QBE 
 - maybe rewrite fencyc in fency itself, which may achieve cleaning code and better integration
 ## General vision
 1. MIR, QBE and LLVM stuff 

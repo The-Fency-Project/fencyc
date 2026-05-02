@@ -58,18 +58,25 @@ impl std::fmt::Display for FModule {
 }
 
 #[derive(Debug, Clone)]
+pub enum FFunctionKind {
+    Local,
+    Extern,
+}
+
+#[derive(Debug, Clone)]
 pub struct FFunction {
     pub name: String,
     pub public: bool,
     pub params: Vec<(FValue, FType)>,
     pub ret_ft: FType,
     pub blocks: Vec<FBlock>,
-    cur_blk: usize,
+    pub kind: FFunctionKind,
+    pub cur_blk: usize,
 }
 
 impl FFunction {
     pub fn new(name: String, public: bool, params: Vec<(FValue, FType)>, 
-        ret_ft: FType) 
+        ret_ft: FType, kind: FFunctionKind) 
         -> FFunction {
         FFunction { 
             name, 
@@ -77,6 +84,7 @@ impl FFunction {
             params, 
             ret_ft, 
             blocks: Vec::new(), 
+            kind,
             cur_blk: 0
         }
     }
@@ -203,9 +211,30 @@ impl std::fmt::Display for FBlock {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum FValue {
-    VarTmp(String, FType), // temporary variable
-    VarGlb(String, FType), // global variable 
+pub struct FValue {
+    pub val: FVal,
+    pub ftype: FType,
+}
+
+impl FValue {
+    pub fn new(fvl: FVal, ft: FType) -> Self {
+        Self { 
+            val: fvl, 
+            ftype: ft 
+        }
+    }
+}
+
+impl std::fmt::Display for FValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.ftype, self.val)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FVal {
+    VarTmp(String), // temporary variable
+    VarGlb(String), // global variable 
 
     UConst(u64),
     IConst(i64),
@@ -214,16 +243,16 @@ pub enum FValue {
     DoubleConst(f64), // double precision float 
 }
 
-impl std::fmt::Display for FValue {
+impl std::fmt::Display for FVal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FValue::VarTmp(nm, ft) => write!(f, "%{nm}"),
-            FValue::VarGlb(nm, ft) => write!(f, "${nm}"),
+            FVal::VarTmp(nm) => write!(f, "%{nm}"),
+            FVal::VarGlb(nm) => write!(f, "${nm}"),
 
-            FValue::UConst(v) => write!(f, "{v}"),
-            FValue::IConst(v) => write!(f, "{v}"),
-            FValue::SingleConst(v) => write!(f, "f_s{v}"),
-            FValue::DoubleConst(v) => write!(f, "f_d{v}"),
+            FVal::UConst(v) => write!(f, "{v}"),
+            FVal::IConst(v) => write!(f, "{v}"),
+            FVal::SingleConst(v) => write!(f, "f_s{v}"),
+            FVal::DoubleConst(v) => write!(f, "f_d{v}"),
 
             other => todo!("{:?}", other)
         }
@@ -247,6 +276,8 @@ pub enum FInstr {
     Load(FValue, FType), // src, ft
     Store(FValue, FValue, FType), // dst, src, ft  
     GetAddr(FValue, FValue), // loads addr. args: base, offset 
+    // extract val from structval. args: structval, offset, field ft
+    ExtractVal(FValue, FValue, FType), 
 
     Cast(FValue, FType, FType), // val, from, to
     ReinterpretBits(FValue, FType, FType), // val, from, to 
@@ -275,12 +306,14 @@ impl std::fmt::Display for FInstr {
                 write!(f, ")")
             }
 
-            FInstr::Alloca(align, ct) => write!(f, "alloc{align} {ct}"),
+            FInstr::Alloca(align, ct) => write!(f, "alloca{align} {ct}"),
 
             FInstr::Load(src, ft) => write!(f, "load {ft} {src}"),
             FInstr::Store(dst, src, ft) => write!(f, "store {dst} {ft} {src}"),
 
             FInstr::GetAddr(base, ofs) => write!(f, "compaddr {base} + {ofs}"),
+            FInstr::ExtractVal(base, ofs, ft) => 
+                write!(f, "extractval {ft} {base}->{ofs}"),
 
             FInstr::Cast(fv, ft_src, ft_dst) => 
                 write!(f, "cast {ft_src} {fv} into {ft_dst}"),
@@ -395,7 +428,7 @@ pub enum FDataItem {
 impl std::fmt::Display for FDataItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FDataItem::Str(s) => write!(f, "\"{s}\""),
+            FDataItem::Str(s) => write!(f, "\"{:#?}\"", s),
             FDataItem::Zeroes(c) => write!(f, "z({c})"),
         }
     }

@@ -77,8 +77,28 @@ pub struct InputFlags {
     #[arg(long, help = "Compile as shared library")]
     pub shared: bool, // compile as shared library
 
-    #[arg(long, default_value_t = get_backend(), help = "Compiler backend (qbe/llvm)")]
-    pub backend: CompBackend,
+    #[arg(long, help = "Compiler backend")]
+    pub backend: Option<CompBackend>,
+
+    #[arg(short = 'O', long, default_value_t = 0, 
+        help = "Optimization level",
+        value_parser = clap::value_parser!(u8).range(0..=3),
+    )]
+    pub opt_level: u8,
+}
+
+impl InputFlags {
+    pub fn finalize(mut self) -> Self {
+        self.backend = match self.backend {
+            Some(b) => Some(b), // user explicitly set it
+            None => Some(match self.opt_level {
+                0 => CompBackend::QBE,
+                _ => CompBackend::LLVM,
+            }),
+        };
+
+        self
+    }
 }
 
 pub fn def_ldas() -> String {
@@ -181,17 +201,18 @@ impl ToString for Target {
 pub enum CompBackend {
     #[default]
     QBE,
-    // TODO: when llvm will be added, add llvm option 
+    LLVM,
 }
 
 fn get_backend() -> CompBackend {
-    CompBackend::QBE
+    CompBackend::LLVM // for opt levels over 0 
 }
 
 impl ToString for CompBackend {
     fn to_string(&self) -> String {
         match self {
             Self::QBE => "qbe".into(),
+            Self::LLVM => "llvm".into()
         }
     }
 }

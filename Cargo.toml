@@ -1,6 +1,6 @@
 [package]
 name = "fencyc"
-version = "0.13.0"
+version = "0.13.1"
 edition = "2024"
 
 [dependencies]
@@ -9,7 +9,7 @@ colored = "3.0.0"
 indexmap = "2.13.0"
 indexset = "0.15.0"
 
-# inkwell = { version = "0.7.0", features = ["llvm21-1"] } # for future, maybe
+inkwell = { version = "0.7.0", features = ["llvm21-1"] }
 
 itertools = "0.14.0"
 qbe = { git = "https://github.com/Freemorger/qbe-rs.git" }

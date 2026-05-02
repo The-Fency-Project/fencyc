@@ -1,8 +1,8 @@
-use std::{collections::{HashMap, HashSet}, io::BufRead};
+use std::{collections::{HashMap, HashSet, hash_map::Keys}, io::BufRead};
 
 use clap::ValueEnum;
 
-use crate::{cli::Target, lexer::lexer::{Intrinsic, Kword, Tok, Token}, logger::logger::{ErrKind, LogLevel}, seman::seman::{FType, StructTable}};
+use crate::{cli::Target, lexer::lexer::{Intrinsic, Kword, Tok, Token}, logger::logger::{ErrKind, LogLevel}, mir::mir::{FVal, FValue}, seman::seman::{FType, StructTable}};
 
 macro_rules! unwrap_or_invalid {
     ($opt:expr, $parser:expr) => {
@@ -1714,6 +1714,13 @@ impl FuncArg {
             ftype: ft 
         }
     }
+
+    pub fn into_fmir(&self) -> (FValue, FType) {
+        (
+            FValue::new(FVal::VarTmp(self.name.clone()), self.ftype.clone()),
+            self.ftype.clone()
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1769,7 +1776,7 @@ impl FuncDat {
 #[derive(Debug, Clone)]
 pub struct FuncTable {
     // function name
-    ft: HashMap<String, Vec<FuncDat>>
+    pub ft: HashMap<String, Vec<FuncDat>>
 }
 
 impl FuncTable {
@@ -1813,6 +1820,7 @@ impl FuncTable {
 
         return None;
     }
+
 }
 
 

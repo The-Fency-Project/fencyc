@@ -44,6 +44,7 @@ impl FSymbol {
 #[derive(Debug, Clone)]
 pub enum FType {
     uint,
+    Usize,
     int,
     double,
     bool,
@@ -106,6 +107,7 @@ impl fmt::Display for FType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FType::uint => write!(f, "uint"),
+            FType::Usize => write!(f, "usize"),
             FType::int => write!(f, "int"),
             FType::double => write!(f, "double"),
             FType::bool => write!(f, "bool"),
@@ -1034,19 +1036,6 @@ impl SemAn {
 
                     for (idx, arg) in args.iter().enumerate() {
                         let argdat = self.analyze_expr(arg, logger); 
-                        match &argdat.ftype {
-                            FType::Struct(_) => {
-                                if let Some(vnm) = argdat.var_name {
-                                    self.try_move(
-                                        &mut logger.clone(),
-                                        &vnm,
-                                        self.line
-                                    );
-                                };
-                            }
-                            other => {}
-                        }
-                        
 
                         let arg_typename = format!("{}", overload.args[idx].ftype)
                             .rsplit("::").next().unwrap().to_owned();

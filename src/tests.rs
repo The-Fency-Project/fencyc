@@ -2,35 +2,62 @@ use std::process::Command;
 
 /// Some tests on examples 
 /// Doing nostd for easier CI/CD
+/// Set ENV `FCY_BACKEND=llvm` to test with llvm
+/// E.g. `FCY_BACKEND=llvm cargo test` in sh
+
+fn backend_flag() -> &'static str {
+    std::env::var("FCY_BACKEND")
+        .unwrap_or_else(|_| "qbe".to_string())
+        .leak()
+}
+
+fn compile(input_files: &[&str], output_bin: &str) {
+    let backend = backend_flag();
+
+    let mut args = vec![
+        "run",
+        "--",
+        "input",
+    ];
+
+    args.extend(input_files);
+    args.push("-o");
+    args.push(output_bin);
+    args.push("--nostd");
+    args.push("--verbose");
+
+    args.push("--backend");
+    args.push(backend);
+
+    let status = std::process::Command::new("cargo")
+        .args(&args)
+        .status()
+        .expect("failed to run compiler");
+
+    assert!(status.success(), "Compilation failed");
+}
+
+fn run_bin(bin: &str) -> String {
+    let out = std::process::Command::new(bin)
+        .output()
+        .expect("failed to run binary");
+
+    assert!(out.status.success(), "program crashed");
+
+    std::str::from_utf8(&out.stdout)
+        .unwrap()
+        .trim()
+        .to_string()
+}
 
 #[test]
 fn test_variables_example() {
     let input_file = "examples/1_variables.fcy";
     let output_bin = "testbins/1_variables";
 
-    let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd", "--verbose"])
-        .status()
-        .expect("Failed to run compiler command");
+    compile(&[input_file], output_bin);
 
-    assert!(
-        compile_status.success(),
-        "Compilation failed for {}",
-        input_file
-    );
-
-    let run_output = Command::new(output_bin)
-        .output()
-        .expect("Failed to run compiled binary");
-
-    assert!(
-        run_output.status.success(),
-        "Compiled program crashed"
-    );
-
-    let stdout = str::from_utf8(&run_output.stdout)
-        .expect("Output is not valid UTF-8")
-        .trim(); // remove trailing newline
+    let stdout = run_bin(output_bin);
 
     let expected = "\
 9.859600
@@ -39,37 +66,14 @@ fn test_variables_example() {
 10.000000
 27.500000";
 
-    assert_eq!(stdout, expected, "Program output did not match expected");
+    assert_eq!(stdout, expected);
 }
 
 #[test]
 fn test_loops_example() {
-    let input_file = "examples/2_loops.fcy";
-    let output_bin = "testbins/2_loops";
+    compile(&["examples/2_loops.fcy"], "testbins/2_loops");
 
-    let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd", "--verbose"])
-        .status()
-        .expect("Failed to run compiler command");
-
-    assert!(
-        compile_status.success(),
-        "Compilation failed for {}",
-        input_file
-    );
-
-    let run_output = Command::new(output_bin)
-        .output()
-        .expect("Failed to run compiled binary");
-
-    assert!(
-        run_output.status.success(),
-        "Compiled program crashed"
-    );
-
-    let stdout = str::from_utf8(&run_output.stdout)
-        .expect("Output is not valid UTF-8")
-        .trim(); // remove trailing newline
+    let stdout = run_bin("testbins/2_loops");
 
     let expected = "\
 0
@@ -94,37 +98,14 @@ fn test_loops_example() {
 8
 9";
 
-    assert_eq!(stdout, expected, "Program output did not match expected");
+    assert_eq!(stdout, expected);
 }
 
 #[test]
 fn test_functions_example() {
-    let input_file = "examples/3_functions.fcy";
-    let output_bin = "testbins/3_functions";
+    compile(&["examples/3_functions.fcy"], "testbins/3_functions");
 
-    let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd", "--verbose"])
-        .status()
-        .expect("Failed to run compiler command");
-
-    assert!(
-        compile_status.success(),
-        "Compilation failed for {}",
-        input_file
-    );
-
-    let run_output = Command::new(output_bin)
-        .output()
-        .expect("Failed to run compiled binary");
-
-    assert!(
-        run_output.status.success(),
-        "Compiled program crashed"
-    );
-
-    let stdout = str::from_utf8(&run_output.stdout)
-        .expect("Output is not valid UTF-8")
-        .trim(); // remove trailing newline
+    let stdout = run_bin("testbins/3_functions");
 
     let expected = "\
 1
@@ -132,37 +113,14 @@ fn test_functions_example() {
 120
 19.250000";
 
-    assert_eq!(stdout, expected, "Program output did not match expected");
+    assert_eq!(stdout, expected);
 }
 
 #[test]
 fn test_arrays_example() {
-    let input_file = "examples/4_arrays.fcy";
-    let output_bin = "testbins/4_arrays";
+    compile(&["examples/4_arrays.fcy"], "testbins/4_arrays");
 
-    let compile_status = Command::new("cargo")
-        .args(&["run", "--", "input", input_file, "-o", output_bin, "--nostd", "--verbose"])
-        .status()
-        .expect("Failed to run compiler command");
-
-    assert!(
-        compile_status.success(),
-        "Compilation failed for {}",
-        input_file
-    );
-
-    let run_output = Command::new(output_bin)
-        .output()
-        .expect("Failed to run compiled binary");
-
-    assert!(
-        run_output.status.success(),
-        "Compiled program crashed"
-    );
-
-    let stdout = str::from_utf8(&run_output.stdout)
-        .expect("Output is not valid UTF-8")
-        .trim(); // remove trailing newline
+    let stdout = run_bin("testbins/4_arrays");
 
     let expected = "\
 3
@@ -175,49 +133,20 @@ Hello, world!
 1
 8";
 
-    assert_eq!(stdout, expected, "Program output did not match expected");
+    assert_eq!(stdout, expected);
 }
 
 #[test]
 fn test_modules_example() {
-    use std::process::Command;
-    use std::str;
-
-    let input_files = vec!["examples/5_modules/main.fcy", 
-        "examples/5_modules/other.fcy"];
-    let output_bin = "testbins/5_modules";
-
-    let mut cmd = vec!["run", "--", "input"];
-        cmd.extend(input_files.iter().map(|s| *s));
-        cmd.push("-o");
-        cmd.push(output_bin);
-        cmd.push("--nostd");
-        cmd.push("--verbose");
-    println!("Running compiler command: cargo {:?}", cmd);
-
-    let compile_output = Command::new("cargo")
-        .args(cmd)
-        .output()
-        .expect("Failed to run compiler command");
-
-    assert!(
-        compile_output.status.success(),
-        "Compilation failed for {}",
-        output_bin
+    compile(
+        &[
+            "examples/5_modules/main.fcy",
+            "examples/5_modules/other.fcy",
+        ],
+        "testbins/5_modules",
     );
 
-    let run_output = Command::new(output_bin)
-        .output()
-        .expect("Failed to run compiled binary");
-
-    assert!(
-        run_output.status.success(),
-        "Compiled program crashed"
-    );
-
-    let stdout = str::from_utf8(&run_output.stdout)
-        .expect("Output is not valid UTF-8")
-        .trim(); 
+    let stdout = run_bin("testbins/5_modules");
 
     let expected = "\
 Hello, modules!
@@ -225,48 +154,14 @@ Goodbye!
 Goodbye!
 6";
 
-    assert_eq!(stdout, expected, "Program output did not match expected");
+    assert_eq!(stdout, expected);
 }
 
 #[test]
 fn test_structs_example() {
-    use std::process::Command;
-    use std::str;
+    compile(&["examples/6_structs.fcy"], "testbins/6_structs");
 
-    let input_files = vec!["examples/6_structs.fcy"];
-    let output_bin = "testbins/6_structs";
-
-    let mut cmd = vec!["run", "--", "input"];
-        cmd.extend(input_files.iter().map(|s| *s));
-        cmd.push("-o");
-        cmd.push(output_bin);
-        cmd.push("--nostd");
-        cmd.push("--verbose");
-    println!("Running compiler command: cargo {:?}", cmd);
-
-    let compile_output = Command::new("cargo")
-        .args(cmd)
-        .output()
-        .expect("Failed to run compiler command");
-
-    assert!(
-        compile_output.status.success(),
-        "Compilation failed for {}",
-        output_bin
-    );
-
-    let run_output = Command::new(output_bin)
-        .output()
-        .expect("Failed to run compiled binary");
-
-    assert!(
-        run_output.status.success(),
-        "Compiled program crashed"
-    );
-
-    let stdout = str::from_utf8(&run_output.stdout)
-        .expect("Output is not valid UTF-8")
-        .trim(); 
+    let stdout = run_bin("testbins/6_structs");
 
     let expected = "\
 5
@@ -278,6 +173,5 @@ fn test_structs_example() {
 16
 124";
 
-    assert_eq!(stdout, expected, "Program output did not match expected");
+    assert_eq!(stdout, expected);
 }
-

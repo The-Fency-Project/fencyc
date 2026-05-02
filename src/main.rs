@@ -3,17 +3,18 @@ use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, process::{Comm
 use clap::{FromArgMatches, Parser};
 use colored::Colorize;
 use indexmap::IndexSet;
+use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target as LTarget, TargetMachine, TargetTriple};
 use rayon::prelude::*;
 
 mod fcparse {pub mod fcparse;}
-mod codegen {pub mod codegen; pub mod mirtoqbe;}
+mod codegen {pub mod codegen; pub mod mirtoqbe; pub mod mirtollvm;}
 mod lexer {pub mod lexer;}
 mod seman {pub mod seman;}
 mod logger {pub mod logger;}
 mod mir {pub mod mir;}
 mod tests;
 mod cli;
-use crate::{cli::{Commands, CompBackend, InputFlags, Target, def_ldas}, codegen::{codegen::{self as cgen, CodeGen}, mirtoqbe::QBEBackend}, fcparse::fcparse::{self as fparser, AstRoot, FcParser, FuncTable, TraitTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, mir::mir::{self as fmir, FFunction, FModule, MIRTranslator}, seman::seman::{self as Seman, OverloadTable, SemanResult, StructTable}};
+use crate::{cli::{Commands, CompBackend, InputFlags, Target, def_ldas}, codegen::{codegen::{self as cgen, CodeGen}, mirtollvm::LLVMBackend, mirtoqbe::QBEBackend}, fcparse::fcparse::{self as fparser, AstRoot, FcParser, FuncTable, TraitTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, mir::mir::{self as fmir, FFunction, FModule, MIRTranslator}, seman::seman::{self as Seman, OverloadTable, SemanResult, StructTable}};
 
 // prepend home here 
 const FENCY_DIR: &str = ".fency";
@@ -48,6 +49,7 @@ fn main() {
                 ldflags.push("lfcyrt".to_owned());
             }
             flags.verbose |= cli.verbose;
+            let flags = flags.finalize();
 
             match compile(files, output, flags, ldflags, paths, extfiles) {
                 Ok(_) => {return;}
@@ -205,14 +207,16 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     }
 
     let global_gens = Arc::new(RwLock::new(IndexSet::new()));
-    
-    let counter = Arc::new(AtomicUsize::new(0));
+    let flags_arc   = Arc::new(flags.clone());
+
+    let counter                 = Arc::new(AtomicUsize::new(0));
     let nat_fnames: Vec<String> = asts.par_iter().enumerate().map(|(idx, ast)| {
         let fname = files[idx].clone();
+        let cflags = flags_arc.clone();
 
         let progress = counter.fetch_add(1, Ordering::SeqCst); // atomic increment
         
-        if flags.verbose {
+        if cflags.verbose {
             println!("[{}/{}] {} {}", progress + 1, total_files, 
                 "Generating".blue() , fname);
         }
@@ -222,20 +226,21 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         let mut gene = cgen::CodeGen::new(
             ast.clone(),
             matched_ovs.get(&idx).unwrap().clone(),
-            idx == 0,
             functab.clone(),
             struct_tab.clone(),
-            flags.target,
+            flags_arc.clone(),
             genfunc_tab.clone(),
             gens, 
         );
 
-        gene.gen_everything(flags.shared);
+        gene.gen_everything(cflags.shared);
 
-        println!("DBG module \n{}", gene.module);
+        if cfg!(debug_assertions) { 
+            println!("DBG module \n{}", gene.module);
+        }
 
         let temp_fname = format!("{}_temp.ssa", fname.replace(".fcy", ""));
-        match lower_mir(&gene, flags.backend, flags.target, &temp_fname) {
+        match lower_mir(&gene, &cflags, &temp_fname) {
             CompilationError::OkFile(f) => f,
             _ => String::new(),
         }
@@ -280,9 +285,9 @@ enum CompilationError {
     Unknown,
 }
 
-fn lower_mir(gene: &CodeGen, back: CompBackend, tgt: Target, temp_fname: &str) 
+fn lower_mir(gene: &CodeGen, flags: &InputFlags, temp_fname: &str) 
     -> CompilationError {
-    match back {
+    match flags.backend.unwrap() {
         CompBackend::QBE => {
             //gene.write_file(&temp_fname).unwrap();
             let mut qb = QBEBackend::new();
@@ -301,8 +306,31 @@ fn lower_mir(gene: &CodeGen, back: CompBackend, tgt: Target, temp_fname: &str)
                 }
             };
 
-            genasm_qbe(&temp_fname, tgt)
+            genasm_qbe(&temp_fname, flags.target)
         }
+        CompBackend::LLVM => {
+            let context   = inkwell::context::Context::create();
+            let asm_fname = temp_fname.replace(".ssa", ".s");
+            let mod_name  = temp_fname.split(".").next().unwrap_or(temp_fname);
+            let tgt_mchn  = target_machine_from_cli(flags); 
+            let mut llvm  = LLVMBackend::new(&context, mod_name, tgt_mchn);
+
+            let _module = gene.translate(&mut llvm);
+
+            if let Some(parent) = std::path::Path::new(temp_fname).parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!("{e}");
+                }
+            }
+
+
+            // llvm.run_mem2reg(); // running in translate() now
+            match llvm.emit_assembly_file(&asm_fname) {
+                Ok(_) => CompilationError::OkFile(asm_fname),
+                _ => CompilationError::AsmFault
+            }
+        }
+
         other => todo!("{:?}", other)
     }
 }
@@ -325,11 +353,37 @@ fn genasm_qbe(input_name: &str, t: Target)
     CompilationError::OkFile(nat_fname.clone())
 }
 
+fn genasm_llvm(input_name: &str, tgt: Target)
+    -> CompilationError
+{
+    let obj_name = input_name.replace(".ssa", ".o");
+
+    // TODO: add target + opt level
+    let llc_out = match run_command(
+        "llc",
+        &[
+            "-filetype=obj",
+            input_name,
+            "-o",
+            &obj_name,
+        ],
+    ) {
+        Ok(v) => v,
+        Err(_) => return CompilationError::AsmFault,
+    };
+
+    print_stds(llc_out);
+
+    release_cleanup(&vec![input_name]);
+
+    CompilationError::OkFile(obj_name)
+}
+
 fn ldas(asm_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>, 
     flags: &InputFlags, fcy_paths: &Vec<PathBuf>, extfiles: &Vec<String>)
     -> Result<(), CompilationError> {
 
-    let mut obj_files = Arc::new(Mutex::new(Vec::new()));
+    let mut obj_files: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let mut input_files = asm_fnames.clone();
     input_files.extend(extfiles.iter().map(|s| {s.as_str()}));
 
@@ -340,6 +394,12 @@ fn ldas(asm_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>,
         .enumerate()
         .map(|(i, v)| {
         
+        if v.ends_with(".o") {
+            let mut vec = obj_files.lock().unwrap();
+            vec.push(format!("{}", v)); // for some reason, to_owned didnt work
+
+            return 0;
+        }
         let obj_filename = format!("{}.o", v);
         {
             let mut vec = obj_files.lock().unwrap();
@@ -491,3 +551,38 @@ pub fn get_homedpath(append: &str) -> Result<PathBuf, ()> {
     }
 }
 
+fn target_machine_from_cli(flags: &InputFlags) -> TargetMachine {
+    LTarget::initialize_all(&InitializationConfig::default());
+
+    let (triple_str, cpu) = match flags.target {
+        crate::Target::Amd64Sysv => ("x86_64-unknown-linux-gnu", "generic"),
+        crate::Target::Amd64Win => ("x86_64-pc-windows-msvc", "generic"),
+        crate::Target::Aarch64Apple => ("aarch64-apple-darwin", "generic"),
+        crate::Target::Aarch64Sysv => ("aarch64-unknown-linux-gnu", "generic"),
+        crate::Target::Riscv64Sysv => ("riscv64-unknown-linux-gnu", "generic"),
+    };
+
+    let triple = TargetTriple::create(triple_str);
+
+    let llvm_target = LTarget::from_triple(&triple)
+        .expect("Failed to create LLVM target from triple");
+
+    let o_lvl = match flags.opt_level {
+        0 => inkwell::OptimizationLevel::None,
+        1 => inkwell::OptimizationLevel::Less,
+        2 => inkwell::OptimizationLevel::Default,
+        3 => inkwell::OptimizationLevel::Aggressive,
+        other => unreachable!("Opt level {}", other)
+    };
+
+    llvm_target
+        .create_target_machine(
+            &triple,
+            cpu,
+            "",
+            o_lvl,
+            RelocMode::PIC,
+            CodeModel::Default,
+        )
+        .expect("Failed to create target machine")
+}

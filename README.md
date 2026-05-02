@@ -15,7 +15,7 @@ faster compilation, overloads and much more.
 
 ## Fast installation
 There is a `fcyup` python script that would download/update fency toolchain for you,
-including voxvm and fencyc from latest binary release.  
+including fencyc and libs from latest binary release.  
 On *nix systems (linux/macos/etc):
 ```sh
 curl --proto '=https' --tlsv1.2 -sSL https://raw.githubusercontent.com/The-Fency-Project/fcyup/refs/heads/main/fcyup.py | python3 -

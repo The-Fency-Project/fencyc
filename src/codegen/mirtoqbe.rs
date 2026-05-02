@@ -1,6 +1,6 @@
 use std::backtrace::Backtrace;
 
-use crate::{codegen::codegen::CodeGen, mir::mir::{FBlock, FDataDef, FDataItem, FFunction, FInstr, FModule, FTerm, FTypeDef, FValue, IRBinOp, IRCmpOp, MIRTranslator}, seman::seman::FType};
+use crate::{codegen::codegen::CodeGen, mir::mir::{FBlock, FDataDef, FDataItem, FFunction, FInstr, FModule, FTerm, FTypeDef, FVal, FValue, IRBinOp, IRCmpOp, MIRTranslator}, seman::seman::FType};
 use qbe::{Block as QBlock, Function as QFunction, Instr as QInstr, Linkage, Module as QModule, Type as QType, Value as QValue,
     DataDef as QDataDef, DataItem as QDataItem, TypeDef as QTypeDef, Cmp as QCmpOp};
 
@@ -51,37 +51,24 @@ impl QBEBackend {
     }
 
     fn transl_val(val: &FValue) -> QValue {
-        match val {
-            FValue::VarTmp(s, ft) => QValue::Temporary(s.clone()),
-            FValue::VarGlb(s, ft) => QValue::Global(s.clone()),
+        match &val.val {
+            FVal::VarTmp(s) => QValue::Temporary(s.clone()),
+            FVal::VarGlb(s) => QValue::Global(s.clone()),
             
-            FValue::UConst(u) => QValue::Const(*u),
-            FValue::IConst(i) => QValue::SignConst(*i),
+            FVal::UConst(u) => QValue::Const(*u),
+            FVal::IConst(i) => QValue::SignConst(*i),
 
-            FValue::SingleConst(s) => QValue::float(*s),
-            FValue::DoubleConst(d) => QValue::double(*d)
+            FVal::SingleConst(s) => QValue::float(*s),
+            FVal::DoubleConst(d) => QValue::double(*d)
         }
     }
 
-    /// Not always precise for non-vars
     fn ft_from_var(val: &FValue) -> FType {
-        match val {
-            FValue::VarTmp(s, ft) | FValue::VarGlb(s, ft) => ft.clone(),
-            FValue::UConst(_) => FType::uint,
-            FValue::IConst(_) => FType::int,
-            FValue::SingleConst(_) => FType::single,
-            FValue::DoubleConst(_) => FType::double,
-        }
+        val.ftype.clone()
     }
 
     fn qt_from_var(val: &FValue) -> QType {
-        match val {
-            FValue::VarTmp(s, ft) | FValue::VarGlb(s, ft) 
-                => Self::match_ft_qbf_t(ft, true),
-            FValue::UConst(_) | FValue::IConst(_) => QType::Long,
-            FValue::SingleConst(s) => QType::Single,
-            FValue::DoubleConst(d) => QType::Double,
-        }
+        Self::match_ft_qbf_t(&Self::ft_from_var(val), true) 
     }
 
     fn new_tmp(&mut self) -> QValue {
@@ -356,6 +343,26 @@ impl QBEBackend {
                 );
                 tmp
             }
+            FInstr::ExtractVal(fv_base, fv_offset, ft) => {
+                let qv_base   = Self::transl_val(fv_base);
+                let qv_offset = Self::transl_val(fv_offset);
+                
+                let addr_tmp = self.new_tmp();
+                self.emit_assign(
+                    addr_tmp.clone(),
+                    QType::Long,
+                    QInstr::Add(qv_base, qv_offset)
+                );
+
+                let qt = Self::match_ft_qbf(&ft);
+                let res_tmp = self.new_tmp();
+                self.emit_assign(
+                    res_tmp.clone(), 
+                    qt.clone(), 
+                    QInstr::Load(qt, addr_tmp)
+                );
+                res_tmp
+            }
             FInstr::Cast(fv, ft_from, ft_to) => {
                 let qv = Self::transl_val(fv);
                 
@@ -469,10 +476,11 @@ impl QBEBackend {
 
     pub fn match_ft_qbf_t(ft: &FType, straight: bool) -> QType {
         match ft {
-            FType::int | FType::uint  => QType::Long,
-            FType::double             => QType::Double,
-            FType::single             => QType::Single,
-            FType::u32 | FType::i32   => QType::Word,
+            FType::Usize             => QType::Long,
+            FType::int | FType::uint => QType::Long,
+            FType::double            => QType::Double,
+            FType::single            => QType::Single,
+            FType::u32 | FType::i32  => QType::Word,
             FType::Array(el, _)    => {
                 Self::match_ft_qbf(
                     &*el
