@@ -679,10 +679,8 @@ impl CodeGen {
             }
             AstNode::ArrayElem(arr, idx_val) => {
                 let old_needaddr = self.need_addr;
-                self.need_addr = true;
-                let val_dat  = self.gen_expr(*arr);
                 self.need_addr = false;
-
+                let val_dat  = self.gen_expr(*arr);
                 let idx_gd   = self.gen_expr(idx_val.node);
                 self.need_addr = old_needaddr;
 
@@ -1172,12 +1170,13 @@ impl CodeGen {
                     align: Some(struct_dat.max_alignment as u64),
                     items: struct_dat.fields.iter()
                         .map(|f| { 
-                            let count = match &f.1.ftype {
-                                FType::Array(el, ct) => *ct,
-                                other => 1,
+                            let (ftype, count) = match &f.1.ftype {
+                                FType::Array(el, 0) => (FType::Ptr, 1),
+                                FType::Array(el, ct) => (*el.clone(), *ct),
+                                other => (f.1.ftype.clone(), 1),
                             };
                             (
-                                f.1.ftype.clone(),
+                                ftype,
                                 count,
                             )
                         })
@@ -1320,17 +1319,10 @@ impl CodeGen {
                 );
                 res.val = Some(tmp.clone());
 
-                let holds_ptr = match &field_info.ftype {
-                    FType::Array(el, ct) if *ct == 0 => true,
-                    FType::Ptr | FType::TypePtr(_) | FType::StructPtr(_) | 
-                        FType::StructHeapPtr(_) => true,
-                    other => false
-                };
+                let is_emb = matches!(field_info.ftype, FType::Struct(_))
+                    || matches!(field_info.ftype, FType::Array(_, ct) if ct > 0);
 
-                let is_emb = matches!(field_info.ftype, FType::Struct(_));
-
-                if (!self.need_addr || (self.need_addr && holds_ptr))
-                && !is_emb {
+                if !self.need_addr && !is_emb {
                     let load_tmp = self.new_temp(&field_info.ftype);
                     res.val = Some(load_tmp.clone());
 
@@ -1432,6 +1424,7 @@ impl CodeGen {
     fn gen_func(&mut self, name: &AstNode, args: Vec<FuncArg>, 
             ret_type: FType, body: Box<AstNode>, over_idx: usize, public: bool)  {
         let mut res_args = args.clone();
+        let mut ret_mir_type = ret_type.clone();
         match &ret_type {
             FType::Struct(snm) => {
                 let argdat = FuncArg::new(
@@ -1439,6 +1432,7 @@ impl CodeGen {
                     FType::StructPtr(snm.clone())
                 );
                 res_args.insert(0, argdat);
+                ret_mir_type = FType::StructPtr(snm.clone());
             }
             other => {}
         }
@@ -1459,7 +1453,7 @@ impl CodeGen {
             format!("{}_{}", mname, over_idx),
             public,
             args_mir, 
-            ret_type.clone(),
+            ret_mir_type,
             FFunctionKind::Local
         );
 
@@ -1638,7 +1632,7 @@ impl CodeGen {
 
                 if self.func_tab.get_func(&drop_funcname, &paths).is_some() {
                     args.push((
-                        FValue::new(FVal::VarTmp(s.name.clone()), FType::Ptr), 
+                        FValue::new(FVal::VarTmp(s.name.clone()), s.ftype.clone()), 
                         FType::Ptr 
                     ));
 
@@ -1651,7 +1645,7 @@ impl CodeGen {
                 if let Some(si) = self.struct_tab.get(st, &paths) {
                     if si.attrs.contains(&fparse::Attr::Heap) {
                         args.push((
-                            FValue::new(FVal::VarTmp(s.name.clone()), FType::Ptr),
+                            FValue::new(FVal::VarTmp(s.name.clone()), s.ftype.clone()),
                             FType::Ptr
                         ));
 

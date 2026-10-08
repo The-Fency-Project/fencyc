@@ -557,6 +557,7 @@ impl MIRTranslator for QBEBackend {
 
         let qret = match &func.ret_ft {
             FType::none => None,
+            FType::Struct(_) => Some(QType::Long),
             other => Some(Self::match_ft_qbf_t(&other, true))
         };
 
