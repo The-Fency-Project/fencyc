@@ -1,10 +1,12 @@
 ## Next planned steps (likely)
 - generic structs 
-- traits example + update struct example 
+- traits example + update struct example
+- unions, then enums
+- `h_T` move semantics 
+- stdlib
 # Future
 ## Small/medium (unsorted)
 - Optimize QBE code (from `src/codegen/mirtoqbe.rs`) from redundant copies
-- unions
 - further diagnostics (trait incompl func signature)
 - move in loops
 - incremential compilation
