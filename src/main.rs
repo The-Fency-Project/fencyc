@@ -135,6 +135,8 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     let mut struct_tabs = Vec::with_capacity(ast_results.len());
     let mut trait_tabs  = Vec::with_capacity(ast_results.len());
     let mut genfunc_tabs = Vec::with_capacity(ast_results.len());
+    let mut genstruct_uses = Vec::new();
+    let mut genimpl_tabs = Vec::with_capacity(ast_results.len());
 
     for (ast, func_tab, p) in ast_results {
         asts.push(ast);
@@ -142,11 +144,14 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         struct_tabs.push(p.structs);
         trait_tabs.push(p.traits);
         genfunc_tabs.push(p.generic_funcs);
+        genstruct_uses.extend(p.generic_structs);
+        genimpl_tabs.push(p.generic_impls);
     }   
 
     let functab    = Arc::new(FuncTable::from_several(func_tabs));
     
     let mut struct_tab = StructTable::from_several(&struct_tabs);
+    struct_tab.instantiate_many(&genstruct_uses);
     struct_tab.recalc_layouts()
         .map_err(CompilationError::LayoutErr)?;
     let struct_tab = Arc::new(struct_tab);
@@ -155,6 +160,10 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     let genfunc_tab: Arc<HashMap<String, AstRoot>> = Arc::new(genfunc_tabs
         .into_iter()
         .flat_map(|g| {g.into_iter()})
+        .collect());
+    let genimpl_tab: Arc<HashMap<String, AstRoot>> = Arc::new(genimpl_tabs
+        .into_iter()
+        .flat_map(|g| g.into_iter())
         .collect());
 
     let fin_msg = LogMessage::from_query(LoggerQuery::Stop);
@@ -230,6 +239,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
             struct_tab.clone(),
             flags_arc.clone(),
             genfunc_tab.clone(),
+            genimpl_tab.clone(),
             gens, 
         );
 

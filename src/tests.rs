@@ -175,3 +175,13 @@ fn test_structs_example() {
 
     assert_eq!(stdout, expected);
 }
+
+#[test]
+fn test_generic_structs_example() {
+    compile(&["examples/7_generic_structs.fcy"], "testbins/7_generic_structs");
+
+    let stdout = run_bin("testbins/7_generic_structs");
+
+    let expected = "7\n42";
+    assert_eq!(stdout, expected);
+}

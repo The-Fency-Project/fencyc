@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use crate::cli::Target;
 use crate::codegen::codegen::CodeGen;
 use crate::codegen::mirtoqbe;
-use crate::fcparse::fcparse::{AstNode, Attr, FuncDat, GenericType, TraitInfo, TraitTable};
+use crate::fcparse::fcparse::{self as fparse, AstNode, Attr, FuncDat, GenericType, TraitInfo, TraitTable};
 use crate::fcparse::fcparse::{AstRoot, BinaryOp, FuncArg, 
     FuncTable, UnaryOp};
 use crate::lex::Intrinsic;
@@ -444,8 +444,9 @@ impl SemAn {
                     ft if ft.if_struct().is_some() => {
                         let name = ft.if_struct().unwrap();
                         if let Some(si) = self.struct_tab.get(&name, &paths) {
+                            let visibility_name = si.generic_origin.as_deref().unwrap_or(&name);
                             let supermod = {
-                                let mut spl: Vec<&str> = name.split("::").collect();
+                                let mut spl: Vec<&str> = visibility_name.split("::").collect();
                                 spl.pop();
                                 spl.join("::")
                             };
@@ -889,8 +890,9 @@ impl SemAn {
                             let name = ft.if_struct().unwrap();
                             let paths = self.get_use_paths();
                             if let Some(si) = self.struct_tab.get(&name, &paths) {
+                                let visibility_name = si.generic_origin.as_deref().unwrap_or(&name);
                                 let supermod = {
-                                    let mut spl: Vec<&str> = name.split("::").collect();
+                                    let mut spl: Vec<&str> = visibility_name.split("::").collect();
                                     spl.pop();
                                     spl.join("::")
                                 };
@@ -1033,9 +1035,32 @@ impl SemAn {
                         .iter()
                         .map(|e| {(e.name.clone(), e.clone())})
                         .collect();
+                    let mut substitutions: HashMap<String, FType> = HashMap::new();
 
                     for (idx, arg) in args.iter().enumerate() {
                         let argdat = self.analyze_expr(arg, logger); 
+
+                        if let FType::Generic(name) = &overload.args[idx].ftype {
+                            substitutions.insert(name.clone(), argdat.ftype.clone());
+                            continue;
+                        }
+                        if let (Some(expected_struct), Some(passed_struct)) =
+                            (overload.args[idx].ftype.if_struct(), argdat.ftype.if_struct()) {
+                            let expected_template = self.struct_tab.template_name(&expected_struct);
+                            if let Some(info) = self.struct_tab.tab.get(&passed_struct) {
+                                if info.generic_origin.as_deref() == Some(expected_template.as_str()) {
+                                    let template = self.struct_tab.tab.get(&expected_template);
+                                    if let Some(template) = template {
+                                        let mut params: Vec<String> = template.generic_params.iter()
+                                            .map(|g| g.name.clone()).collect();
+                                        params.sort();
+                                        for (param, arg) in params.into_iter().zip(info.generic_args.iter()) {
+                                            substitutions.insert(param, arg.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         let arg_typename = format!("{}", overload.args[idx].ftype)
                             .rsplit("::").next().unwrap().to_owned();
@@ -1070,7 +1095,8 @@ impl SemAn {
                             flag_matches = false;
                             break;
                         }
-                        if self.expect_type != FType::none && self.expect_type != overload.ret_type
+                        let resolved_ret = substitute_ftype(&overload.ret_type, &substitutions);
+                        if self.expect_type != FType::none && self.expect_type != resolved_ret
                         {
                             flag_matches = false;
                             break;
@@ -1099,10 +1125,11 @@ impl SemAn {
                             ));
                             return exprdat;
                         } 
+                        let resolved_ret = substitute_ftype(&overload.ret_type, &substitutions);
                         self.matched_overloads.insert(*idx, 
-                            (ov_idx_op, overload.ret_type.clone())
+                            (ov_idx_op, resolved_ret.clone())
                         );
-                        exprdat.ftype = overload.ret_type.clone();
+                        exprdat.ftype = resolved_ret;
                         return exprdat;
                     }
                 }
@@ -1396,12 +1423,18 @@ impl SemAn {
                 }
             }
             AstNode::Structure { name, fields, public, attrs } => {
+                let old_generic = self.in_generic.clone();
+                self.in_generic = name.get_generics().into_iter()
+                    .map(|g| (g.name.clone(), g))
+                    .collect();
                 for f in fields {
                     match f {
                         AstNode::StructField { name, ftype, public } => {
                             if let Some(sn) = ftype.if_struct() {
                                 let paths = self.get_use_paths();
-                                if self.struct_tab.get(&sn, &paths).is_none() {
+                                let unresolved_generic = self.in_generic.keys()
+                                    .any(|generic| sn.ends_with(&format!("::{}", generic)));
+                                if self.struct_tab.get(&sn, &paths).is_none() && !unresolved_generic {
                                     logger.send(LogMessage::new(
                                         LogLevel::Error(ErrKind::UnknownStruct(
                                             sn.to_owned()
@@ -1423,10 +1456,15 @@ impl SemAn {
                         }
                     } 
                 }
+                self.in_generic = old_generic;
             }
             AstNode::StructImpl { name, body, Trait } => {
                 let old_mod = self.module.clone();
+                let old_generic = self.in_generic.clone();
                 self.module = name.path_to_string();
+                self.in_generic = name.get_generics().into_iter()
+                    .map(|g| (g.name.clone(), g))
+                    .collect();
                 
                 self.in_impl = name.path_to_string();
                 let _ed = self.analyze_expr(&*body, &logger.clone());
@@ -1439,6 +1477,7 @@ impl SemAn {
                     );
                 }
                 self.in_impl = String::new();
+                self.in_generic = old_generic;
 
                 self.module = old_mod; 
             }
@@ -1479,7 +1518,9 @@ impl SemAn {
                     }
                 };
 
-                let func_name = format!("{}::{}", struct_name, name.path_to_string());
+                let func_name = format!("{}::{}",
+                    self.struct_tab.template_name(&struct_name),
+                    name.path_to_string());
 
                 let mut res_args = Vec::new();
                 let first = match self_ft {
@@ -1893,6 +1934,9 @@ pub struct StructInfo {
     pub max_alignment: usize,
     pub public: bool,
     pub attrs: Vec<Attr>,
+    pub generic_params: Vec<GenericType>,
+    pub generic_origin: Option<String>,
+    pub generic_args: Vec<FType>,
 }
 
 impl StructInfo {
@@ -1907,6 +1951,9 @@ impl StructInfo {
                     max_alignment: 1,
                     public: *public,
                     attrs: attrs.clone(),
+                    generic_params: name.get_generics().into_iter().collect(),
+                    generic_origin: None,
+                    generic_args: Vec::new(),
                 }
             }
             other => panic!("Internal: expected struct, found {:?}", other),
@@ -1967,6 +2014,74 @@ pub struct StructField {
     pub public: bool,
 }
 
+pub fn substitute_ftype(ft: &FType, substitutions: &HashMap<String, FType>) -> FType {
+    match ft {
+        FType::Generic(name) => substitutions.get(name).cloned()
+            .unwrap_or_else(|| ft.clone()),
+        FType::Struct(name) => substitute_named_struct(FType::Struct, name, substitutions),
+        FType::StructPtr(name) => substitute_named_struct(FType::StructPtr, name, substitutions),
+        FType::StructHeapPtr(name) => substitute_named_struct(FType::StructHeapPtr, name, substitutions),
+        FType::Array(el, count) => FType::Array(
+            Box::new(substitute_ftype(el, substitutions)), *count
+        ),
+        other => other.clone(),
+    }
+}
+
+fn substitute_named_struct(
+    ctor: fn(String) -> FType,
+    name: &str,
+    substitutions: &HashMap<String, FType>,
+) -> FType {
+    if let Some(ft) = substitutions.get(name) {
+        return match ctor(String::new()) {
+            FType::Struct(_) => ft.clone(),
+            FType::StructPtr(_) => match ft {
+                FType::Struct(name) | FType::StructPtr(name) | FType::StructHeapPtr(name)
+                    => FType::StructPtr(name.clone()),
+                _ => ft.clone(),
+            },
+            FType::StructHeapPtr(_) => match ft {
+                FType::Struct(name) | FType::StructPtr(name) | FType::StructHeapPtr(name)
+                    => FType::StructHeapPtr(name.clone()),
+                _ => ft.clone(),
+            },
+            _ => ft.clone(),
+        };
+    }
+    for (param, arg) in substitutions {
+        if name == param {
+            return match ctor(String::new()) {
+                FType::Struct(_) => arg.clone(),
+                FType::StructPtr(_) => match arg {
+                    FType::Struct(name) | FType::StructPtr(name) | FType::StructHeapPtr(name)
+                        => FType::StructPtr(name.clone()),
+                    _ => FType::Ptr,
+                },
+                FType::StructHeapPtr(_) => match arg {
+                    FType::Struct(name) | FType::StructPtr(name) | FType::StructHeapPtr(name)
+                        => FType::StructHeapPtr(name.clone()),
+                    _ => FType::Ptr,
+                },
+                _ => arg.clone(),
+            };
+        }
+        let suffix = format!("::{}", param);
+        if let Some(base) = name.strip_suffix(&suffix) {
+            return match ctor(String::new()) {
+                FType::Struct(_) => ctor(fparse::generic_instance_name(base, &[arg.clone()])),
+                FType::StructPtr(_) | FType::StructHeapPtr(_) => match arg {
+                    FType::Struct(name) | FType::StructPtr(name) | FType::StructHeapPtr(name)
+                        => ctor(name.clone()),
+                    _ => FType::Ptr,
+                },
+                _ => ctor(name.to_owned()),
+            };
+        }
+    }
+    ctor(name.to_owned())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LayoutMark {
     Visiting,
@@ -1998,6 +2113,60 @@ impl StructTable {
         return None;
     }
 
+    pub fn template_name(&self, name: &str) -> String {
+        self.tab.get(name)
+            .and_then(|info| info.generic_origin.clone())
+            .unwrap_or_else(|| name.to_owned())
+    }
+
+    pub fn instantiate_many(&mut self, uses: &[(String, Vec<FType>)]) {
+        let mut pending: Vec<(String, Vec<FType>)> = uses.to_vec();
+        let mut cursor = 0;
+        while cursor < pending.len() {
+            let (base, args) = pending[cursor].clone();
+            cursor += 1;
+
+            if args.iter().any(|arg| matches!(arg, FType::Generic(_))) {
+                continue;
+            }
+            let template = match self.tab.get(&base).cloned() {
+                Some(info) if !info.generic_params.is_empty() => info,
+                _ => continue,
+            };
+            if template.generic_params.len() != args.len() {
+                continue;
+            }
+
+            let name = fparse::generic_instance_name(&base, &args);
+            if self.tab.contains_key(&name) {
+                continue;
+            }
+
+            let mut substitutions = HashMap::new();
+            let mut params: Vec<String> = template.generic_params.iter()
+                .map(|g| g.name.clone())
+                .collect();
+            params.sort();
+            for (param, arg) in params.iter().zip(args.iter()) {
+                substitutions.insert(param.clone(), arg.clone());
+            }
+
+            let mut concrete = template.clone();
+            concrete.name = name.clone();
+            concrete.generic_params.clear();
+            concrete.generic_origin = Some(base.clone());
+            concrete.generic_args = args.clone();
+            for field in concrete.fields.values_mut() {
+                field.ftype = substitute_ftype(&field.ftype, &substitutions);
+            }
+            let nested: Vec<(String, Vec<FType>)> = concrete.fields.values()
+                .filter_map(|field| generic_use_from_ftype(&field.ftype, self))
+                .collect();
+            self.tab.insert(name, concrete);
+            pending.extend(nested);
+        }
+    }
+
     pub fn from_several(tabs: &Vec<StructTable>) -> StructTable {
         let mut res = StructTable::new();
         for v in tabs {
@@ -2017,7 +2186,10 @@ impl StructTable {
     }
 
     pub fn recalc_layouts(&mut self) -> Result<(), String> {
-        let names: Vec<String> = self.tab.keys().cloned().collect();
+        let names: Vec<String> = self.tab.iter()
+            .filter(|(_, info)| info.generic_params.is_empty())
+            .map(|(name, _)| name.clone())
+            .collect();
         let mut marks: HashMap<String, LayoutMark> = HashMap::new();
 
         for name in names {
@@ -2108,12 +2280,50 @@ impl StructTable {
                 self.layout_struct(&sn, marks)
             }
 
+            FType::Generic(_) => Err("generic field reached concrete layout".to_owned()),
             other => Err(format!("layout not implemented for {:?}", other)),
         }
     }
 
     fn align_up(offset: usize, align: usize) -> usize {
         (offset + align - 1) & !(align - 1)
+    }
+}
+
+fn generic_use_from_ftype(ft: &FType, table: &StructTable) -> Option<(String, Vec<FType>)> {
+    let name = ft.if_struct()?;
+    for (template_name, template) in &table.tab {
+        if template.generic_params.len() != 1 {
+            continue;
+        }
+        let prefix = format!("{}::", template_name);
+        if let Some(raw_arg) = name.strip_prefix(&prefix) {
+            if let Some(arg) = type_from_key(raw_arg) {
+                return Some((template_name.clone(), vec![arg]));
+            }
+        }
+    }
+    None
+}
+
+fn type_from_key(raw: &str) -> Option<FType> {
+    match raw {
+        "uint" => Some(FType::uint),
+        "int" => Some(FType::int),
+        "double" => Some(FType::double),
+        "bool" => Some(FType::bool),
+        "single" => Some(FType::single),
+        "u32" => Some(FType::u32),
+        "i32" => Some(FType::i32),
+        "ushort" => Some(FType::ushort),
+        "ishort" => Some(FType::ishort),
+        "ubyte" => Some(FType::ubyte),
+        "ibyte" => Some(FType::ibyte),
+        "ptr" => Some(FType::Ptr),
+        raw if raw.starts_with("s_") => Some(FType::Struct(raw[2..].to_owned())),
+        raw if raw.starts_with("ptr_") => Some(FType::StructPtr(raw[4..].to_owned())),
+        raw if raw.starts_with("h_") => Some(FType::StructHeapPtr(raw[2..].to_owned())),
+        _ => None,
     }
 }
 
