@@ -455,7 +455,9 @@ impl CodeGen {
                     self.expected_type = FType::none;
                     self.need_addr = old_needaddr;
 
-                    if matches!(gd.ftype, FType::Struct(_)) && gd.var.is_some() {
+                    if is_move_type(&func_dat.args[idx].ftype) && gd.var.is_some()
+                        || matches!(func_dat.args[idx].ftype, FType::Generic(_))
+                            && is_move_type(&gd.ftype) && gd.var.is_some() {
                         let var_name = gd.var.clone().unwrap();
                         if let Some(v) = self.symb_table.get_mut(&var_name) {
                             v.1.moved = Some(0);
@@ -555,9 +557,16 @@ impl CodeGen {
                 }
             }
             AstNode::Assignment { name, val, ft } => {
+                let source_var = match &*val {
+                    AstNode::Variable(var) => Some(var.clone()),
+                    _ => None,
+                };
                 let owner = match &*val {
                     AstNode::Call { func_name, args, idx } => true,
                     AstNode::StructCreate { name, field_vals } => true,
+                    AstNode::Variable(var) => self.symb_table.get(var)
+                        .map(|(_, sym)| sym.owner && is_move_type(&sym.ftype))
+                        .unwrap_or(false),
                     other => false,
                 };
 
@@ -577,6 +586,14 @@ impl CodeGen {
                     other => other
                 };
                 res.ftype = res_ft.clone();
+
+                if owner {
+                    if let Some(var) = source_var {
+                        if let Some(sym) = self.symb_table.get_mut(&var) {
+                            sym.1.moved = Some(0);
+                        }
+                    }
+                }
 
                 let mut symb = FSymbol::new(
                     name.clone(), 
@@ -2184,6 +2201,10 @@ fn contains_generic_ftype(ft: &FType) -> bool {
         FType::Array(el, _) => contains_generic_ftype(el),
         _ => false,
     }
+}
+
+fn is_move_type(ft: &FType) -> bool {
+    matches!(ft, FType::Struct(_) | FType::StructHeapPtr(_))
 }
 
 #[derive(Debug)] 

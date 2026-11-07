@@ -78,11 +78,12 @@ func main() {
 
     print_both(&test); // would change b to 289 btw
 
-    print_both_pass(test); // trick to avoid moving (unsafe)
-
     printintrin test.a;
     printintrin test.b;
     printintrin test.c;
+
+    // Passing a struct by value destructively moves it; use it last.
+    print_both_pass(test);
 
     // Use this intrinsic with @ to get size of type;
     // without @ - size of variable

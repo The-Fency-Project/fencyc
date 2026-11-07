@@ -55,16 +55,16 @@ pub enum FType {
     nil,                        // real voxvm thing! (good old times, now deprecated)
     Array(Box<FType>, usize), // type, count 
                                                           
-    Struct(String),
-    StructPtr(String),
-    StructHeapPtr(String),
+    Struct(String),       // owning by-value aggregate; destructive move
+    StructPtr(String),    // non-owning safe raw pointer; trivial copy
+    StructHeapPtr(String),// owning heap pointer; destructive move
     ubyte,
     ibyte,
     u32,
     i32,
     single,
     any, // some kind of wildcard for seman 
-    Ptr, 
+    Ptr,                  // non-owning FFI pointer; trivial copy
     ushort,
     ishort,
     TypePtr(Box<FType>),
@@ -428,6 +428,12 @@ impl SemAn {
                 let rightdat = self.analyze_expr(&AstRoot::new(*val.clone(), self.line), logger);
                 self.expect_type = FType::none;
 
+                if Self::is_move_type(&rightdat.ftype) {
+                    if let Some(var) = rightdat.var_name.as_ref() {
+                        self.try_move(&mut logger.clone(), var, self.line);
+                    }
+                }
+
                 if self.symb_table.get(&name).is_some() {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::Redeclaration(name.to_owned())),
@@ -661,7 +667,7 @@ impl SemAn {
                 );
                 let newval_data = self.analyze_expr(&newval, logger);
                 match &newval_data.ftype {
-                    FType::Struct(s) if newval_data.var_name.is_some() => {
+                    ft if Self::is_move_type(ft) && newval_data.var_name.is_some() => {
                         self.try_move(
                             &mut logger.clone(),
                             &newval_data.var_name.unwrap(),
@@ -1036,9 +1042,11 @@ impl SemAn {
                         .map(|e| {(e.name.clone(), e.clone())})
                         .collect();
                     let mut substitutions: HashMap<String, FType> = HashMap::new();
+                    let mut arg_vars: Vec<Option<String>> = Vec::with_capacity(args.len());
 
                     for (idx, arg) in args.iter().enumerate() {
                         let argdat = self.analyze_expr(arg, logger); 
+                        arg_vars.push(argdat.var_name.clone());
 
                         if let FType::Generic(name) = &overload.args[idx].ftype {
                             substitutions.insert(name.clone(), argdat.ftype.clone());
@@ -1129,6 +1137,18 @@ impl SemAn {
                         self.matched_overloads.insert(*idx, 
                             (ov_idx_op, resolved_ret.clone())
                         );
+                        for (arg_idx, var) in arg_vars.iter().enumerate() {
+                            if let Some(var) = var {
+                                let expected = &overload.args[arg_idx].ftype;
+                                if Self::is_move_type(expected)
+                                    || matches!(expected, FType::Generic(_))
+                                        && self.symb_table.get(var)
+                                            .map(|(_, sym)| Self::is_move_type(&sym.ftype))
+                                            .unwrap_or(false) {
+                                    self.try_move(&mut logger.clone(), var, self.line);
+                                }
+                            }
+                        }
                         exprdat.ftype = resolved_ret;
                         return exprdat;
                     }
@@ -1142,6 +1162,11 @@ impl SemAn {
             }
             AstNode::ReturnVal { val } => {
                 let retval = self.analyze_expr(&*val, logger);
+                if Self::is_move_type(&retval.ftype) {
+                    if let Some(var) = retval.var_name.as_ref() {
+                        self.try_move(&mut logger.clone(), var, self.line);
+                    }
+                }
                 
                 let paths = self.get_use_paths();
 
@@ -1341,7 +1366,7 @@ impl SemAn {
                                 );
                             };
                         }
-                        FType::Struct(snm) => {
+                        ft if Self::is_move_type(ft) => {
                             if let Some(vn) = field_ed.var_name {
                                 self.try_move(
                                     &mut logger.clone(),
@@ -1897,8 +1922,10 @@ impl SemAn {
             ));
         }
 
+        // Ownership is intentionally shallow: owning structs and heap pointers
+        // become unusable after transfer; raw pointers remain copyable.
         match &var_ref.ftype {
-            FType::Struct(_) => {
+            FType::Struct(_) | FType::StructHeapPtr(_) => {
                var_ref.moved = Some(line);
             }
             FType::Array(el, _) if matches!(**el, FType::Struct(_)) => {
@@ -1906,6 +1933,10 @@ impl SemAn {
             }
             other => {}
         }
+    }
+
+    fn is_move_type(ft: &FType) -> bool {
+        matches!(ft, FType::Struct(_) | FType::StructHeapPtr(_))
     }
 }
 

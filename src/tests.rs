@@ -166,9 +166,9 @@ fn test_structs_example() {
     let expected = "\
 5
 289
-12
 5
 289
+12
 12
 16
 124";
