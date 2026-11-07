@@ -149,13 +149,20 @@ impl CodeGen {
             .iter()
             .filter(|(_, info)| info.generic_params.is_empty())
             .map(|(name, info)| {
-                let items = info.fields.iter()
+                let items = if info.is_union() || info.is_enum() {
+                    let mut payload = info.size.saturating_sub(if info.is_enum() { 8 } else { 0 });
+                    if info.is_enum() {
+                        vec![(FType::uint, 1), (FType::ubyte, payload)]
+                    } else {
+                        vec![(FType::ubyte, info.size)]
+                    }
+                } else { info.fields.iter()
                     .map(|field| match &field.1.ftype {
                         FType::Array(el, 0) => (FType::Ptr, 1),
                         FType::Array(el, count) => ((*el.clone()), *count),
                         other => (other.clone(), 1),
                     })
-                    .collect();
+                    .collect() };
                 (name.clone(), info.max_alignment, items)
             })
             .collect();
@@ -391,6 +398,33 @@ impl CodeGen {
                 self.symb_table.exit_scope();
             }
             AstNode::Call { func_name, args, idx } => {
+                let requested_name = func_name.path_to_string();
+                if let Some((enum_name, variant)) = requested_name.rsplit_once("::") {
+                    let paths = self.get_use_paths();
+                    if let Some(info) = self.struct_tab.get(enum_name, &paths) {
+                        if info.is_enum() {
+                            if let Some(field) = info.fields.get(variant) {
+                                let align = match info.max_alignment { ..5 => 4, 5..9 => 8, _ => 16 };
+                                let ptr = self.new_temp(&FType::Ptr);
+                                self.fbuild.assign_instr(ptr.clone(), FType::Ptr,
+                                    FInstr::Alloca(align, info.size as u64));
+                                let disc = info.fields.keys().position(|v| v == variant).unwrap_or(0);
+                                self.fbuild.add_instr(FInstr::Store(
+                                    ptr.clone(), FValue::new(FVal::UConst(disc as u64), FType::uint), FType::uint));
+                                if !matches!(field.ftype, FType::none) {
+                                    let payload = self.gen_expr(args[0].node.clone());
+                                    let addr = self.new_temp(&FType::Ptr);
+                                    self.fbuild.assign_instr(addr.clone(), FType::Ptr,
+                                        FInstr::BinaryOp(IRBinOp::Add, ptr.clone(), FValue::new(FVal::UConst(field.offset as u64), FType::Usize)));
+                                    self.fbuild.add_instr(FInstr::Store(addr, payload.val.unwrap(), payload.ftype));
+                                }
+                                res.val = Some(ptr);
+                                res.ftype = FType::Struct(info.name.clone());
+                                return res;
+                            }
+                        }
+                    }
+                }
                 let (ov_idx, ret_type) = match self
                         .matched_overloads.get(&idx) {
                     Some(f) => {

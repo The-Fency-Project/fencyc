@@ -576,6 +576,18 @@ impl FcParser {
                 res
             }
 
+            Tok::Keyword(Kword::Union) => {
+                let res = self.parse_union();
+                self.structs.push_from_astn(&res);
+                res
+            }
+
+            Tok::Keyword(Kword::Enum) => {
+                let res = self.parse_enum();
+                self.structs.push_from_astn(&res);
+                res
+            }
+
             Tok::Keyword(Kword::Impl) => {
                 let res = self.parse_impl();
                 res
@@ -1279,6 +1291,51 @@ impl FcParser {
         }
 
         res
+    }
+
+    fn parse_union(&mut self) -> AstNode {
+        let name_start = self.expect_idt().expect("Expected union name");
+        let name = self.parse_path(format!("{}::{}", self.curmod, name_start));
+        let mut fields = self.parse_struct_fields();
+        let attrs = vec![Attr::Custom("union".into())];
+        AstNode::Structure {
+            name: Box::new(name),
+            fields: fields.drain(..).collect(),
+            public: self.prev_flags.contains(&ParseFlags::Public),
+            attrs,
+        }
+    }
+
+    fn parse_enum(&mut self) -> AstNode {
+        let name_start = self.expect_idt().expect("Expected enum name");
+        let name = self.parse_path(format!("{}::{}", self.curmod, name_start));
+        self.expect(Tok::LCurBr);
+        let mut fields = Vec::new();
+        loop {
+            if self.peek_is(Tok::RCurBr) {
+                self.consume();
+                break;
+            }
+            let variant = self.expect_idt().expect("Expected enum variant");
+            let ftype = if self.peek_is(Tok::LPar) {
+                self.consume();
+                let ty = self.parse_ftype();
+                self.expect(Tok::RPar);
+                ty
+            } else {
+                FType::none
+            };
+            fields.push(AstNode::StructField { name: variant, ftype, public: true });
+            if self.peek_is(Tok::Comma) || self.peek_is(Tok::Semicol) {
+                self.consume();
+            }
+        }
+        AstNode::Structure {
+            name: Box::new(name),
+            fields,
+            public: self.prev_flags.contains(&ParseFlags::Public),
+            attrs: vec![Attr::Custom("enum".into())],
+        }
     }
 
     pub fn parse_struct_create(&mut self, path: &AstNode) -> AstNode {

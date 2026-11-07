@@ -357,6 +357,8 @@ pub enum Kword {
     Impl,
     Usemod,
     Trait,
+    Union,
+    Enum,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -391,6 +393,8 @@ fn match_symb_tok(word: &str) -> Tok {
         "impl" => Tok::Keyword(Kword::Impl),
         "use" => Tok::Keyword(Kword::Usemod),
         "trait" => Tok::Keyword(Kword::Trait),
+        "union" => Tok::Keyword(Kword::Union),
+        "enum" => Tok::Keyword(Kword::Enum),
 
         "_len" => Tok::Intrin(Intrinsic::Len),
         "printintrin" => Tok::Intrin(Intrinsic::Print),

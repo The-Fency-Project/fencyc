@@ -991,6 +991,34 @@ impl SemAn {
                 let f_name_s = func_name.path_to_string();
                 let paths = self.get_use_paths();
 
+                if let Some((enum_name, variant)) = f_name_s.rsplit_once("::") {
+                    if let Some(info) = self.struct_tab.get(enum_name, &paths) {
+                        if info.is_enum() {
+                            if let Some(field) = info.fields.get(variant) {
+                                if args.len() != if matches!(field.ftype, FType::none) { 0 } else { 1 } {
+                                    logger.send(LogMessage::new(
+                                        LogLevel::Error(ErrKind::FuncArgsTypeIncompat(f_name_s.clone())),
+                                        self.line, self.fname.clone()));
+                                    return exprdat;
+                                }
+                                if let Some(arg) = args.first() {
+                                    let actual = self.analyze_expr(arg, logger);
+                                    if actual.ftype != field.ftype {
+                                        logger.send(LogMessage::new(
+                                            LogLevel::Error(ErrKind::MismatchFieldsTypes(
+                                                variant.to_owned(), field.ftype.clone(), actual.ftype)),
+                                            self.line, self.fname.clone()));
+                                        return exprdat;
+                                    }
+                                }
+                                self.matched_overloads.insert(*idx, (None, FType::Struct(info.name.clone())));
+                                exprdat.ftype = FType::Struct(info.name.clone());
+                                return exprdat;
+                            }
+                        }
+                    }
+                }
+
                 // if we're inside generic
                 let mut generic_f = None;
                 let f_name_end = f_name_s.rsplit("::").next().unwrap();
@@ -1334,7 +1362,10 @@ impl SemAn {
                     ));
                 }
 
-                if struct_data.fields.len() != field_vals.len() {
+                let valid_field_count = if struct_data.is_union() { field_vals.len() == 1 } else {
+                    struct_data.fields.len() == field_vals.len()
+                };
+                if !valid_field_count {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::MismatchFieldsCount(
                             struct_data.fields.len(),
@@ -1971,6 +2002,14 @@ pub struct StructInfo {
 }
 
 impl StructInfo {
+    pub fn is_union(&self) -> bool {
+        self.attrs.contains(&Attr::Custom("union".into()))
+    }
+
+    pub fn is_enum(&self) -> bool {
+        self.attrs.contains(&Attr::Custom("enum".into()))
+    }
+
     pub fn from_astn(astn: &AstNode) -> StructInfo {
         match astn {
             AstNode::Structure { name, fields, public, attrs } => {
@@ -2018,6 +2057,7 @@ impl StructInfo {
 
     fn alignment_of(ft: &FType) -> usize {
         match ft {
+            FType::none => 1,
             FType::strconst | FType::int | FType::uint | FType::double 
                 | FType::StructPtr(_) | FType::StructHeapPtr(_) | FType::Ptr => {
                 8
@@ -2258,17 +2298,31 @@ impl StructTable {
                 .collect()
         };
 
-        let mut offset = 0usize;
+        let is_union = self.tab.get(name).map(|i| i.is_union()).unwrap_or(false);
+        let is_enum = self.tab.get(name).map(|i| i.is_enum()).unwrap_or(false);
+        let mut offset = if is_enum { 8 } else { 0 };
         let mut max_align = 1usize;
+        let mut max_union_size = 0usize;
         let mut computed_offsets: Vec<(String, usize)> = Vec::with_capacity(fields_snapshot.len());
 
         for (field_name, ftype) in fields_snapshot {
             let (field_size, field_align) = self.type_layout(&ftype, marks)?;
 
             max_align = max_align.max(field_align);
-            offset = Self::align_up(offset, field_align);
-            computed_offsets.push((field_name, offset));
-            offset += field_size;
+            if is_union {
+                computed_offsets.push((field_name, 0));
+                max_union_size = max_union_size.max(field_size);
+            } else {
+                offset = Self::align_up(offset, field_align);
+                computed_offsets.push((field_name, offset));
+                offset += field_size;
+            }
+        }
+
+        if is_union { offset = max_union_size; }
+        if is_enum {
+            max_align = max_align.max(8);
+            offset = Self::align_up(offset, max_align);
         }
 
         let struct_size = Self::align_up(offset, max_align);
@@ -2311,6 +2365,7 @@ impl StructTable {
                 self.layout_struct(&sn, marks)
             }
 
+            FType::none => Ok((0, 1)),
             FType::Generic(_) => Err("generic field reached concrete layout".to_owned()),
             other => Err(format!("layout not implemented for {:?}", other)),
         }

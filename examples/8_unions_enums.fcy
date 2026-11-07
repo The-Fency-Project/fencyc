@@ -1,0 +1,18 @@
+union Value {
+    pub integer: int
+    floating: double
+}
+
+enum Result {
+    Ok(int),
+    Err(str),
+    None,
+}
+
+func main(argc: uint, argv: [str]) -> int {
+    let value = Value { integer: 3; };
+    printintrin value.integer;
+
+    let result = Result::Ok(7);
+    return 0;
+}
