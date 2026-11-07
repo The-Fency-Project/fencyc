@@ -1,7 +1,7 @@
 use std::{backtrace::Backtrace, collections::{HashMap, HashSet}, ptr::hash, sync::{Arc, Mutex, RwLock}};
 
 use crate::{
-    cli::{CompBackend, InputFlags, Target}, fcparse::fcparse::{self as fparse, AstRoot, Attr, BinaryOp, CmpOp, FuncArg, FuncTable, UnaryOp}, lexer::lexer::Intrinsic, mir::mir::{FBlock, FDataDef, FDataItem, FFunction, FFunctionKind, FInstr, FModule, FTerm, FTypeDef, FVal, FValue, IRBinOp, IRCmpOp, MIRTranslator}, seman::seman::{FSymbol, FType, OverloadTable, StructTable, SymbolTable, VarPosition}
+    cli::{CompBackend, InputFlags, Target}, fcparse::fcparse::{self as fparse, AstRoot, Attr, BinaryOp, CmpOp, FuncArg, FuncTable, UnaryOp}, lexer::lexer::Intrinsic, mir::mir::{FBlock, FDataDef, FDataItem, FFunction, FFunctionKind, FInstr, FModule, FTerm, FTypeDef, FVal, FValue, IRBinOp, IRCmpOp, MIRTranslator}, seman::seman::{substitute_ftype, FSymbol, FType, OverloadTable, StructTable, SymbolTable, VarPosition}
 }; // AstNode;
 use fparse::AstNode;
 use indexmap::IndexSet;
@@ -47,6 +47,7 @@ pub struct CodeGen {
     curmod: String,
     flags: Arc<InputFlags>,
     genfuncs: Arc<HashMap<String, AstRoot>>, // generic functions 
+    genimpls: Arc<HashMap<String, AstRoot>>, // generic struct implementations
     deffered_gen: Vec<AstRoot>, // for generics mostly
     pub prev_gen: Arc<RwLock<IndexSet<String>>>, // which generic functions were already generated 
 }
@@ -54,7 +55,9 @@ pub struct CodeGen {
 impl CodeGen {
     pub fn new(ast: Arc<Vec<AstRoot>>, mo: OverloadTable, 
         fnctb: Arc<FuncTable>, struct_tab: Arc<StructTable>, flags: Arc<InputFlags>,
-        genfuncs: Arc<HashMap<String, AstRoot>>, prev_gen: Arc<RwLock<IndexSet<String>>>) 
+        genfuncs: Arc<HashMap<String, AstRoot>>,
+        genimpls: Arc<HashMap<String, AstRoot>>,
+        prev_gen: Arc<RwLock<IndexSet<String>>>)
         -> CodeGen {
         CodeGen {
             ast: ast,
@@ -79,6 +82,7 @@ impl CodeGen {
             curmod: "main".into(),
             flags: flags,
             genfuncs,
+            genimpls,
             deffered_gen: Vec::new(),
             prev_gen: prev_gen,
         }
@@ -93,6 +97,8 @@ impl CodeGen {
 
     pub fn gen_everything(&mut self, nomain: bool) {
         self.gen_stddat();
+        self.gen_struct_typedefs();
+        self.queue_generic_impls();
         let mut had_main = false;
        
         while let Some(r) = self.ast.get(self.cur_ast) {
@@ -136,6 +142,76 @@ impl CodeGen {
             }
         }
         self.finalize(); 
+    }
+
+    fn gen_struct_typedefs(&mut self) {
+        let defs: Vec<(String, usize, Vec<(FType, usize)>)> = self.struct_tab.tab
+            .iter()
+            .filter(|(_, info)| info.generic_params.is_empty())
+            .map(|(name, info)| {
+                let items = info.fields.iter()
+                    .map(|field| match &field.1.ftype {
+                        FType::Array(el, 0) => (FType::Ptr, 1),
+                        FType::Array(el, count) => ((*el.clone()), *count),
+                        other => (other.clone(), 1),
+                    })
+                    .collect();
+                (name.clone(), info.max_alignment, items)
+            })
+            .collect();
+
+        let mut defs = defs;
+        defs.sort_by_key(|(name, _, _)| name.len());
+        for (name, align, items) in defs {
+            let qname = name.replace("::", "_");
+            if self.module.typedefs.iter().any(|td| td.name == qname) {
+                continue;
+            }
+            self.module.add_typedef(FTypeDef {
+                name: qname,
+                align: Some(align as u64),
+                items,
+            });
+        }
+    }
+
+    fn queue_generic_impls(&mut self) {
+        let mut queued = Vec::new();
+        for (template_name, impl_ast) in self.genimpls.iter() {
+            let template = match self.struct_tab.tab.get(template_name) {
+                Some(info) => info,
+                None => continue,
+            };
+            let mut params: Vec<String> = template.generic_params.iter()
+                .map(|g| g.name.clone())
+                .collect();
+            params.sort();
+            let body = match &impl_ast.node {
+                AstNode::StructImpl { body, .. } => &body.node,
+                _ => continue,
+            };
+            let methods = match body {
+                AstNode::CodeBlock { exprs } => exprs,
+                _ => continue,
+            };
+            for (concrete_name, info) in &self.struct_tab.tab {
+                if info.generic_origin.as_deref() != Some(template_name.as_str()) {
+                    continue;
+                }
+                let substitutions: HashMap<String, FType> = params.iter()
+                    .cloned()
+                    .zip(info.generic_args.iter().cloned())
+                    .collect();
+                for method in methods {
+                    if let Some(specialized) = specialize_method(
+                        &method.node, template_name, concrete_name, &substitutions
+                    ) {
+                        queued.push(AstRoot::new(specialized, method.line));
+                    }
+                }
+            }
+        }
+        self.deffered_gen.extend(queued);
     }
 
     pub fn translate<T: MIRTranslator>(&self, backend: &mut T) 
@@ -210,6 +286,11 @@ impl CodeGen {
                         continue;
                     }
                     for (idx, o) in fdat.iter().enumerate() {
+                        if o.name.get_generics().len() > 0
+                            || o.args.iter().any(|arg| contains_generic_ftype(&arg.ftype))
+                            || contains_generic_ftype(&o.ret_type) {
+                            continue;
+                        }
                         let params = o.args 
                             .iter()
                             .map(|a| a.into_fmir())
@@ -321,8 +402,16 @@ impl CodeGen {
                 };
 
                 let paths = self.get_use_paths();
+                let requested_name = func_name.path_to_string();
+                let lookup_name = if self.func_tab.get_func(&requested_name, &paths).is_some() {
+                    requested_name.clone()
+                } else {
+                    let (owner, method) = requested_name.rsplit_once("::")
+                        .unwrap_or((requested_name.as_str(), ""));
+                    format!("{}::{}", self.struct_tab.template_name(owner), method)
+                };
                 let mut func_dat = self.func_tab
-                    .get_func(&func_name.path_to_string(), &paths)
+                    .get_func(&lookup_name, &paths)
                     .unwrap()
                     .get(ov_idx.unwrap())
                     .unwrap()
@@ -389,7 +478,7 @@ impl CodeGen {
                         let res = self.gen_generic_func(
                             &func_dat.name.path_to_string(),
                             args_ft,
-                            &self.expected_type.clone()
+                            &ret_type
                         );
                         Some(res)
                     }
@@ -399,7 +488,7 @@ impl CodeGen {
 
                 let mut has_rn = false;
                 let mname: String = match self.func_tab
-                        .get_func(&func_name.path_to_string(), &paths) {
+                        .get_func(&lookup_name, &paths) {
                     Some(v) => {
                         let fin_idx = match ov_idx {
                             Some(v) => v,
@@ -409,12 +498,14 @@ impl CodeGen {
                         let f = v.get(fin_idx);
                         let unf = f.unwrap();
                         has_rn = unf.real_name.is_some();
-                        unf.real_name.
-                            clone().
-                            unwrap_or(
+                        if requested_name != lookup_name && !has_rn {
+                            requested_name.replace("::", "_")
+                        } else {
+                            unf.real_name.clone().unwrap_or(
                                 unf.name.path_to_segs().join("_")
                             )
                     }  
+                    }
                     None => {
                         func_name.path_to_segs().join("_")
                     }
@@ -1160,29 +1251,8 @@ impl CodeGen {
                 self.curmod = old_mod;
             }
             AstNode::Structure { name, fields: _, public: _, attrs } => {
-                let name_st = name.path_to_string();
-                let paths = self.get_use_paths();
-                let struct_dat = self.struct_tab.get(&name_st, &paths)
-                    .expect("Can't get struct info");
-
-                let typedef = FTypeDef {
-                    name: name.path_to_segs().join("_"),
-                    align: Some(struct_dat.max_alignment as u64),
-                    items: struct_dat.fields.iter()
-                        .map(|f| { 
-                            let (ftype, count) = match &f.1.ftype {
-                                FType::Array(el, 0) => (FType::Ptr, 1),
-                                FType::Array(el, ct) => (*el.clone(), *ct),
-                                other => (f.1.ftype.clone(), 1),
-                            };
-                            (
-                                ftype,
-                                count,
-                            )
-                        })
-                        .collect(),
-                }; 
-                self.module.add_typedef(typedef);
+                // Struct typedefs are emitted once up front so monomorphized
+                // generic instances that do not have an AST node get a layout too.
             }
             AstNode::StructCreate { name, field_vals } => {
                 let name_st = name.path_to_string();
@@ -1339,7 +1409,9 @@ impl CodeGen {
                 res.ftype = field_info.ftype.clone();
             }
             AstNode::StructImpl { name, body, Trait } => {
+                if name.get_generics().is_empty() {
                 let _gd = self.gen_expr(body.node);
+            }
             }
             AstNode::MethodCall { name, args, idx } => {
                 let first_arg = args.get(0).expect("Expected self");
@@ -2046,6 +2118,71 @@ impl CodeGen {
             }
         }
         resd
+    }
+}
+
+fn specialize_method(
+    node: &AstNode,
+    template_name: &str,
+    concrete_name: &str,
+    substitutions: &HashMap<String, FType>,
+) -> Option<AstNode> {
+    match node {
+        AstNode::Function { name, args, ret_type, body, public } => {
+            let specialized_name = name.path_to_string()
+                .replacen(template_name, concrete_name, 1);
+            Some(AstNode::Function {
+                name: Box::new(AstNode::string_to_path(&specialized_name)),
+                args: args.iter().cloned().map(|mut arg| {
+                    arg.ftype = specialize_method_ftype(
+                        &substitute_ftype(&arg.ftype, substitutions),
+                        template_name,
+                        concrete_name,
+                    );
+                    arg
+                }).collect(),
+                ret_type: specialize_method_ftype(
+                    &substitute_ftype(ret_type, substitutions),
+                    template_name,
+                    concrete_name,
+                ),
+                body: body.clone(),
+                public: *public,
+            })
+        }
+        AstNode::FunctionOverload { func, idx, public } => {
+            specialize_method(func, template_name, concrete_name, substitutions)
+                .map(|func| AstNode::FunctionOverload {
+                    func: Box::new(func),
+                    idx: *idx,
+                    public: *public,
+                })
+        }
+        _ => None,
+    }
+}
+
+fn specialize_method_ftype(ft: &FType, template_name: &str, concrete_name: &str) -> FType {
+    match ft {
+        FType::Struct(name) if name == template_name
+            => FType::Struct(concrete_name.to_owned()),
+        FType::StructPtr(name) if name == template_name
+            => FType::StructPtr(concrete_name.to_owned()),
+        FType::StructHeapPtr(name) if name == template_name
+            => FType::StructHeapPtr(concrete_name.to_owned()),
+        FType::Array(el, count) => FType::Array(
+            Box::new(specialize_method_ftype(el, template_name, concrete_name)),
+            *count,
+        ),
+        other => other.clone(),
+    }
+}
+
+fn contains_generic_ftype(ft: &FType) -> bool {
+    match ft {
+        FType::Generic(_) => true,
+        FType::Array(el, _) => contains_generic_ftype(el),
+        _ => false,
     }
 }
 

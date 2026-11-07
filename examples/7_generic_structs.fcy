@@ -1,0 +1,29 @@
+// Generic structs are monomorphized at each concrete use site.
+struct Box<T> {
+    pub value: T
+}
+
+struct Pair<A, B> {
+    pub first: A
+    pub second: B
+}
+
+impl Box<T> {
+    pub func get(self: *Box) -> T {
+        return self.value;
+    }
+}
+
+func main(argc: uint, argv: [str]) -> int {
+    let boxed = Box<int> {
+        value: 42;
+    };
+    let pair = Pair<uint, int> {
+        first: 7u;
+        second: boxed.get();
+    };
+
+    printintrin pair.first;
+    printintrin pair.second;
+    return 0;
+}

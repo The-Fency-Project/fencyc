@@ -35,6 +35,9 @@ pub struct FcParser {
     pub structs: StructTable,
     pub traits: TraitTable,
     pub generic_funcs: HashMap<String, AstRoot>,
+    pub generic_impls: HashMap<String, AstRoot>,
+    pub generic_structs: Vec<(String, Vec<FType>)>,
+    generic_params: Vec<String>,
 }
 
 /// Parser based on Pratt parsing algorithm
@@ -52,6 +55,9 @@ impl FcParser {
             structs: StructTable::new(),
             traits: TraitTable::new(),
             generic_funcs: HashMap::new(),
+            generic_impls: HashMap::new(),
+            generic_structs: Vec::new(),
+            generic_params: Vec::new(),
         }
     }
 
@@ -338,6 +344,15 @@ impl FcParser {
                                 Box::new(idx_ast)
                             );
                             buf.push(n);
+                        }
+                        Tok::LAngBr if self.looks_like_generic_path() => {
+                            let path = self.parse_path(idt_cl.clone());
+                            if self.peek_is(Tok::LCurBr) {
+                                let n = self.parse_struct_create(&path);
+                                buf.push(n);
+                            } else {
+                                buf.push(AstNode::Variable(path.path_to_string()));
+                            }
                         }
                         Tok::LCurBr => {
                             let path = self.parse_path(idt_cl.clone()).clone();
@@ -668,6 +683,7 @@ impl FcParser {
             false => vec![first]
         };
         let mut generics = HashSet::new();
+        let mut generic_order = Vec::new();
 
         while let Some(tok) = self.peek() {
             match &tok.tok {
@@ -721,6 +737,7 @@ impl FcParser {
                             }
                         }
                         let g = GenericType::new(name, bounds);
+                        generic_order.push(g.name.clone());
                         generics.insert(g);
                     }
                 }  
@@ -732,6 +749,7 @@ impl FcParser {
         AstNode::Path { 
             segments,
             generic: generics,
+            generic_order,
         }
     }
 
@@ -830,6 +848,24 @@ impl FcParser {
         let tok = self.tokens.get(self.pos); 
         self.pos += 1;                      
         tok
+    }
+
+    fn looks_like_generic_path(&self) -> bool {
+        let mut depth = 0usize;
+        for idx in self.pos..self.tokens.len() {
+            match &self.tokens[idx].tok {
+                Tok::LAngBr => depth += 1,
+                Tok::RAngBr if depth > 0 => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return matches!(self.tokens.get(idx + 1).map(|t| &t.tok),
+                            Some(Tok::LCurBr) | Some(Tok::LPar));
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -942,6 +978,15 @@ impl FcParser {
 
         let name = self.parse_path(name_start_mod); 
 
+        let mut active_generic_params = self.generic_params.clone();
+        active_generic_params.extend(name.get_generic_names());
+        active_generic_params.sort();
+        active_generic_params.dedup();
+        let old_generic_params = std::mem::replace(
+            &mut self.generic_params,
+            active_generic_params,
+        );
+
         let args = self.parse_func_args();
 
         let ret_type = self.parse_func_rettype();
@@ -956,21 +1001,25 @@ impl FcParser {
                 ));
             }
 
-            (AstNode::Function { 
+            let result = AstNode::Function {
                 name: Box::new(name.clone()), 
                 args: args, 
                 ret_type: ret_type, 
                 body: Box::new(body.node),
                 public: is_public 
-            }, name.path_to_string())
+            };
+            self.generic_params = old_generic_params;
+            (result, name.path_to_string())
         } else {
-            (AstNode::ExternedFunc { 
+            let result = AstNode::ExternedFunc {
                 name: Box::new(name.clone()),
                 args: args, 
                 ret_type: ret_type,
                 public: is_public,
                 real_name: Box::new(AstNode::string_to_path(&name_start)),
-            }, name.path_to_string())
+            };
+            self.generic_params = old_generic_params;
+            (result, name.path_to_string())
         }
     }
 
@@ -1000,6 +1049,9 @@ impl FcParser {
                         panic!("{}: expected typename for arg", self.line)}
                     );
                     let el_ft = match_ftype(&arg_typename)
+                        .or_else(|| self.generic_params.iter()
+                            .find(|g| *g == &arg_typename)
+                            .map(|g| FType::Generic(g.clone())))
                         .unwrap_or_else(|| {
                         panic!("{}: unknown type {}", self.line, arg_typename)}
                     );
@@ -1042,40 +1094,57 @@ impl FcParser {
 
         let is_h = arg_typename_start.starts_with("h_");
         let is_s = arg_typename_start.starts_with("s_");
-        let arg_typename = match (is_s, is_ptr, is_h) {
-            (true, false, false) => {
-                let path_start = arg_typename_start;
-                let path = self.parse_path(path_start);
-                format!("{}", path
-                    .prep_module_at(&self.curmod, 2)
-                    .path_to_string())
-            } 
-            (false, true, false) => {
-                let path = self.parse_path(arg_typename_start);
-                format!("ptr_{}", path
-                    .prep_module_at(&self.curmod, 0)
-                    .path_to_string())
-            }
-            (false, false, true) => {
-                let path_start = arg_typename_start;
-                let path = self.parse_path(path_start);
-                format!("{}", path
-                    .prep_module_at(&self.curmod, 2)
-                    .path_to_string())
 
+        let is_generic_name = self.generic_params.iter()
+            .any(|g| g == if is_s || is_h { &arg_typename_start[2..] } else { &arg_typename_start });
+
+        let mut ft = if is_generic_name && (is_s || is_h || is_ptr) {
+            if is_h {
+                FType::StructHeapPtr(arg_typename_start[2..].to_owned())
+            } else if is_ptr {
+                FType::StructPtr(arg_typename_start.clone())
+            } else {
+                FType::Struct(arg_typename_start[2..].to_owned())
             }
-            (false, false, false) => {
-                arg_typename_start
+        } else if is_s || is_h || is_ptr {
+            let path = self.parse_path(arg_typename_start.clone())
+                .prep_module_at(&self.curmod, if is_ptr { 0 } else { 2 });
+            let base = strip_type_prefix(&path.path_to_string());
+            let generic_names = path.get_generic_names();
+            if !generic_names.is_empty() {
+                let args: Vec<FType> = generic_names.iter()
+                    .map(|arg| self.generic_arg_type(arg))
+                    .collect();
+                self.generic_structs.push((base.clone(), args.clone()));
+                let concrete = generic_instance_name(&base, &args);
+                if is_ptr {
+                    FType::StructPtr(concrete)
+                } else if is_h {
+                    FType::StructHeapPtr(concrete)
+                } else {
+                    FType::Struct(concrete)
             }
-            _other => {
-                unreachable!()
-            }
+            } else {
+                let typed = if is_ptr {
+                    format!("ptr_{}", base)
+                } else if is_s {
+                    format!("s_{}", base)
+                } else {
+                    format!("h_{}", base)
         };
-
-        let ft = match_ftype(&arg_typename)
+                match_ftype(&typed).unwrap_or_else(|| {
+                    panic!("{}: unknown type {}", self.line, typed)
+                })
+            }
+        } else {
+            match_ftype(&arg_typename_start)
+                .or_else(|| self.generic_params.iter()
+                    .find(|g| *g == &arg_typename_start)
+                    .map(|g| FType::Generic(g.clone())))
             .unwrap_or_else(|| {
-            panic!("{}: unknown type {}", self.line, arg_typename)}
-        );
+                    panic!("{}: unknown type {}", self.line, arg_typename_start)
+                })
+        };
 
         if is_arr {
             if self.peek_is(Tok::Semicol) {
@@ -1095,6 +1164,29 @@ impl FcParser {
             }
         } else {
             ft
+        }
+    }
+
+    fn generic_arg_type(&self, arg: &str) -> FType {
+        if let Some(ft) = match_ftype(arg) {
+            return match ft {
+                FType::Struct(st) => FType::Struct(self.qualify_generic_struct(&st)),
+                FType::StructPtr(st) => FType::StructPtr(self.qualify_generic_struct(&st)),
+                FType::StructHeapPtr(st) => FType::StructHeapPtr(self.qualify_generic_struct(&st)),
+                other => other,
+            };
+        }
+        if self.generic_params.iter().any(|g| g == arg) {
+            return FType::Generic(arg.to_owned());
+        }
+        FType::Struct(self.qualify_generic_struct(arg))
+    }
+
+    fn qualify_generic_struct(&self, name: &str) -> String {
+        if name.contains("::") {
+            name.to_owned()
+        } else {
+            format!("{}::{}", self.curmod, name)
         }
     }
 
@@ -1129,7 +1221,14 @@ impl FcParser {
 
         let name = self.parse_path(name_start_mod);
 
+        let old_generic_params = std::mem::replace(
+            &mut self.generic_params,
+            name.get_generic_names(),
+        );
+
         let fields = self.parse_struct_fields();
+
+        self.generic_params = old_generic_params;
 
         let attrs: Vec<Attr> = self.prev_flags.iter().map(|f| {
             match &f {
@@ -1188,8 +1287,24 @@ impl FcParser {
             true => path.clone(),
             false => {
                 st.insert_str(0, &format!("{}::", self.curmod));
-                AstNode::string_to_path(&st)
+                let mut p = AstNode::string_to_path(&st);
+                p.add_generics(path.get_generics());
+                if let AstNode::Path { generic_order, .. } = &mut p {
+                    *generic_order = path.get_generic_names();
+                }
+                p
             }
+        };
+
+        let fin_path = if !fin_path.get_generics().is_empty() {
+            let args = fin_path.get_generic_names().into_iter()
+                .map(|arg| self.generic_arg_type(&arg))
+                .collect::<Vec<_>>();
+            let base = fin_path.path_to_string();
+            self.generic_structs.push((base.clone(), args.clone()));
+            AstNode::string_to_path(&generic_instance_name(&base, &args))
+        } else {
+            fin_path
         };
 
         self.expect(Tok::LCurBr);
@@ -1246,26 +1361,38 @@ impl FcParser {
         self.prev_flags.insert(ParseFlags::StructImpl(st_name.clone()));
 
         let old_mod = self.curmod.clone();
+        let old_generic_params = std::mem::replace(
+            &mut self.generic_params,
+            name_struct.get_generic_names(),
+        );
         self.curmod = st_name.clone();
         let body = self.parse_expr(0);
         self.curmod = old_mod;
+        self.generic_params = old_generic_params;
         
         self.prev_flags.remove(&ParseFlags::StructImpl(st_name.clone()));
 
-        if !trait_impl {
+        let result = if !trait_impl {
             AstNode::StructImpl {
                 name: Box::new(name),
                 body: Box::new(body),
                 Trait: None,
             }
         } else {
-            self.prev_flags.remove(&ParseFlags::TraitImpl(st_name));
+                self.prev_flags.remove(&ParseFlags::TraitImpl(st_name.clone()));
             AstNode::StructImpl {
-                name: Box::new(name_struct),
+                name: Box::new(name_struct.clone()),
                 body: Box::new(body),
                 Trait: Some(Box::new(name)),
             }
+        };
+        if !name_struct.get_generics().is_empty() {
+            self.generic_impls.insert(
+                st_name,
+                AstRoot::new(result.clone(), self.line),
+            );
         }
+        result
     }
 
     fn path_helper(&mut self) -> AstNode {
@@ -1283,6 +1410,9 @@ impl FcParser {
                 let withmod = format!("{}::{}", self.curmod, name_raw_st);
                 let mut wmod = AstNode::string_to_path(&withmod);
                 wmod.add_generics(name_raw.get_generics());
+                if let AstNode::Path { generic_order, .. } = &mut wmod {
+                    *generic_order = name_raw.get_generic_names();
+                }
                 wmod
             }
         };
@@ -1339,6 +1469,7 @@ pub enum AstNode {
     Path {
         segments: Vec<String>,
         generic:  HashSet<GenericType>,
+        generic_order: Vec<String>,
     },
 
     BinaryOp {
@@ -1507,7 +1638,8 @@ impl AstNode {
     pub fn segs_to_path(segs: &Vec<String>) -> AstNode {
         AstNode::Path { 
             segments: segs.clone(), 
-            generic: HashSet::new() 
+            generic: HashSet::new(),
+            generic_order: Vec::new(),
         }
     }
 
@@ -1535,17 +1667,26 @@ impl AstNode {
                 }
             }
         }
-        Self::string_to_path(&st)
+        let mut result = Self::string_to_path(&st);
+        result.add_generics(self.get_generics());
+        if let AstNode::Path { generic_order, .. } = &mut result {
+            *generic_order = self.get_generic_names();
+        }
+        result
     }
 
     pub fn get_generic_names(&self) -> Vec<String> {
         match self {
-            AstNode::Path { segments, generic } => {
-                let mut res = Vec::new();
-                for g in generic {
-                    res.push(g.name.clone());
-                }
+            AstNode::Path { generic_order, generic, .. } => {
+                if !generic_order.is_empty() {
+                    generic_order.clone()
+                } else {
+                    let mut res: Vec<String> = generic.iter()
+                        .map(|g| g.name.clone())
+                        .collect();
+                    res.sort();
                 res
+            }
             }
             other => unreachable!("Expected path node, found {:#?}", other)
         } 
@@ -1553,7 +1694,7 @@ impl AstNode {
 
     pub fn get_generics(&self) -> HashSet<GenericType> {
         match self {
-            AstNode::Path { segments, generic } => {
+            AstNode::Path { generic, .. } => {
                 generic.clone()
             }
             other => unreachable!("Expected path node, found {:#?}", other)
@@ -1562,8 +1703,13 @@ impl AstNode {
 
     pub fn add_generics(&mut self, gs: HashSet<GenericType>) {
         match self {
-            AstNode::Path { generic, .. } => {
+            AstNode::Path { generic, generic_order, .. } => {
                 generic.extend(gs);
+                for g in generic.iter() {
+                    if !generic_order.contains(&g.name) {
+                        generic_order.push(g.name.clone());
+                    }
+                }
             }
             other => unreachable!("Expected path node, found {:#?}", other),
         }
@@ -1608,6 +1754,30 @@ pub fn remove_struct_pref(s: &str) -> (String, String) {
     }
     
     (s.to_string(), String::new())
+}
+
+pub fn strip_type_prefix(s: &str) -> String {
+    remove_struct_pref(s).0
+}
+
+pub fn type_key(ft: &FType) -> String {
+    match ft {
+        FType::Struct(name) => format!("s_{}", name),
+        FType::StructPtr(name) => format!("ptr_{}", name),
+        FType::StructHeapPtr(name) => format!("h_{}", name),
+        FType::Array(el, count) => format!("arr_{}_{}", type_key(el), count),
+        FType::Generic(name) => name.clone(),
+        other => format!("{}", other),
+    }
+}
+
+pub fn generic_instance_name(base: &str, args: &[FType]) -> String {
+    let mut result = base.to_owned();
+    for arg in args {
+        result.push_str("::");
+        result.push_str(&type_key(arg));
+    }
+    result
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
