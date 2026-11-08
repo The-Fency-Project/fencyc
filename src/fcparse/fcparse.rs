@@ -38,6 +38,7 @@ pub struct FcParser {
     pub generic_impls: HashMap<String, AstRoot>,
     pub generic_structs: Vec<(String, Vec<FType>)>,
     generic_params: Vec<String>,
+    match_header: bool,
 }
 
 /// Parser based on Pratt parsing algorithm
@@ -58,6 +59,7 @@ impl FcParser {
             generic_impls: HashMap::new(),
             generic_structs: Vec::new(),
             generic_params: Vec::new(),
+            match_header: false,
         }
     }
 
@@ -354,7 +356,7 @@ impl FcParser {
                                 buf.push(AstNode::Variable(path.path_to_string()));
                             }
                         }
-                        Tok::LCurBr => {
+                        Tok::LCurBr if !self.match_header => {
                             let path = self.parse_path(idt_cl.clone()).clone();
                             let n = self.parse_struct_create(&path);
                             buf.push(n);
@@ -575,6 +577,20 @@ impl FcParser {
                 self.structs.push_from_astn(&res);
                 res
             }
+
+            Tok::Keyword(Kword::Union) => {
+                let res = self.parse_union();
+                self.structs.push_from_astn(&res);
+                res
+            }
+
+            Tok::Keyword(Kword::Enum) => {
+                let res = self.parse_enum();
+                self.structs.push_from_astn(&res);
+                res
+            }
+
+            Tok::Keyword(Kword::Match) => self.parse_match(),
 
             Tok::Keyword(Kword::Impl) => {
                 let res = self.parse_impl();
@@ -1281,6 +1297,83 @@ impl FcParser {
         res
     }
 
+    fn parse_union(&mut self) -> AstNode {
+        let name_start = self.expect_idt().expect("Expected union name");
+        let name = self.parse_path(format!("{}::{}", self.curmod, name_start));
+        let mut fields = self.parse_struct_fields();
+        let attrs = vec![Attr::Custom("union".into())];
+        AstNode::Structure {
+            name: Box::new(name),
+            fields: fields.drain(..).collect(),
+            public: self.prev_flags.contains(&ParseFlags::Public),
+            attrs,
+        }
+    }
+
+    fn parse_enum(&mut self) -> AstNode {
+        let name_start = self.expect_idt().expect("Expected enum name");
+        let name = self.parse_path(format!("{}::{}", self.curmod, name_start));
+        self.expect(Tok::LCurBr);
+        let mut fields = Vec::new();
+        loop {
+            if self.peek_is(Tok::RCurBr) {
+                self.consume();
+                break;
+            }
+            let variant = self.expect_idt().expect("Expected enum variant");
+            let ftype = if self.peek_is(Tok::LPar) {
+                self.consume();
+                let ty = self.parse_ftype();
+                self.expect(Tok::RPar);
+                ty
+            } else {
+                FType::none
+            };
+            fields.push(AstNode::StructField { name: variant, ftype, public: true });
+            if self.peek_is(Tok::Comma) || self.peek_is(Tok::Semicol) {
+                self.consume();
+            }
+        }
+        AstNode::Structure {
+            name: Box::new(name),
+            fields,
+            public: self.prev_flags.contains(&ParseFlags::Public),
+            attrs: vec![Attr::Custom("enum".into())],
+        }
+    }
+
+    fn parse_match(&mut self) -> AstNode {
+        self.match_header = true;
+        let value = self.parse_expr(0);
+        self.match_header = false;
+        self.expect(Tok::LCurBr);
+        let mut arms = Vec::new();
+        while !self.peek_is(Tok::RCurBr) {
+            let pattern = match self.consume().expect("Expected match pattern").tok.clone() {
+                Tok::Int(v) => MatchPattern::Int(v),
+                Tok::Uint(v) => MatchPattern::Uint(v),
+                Tok::Keyword(Kword::True) => MatchPattern::Bool(true),
+                Tok::Keyword(Kword::False) => MatchPattern::Bool(false),
+                Tok::Identifier(name) if name == "_" => MatchPattern::Wildcard,
+                Tok::Identifier(name) => {
+                    let path = self.parse_path(name);
+                    MatchPattern::Path(path)
+                }
+                other => panic!("Unsupported match pattern {:?}", other),
+            };
+            if self.peek_is(Tok::Combined(Box::new(Tok::Equals), Box::new(Tok::RAngBr))) {
+                self.consume();
+            } else {
+                self.expect(Tok::Equals);
+                self.expect(Tok::RAngBr);
+            }
+            let body = self.parse_expr(0);
+            arms.push((pattern, body));
+        }
+        self.expect(Tok::RCurBr);
+        AstNode::Match { value: Box::new(value), arms }
+    }
+
     pub fn parse_struct_create(&mut self, path: &AstNode) -> AstNode {
         let mut st = path.path_to_string();
         let fin_path = match st.contains("::") {
@@ -1466,6 +1559,11 @@ pub enum AstNode {
         exprs: Vec<AstRoot>,
     },
 
+    Match {
+        value: Box<AstRoot>,
+        arms: Vec<(MatchPattern, AstRoot)>,
+    },
+
     Path {
         segments: Vec<String>,
         generic:  HashSet<GenericType>,
@@ -1614,6 +1712,15 @@ pub enum AstNode {
         body: Box<AstNode>,
         public: bool,
     },
+}
+
+#[derive(Debug, Clone)]
+pub enum MatchPattern {
+    Int(i64),
+    Uint(u64),
+    Bool(bool),
+    Wildcard,
+    Path(AstNode),
 }
 
 impl AstNode {

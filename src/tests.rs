@@ -166,9 +166,9 @@ fn test_structs_example() {
     let expected = "\
 5
 289
-12
 5
 289
+12
 12
 16
 124";
@@ -184,4 +184,16 @@ fn test_generic_structs_example() {
 
     let expected = "7\n42";
     assert_eq!(stdout, expected);
+}
+
+#[test]
+fn test_unions_enums_example() {
+    compile(&["examples/8_unions_enums.fcy"], "testbins/8_unions_enums");
+    assert_eq!(run_bin("testbins/8_unions_enums"), "3");
+}
+
+#[test]
+fn test_match_example() {
+    compile(&["examples/9_match.fcy"], "testbins/9_match");
+    assert_eq!(run_bin("testbins/9_match"), "20\n2");
 }

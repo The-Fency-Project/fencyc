@@ -149,13 +149,20 @@ impl CodeGen {
             .iter()
             .filter(|(_, info)| info.generic_params.is_empty())
             .map(|(name, info)| {
-                let items = info.fields.iter()
+                let items = if info.is_union() || info.is_enum() {
+                    let mut payload = info.size.saturating_sub(if info.is_enum() { 8 } else { 0 });
+                    if info.is_enum() {
+                        vec![(FType::uint, 1), (FType::ubyte, payload)]
+                    } else {
+                        vec![(FType::ubyte, info.size)]
+                    }
+                } else { info.fields.iter()
                     .map(|field| match &field.1.ftype {
                         FType::Array(el, 0) => (FType::Ptr, 1),
                         FType::Array(el, count) => ((*el.clone()), *count),
                         other => (other.clone(), 1),
                     })
-                    .collect();
+                    .collect() };
                 (name.clone(), info.max_alignment, items)
             })
             .collect();
@@ -391,6 +398,33 @@ impl CodeGen {
                 self.symb_table.exit_scope();
             }
             AstNode::Call { func_name, args, idx } => {
+                let requested_name = func_name.path_to_string();
+                if let Some((enum_name, variant)) = requested_name.rsplit_once("::") {
+                    let paths = self.get_use_paths();
+                    if let Some(info) = self.struct_tab.get(enum_name, &paths) {
+                        if info.is_enum() {
+                            if let Some(field) = info.fields.get(variant) {
+                                let align = match info.max_alignment { ..5 => 4, 5..9 => 8, _ => 16 };
+                                let ptr = self.new_temp(&FType::Ptr);
+                                self.fbuild.assign_instr(ptr.clone(), FType::Ptr,
+                                    FInstr::Alloca(align, info.size as u64));
+                                let disc = info.fields.keys().position(|v| v == variant).unwrap_or(0);
+                                self.fbuild.add_instr(FInstr::Store(
+                                    ptr.clone(), FValue::new(FVal::UConst(disc as u64), FType::uint), FType::uint));
+                                if !matches!(field.ftype, FType::none) {
+                                    let payload = self.gen_expr(args[0].node.clone());
+                                    let addr = self.new_temp(&FType::Ptr);
+                                    self.fbuild.assign_instr(addr.clone(), FType::Ptr,
+                                        FInstr::BinaryOp(IRBinOp::Add, ptr.clone(), FValue::new(FVal::UConst(field.offset as u64), FType::Usize)));
+                                    self.fbuild.add_instr(FInstr::Store(addr, payload.val.unwrap(), payload.ftype));
+                                }
+                                res.val = Some(ptr);
+                                res.ftype = FType::Struct(info.name.clone());
+                                return res;
+                            }
+                        }
+                    }
+                }
                 let (ov_idx, ret_type) = match self
                         .matched_overloads.get(&idx) {
                     Some(f) => {
@@ -455,7 +489,9 @@ impl CodeGen {
                     self.expected_type = FType::none;
                     self.need_addr = old_needaddr;
 
-                    if matches!(gd.ftype, FType::Struct(_)) && gd.var.is_some() {
+                    if is_move_type(&func_dat.args[idx].ftype) && gd.var.is_some()
+                        || matches!(func_dat.args[idx].ftype, FType::Generic(_))
+                            && is_move_type(&gd.ftype) && gd.var.is_some() {
                         let var_name = gd.var.clone().unwrap();
                         if let Some(v) = self.symb_table.get_mut(&var_name) {
                             v.1.moved = Some(0);
@@ -536,6 +572,65 @@ impl CodeGen {
                     self.fbuild.add_instr(instr);
                 }
             }
+            AstNode::Match { value, arms } => {
+                let value_data = self.gen_expr(value.node);
+                let end = self.alloc_label();
+                let mut next = self.alloc_label();
+                for (idx, (pattern, body)) in arms.iter().enumerate() {
+                    let body_label = self.alloc_label();
+                    let is_last = idx + 1 == arms.len();
+                    let next_label = if is_last { end.clone() } else { next.clone() };
+                    let cond = match pattern {
+                        fparse::MatchPattern::Wildcard => {
+                            self.fbuild.add_term(FTerm::Jump(body_label.clone()));
+                            None
+                        }
+                        fparse::MatchPattern::Int(v) => Some(self.gen_cmp_op(
+                            CmpOp::Eq, value_data.clone(), GenData {
+                                var: None, ftype: FType::int,
+                                val: Some(FValue::new(FVal::IConst(*v), FType::int)),
+                                qtype: None, instrs: Vec::new(), returned: false, by_addr: false,
+                            })),
+                        fparse::MatchPattern::Uint(v) => Some(self.gen_cmp_op(
+                            CmpOp::Eq, value_data.clone(), GenData {
+                                var: None, ftype: FType::uint,
+                                val: Some(FValue::new(FVal::UConst(*v), FType::uint)),
+                                qtype: None, instrs: Vec::new(), returned: false, by_addr: false,
+                            })),
+                        fparse::MatchPattern::Bool(v) => Some(self.gen_cmp_op(
+                            CmpOp::Eq, value_data.clone(), GenData {
+                                var: None, ftype: FType::bool,
+                                val: Some(FValue::new(FVal::UConst(*v as u64), FType::bool)),
+                                qtype: None, instrs: Vec::new(), returned: false, by_addr: false,
+                            })),
+                        fparse::MatchPattern::Path(path) => {
+                            let segs = path.path_to_segs();
+                            let owner = segs[..segs.len().saturating_sub(1)].join("::");
+                            let variant = segs.last().cloned().unwrap_or_default();
+                            let paths = self.get_use_paths();
+                            let info = self.struct_tab.get(&owner, &paths)
+                                .expect("unknown enum in match pattern");
+                            let disc = info.fields.keys().position(|v| v == &variant).unwrap_or(usize::MAX);
+                            let disc_tmp = self.new_temp(&FType::uint);
+                            self.fbuild.assign_instr(disc_tmp.clone(), FType::uint,
+                                FInstr::Load(value_data.val.clone().unwrap(), FType::uint));
+                            Some(self.gen_cmp_op(CmpOp::Eq,
+                                GenData { var: None, ftype: FType::uint, val: Some(disc_tmp), qtype: None, instrs: Vec::new(), returned: false, by_addr: false },
+                                GenData { var: None, ftype: FType::uint, val: Some(FValue::new(FVal::UConst(disc as u64), FType::uint)), qtype: None, instrs: Vec::new(), returned: false, by_addr: false }))
+                        }
+                    };
+                    if let Some(cond) = cond {
+                        self.fbuild.add_term(FTerm::Branch { cond, then_bl: body_label.clone(), else_bl: next_label.clone() });
+                    }
+                    self.fbuild.add_block(body_label);
+                    let body_data = self.gen_expr(body.node.clone());
+                    res.returned |= body_data.returned;
+                    if !body_data.returned { self.fbuild.add_term(FTerm::Jump(end.clone())); }
+                    if !is_last { self.fbuild.add_block(next_label.clone()); next = self.alloc_label(); }
+                }
+                self.fbuild.add_block(end);
+                res.ftype = FType::none;
+            }
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
                 for expr in exprs {
@@ -555,9 +650,16 @@ impl CodeGen {
                 }
             }
             AstNode::Assignment { name, val, ft } => {
+                let source_var = match &*val {
+                    AstNode::Variable(var) => Some(var.clone()),
+                    _ => None,
+                };
                 let owner = match &*val {
                     AstNode::Call { func_name, args, idx } => true,
                     AstNode::StructCreate { name, field_vals } => true,
+                    AstNode::Variable(var) => self.symb_table.get(var)
+                        .map(|(_, sym)| sym.owner && is_move_type(&sym.ftype))
+                        .unwrap_or(false),
                     other => false,
                 };
 
@@ -577,6 +679,14 @@ impl CodeGen {
                     other => other
                 };
                 res.ftype = res_ft.clone();
+
+                if owner {
+                    if let Some(var) = source_var {
+                        if let Some(sym) = self.symb_table.get_mut(&var) {
+                            sym.1.moved = Some(0);
+                        }
+                    }
+                }
 
                 let mut symb = FSymbol::new(
                     name.clone(), 
@@ -2184,6 +2294,10 @@ fn contains_generic_ftype(ft: &FType) -> bool {
         FType::Array(el, _) => contains_generic_ftype(el),
         _ => false,
     }
+}
+
+fn is_move_type(ft: &FType) -> bool {
+    matches!(ft, FType::Struct(_) | FType::StructHeapPtr(_))
 }
 
 #[derive(Debug)] 

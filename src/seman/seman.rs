@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use crate::cli::Target;
 use crate::codegen::codegen::CodeGen;
 use crate::codegen::mirtoqbe;
-use crate::fcparse::fcparse::{self as fparse, AstNode, Attr, FuncDat, GenericType, TraitInfo, TraitTable};
+ use crate::fcparse::fcparse::{self as fparse, AstNode, Attr, FuncDat, GenericType, MatchPattern, TraitInfo, TraitTable};
 use crate::fcparse::fcparse::{AstRoot, BinaryOp, FuncArg, 
     FuncTable, UnaryOp};
 use crate::lex::Intrinsic;
@@ -55,16 +55,16 @@ pub enum FType {
     nil,                        // real voxvm thing! (good old times, now deprecated)
     Array(Box<FType>, usize), // type, count 
                                                           
-    Struct(String),
-    StructPtr(String),
-    StructHeapPtr(String),
+    Struct(String),       // owning by-value aggregate; destructive move
+    StructPtr(String),    // non-owning safe raw pointer; trivial copy
+    StructHeapPtr(String),// owning heap pointer; destructive move
     ubyte,
     ibyte,
     u32,
     i32,
     single,
     any, // some kind of wildcard for seman 
-    Ptr, 
+    Ptr,                  // non-owning FFI pointer; trivial copy
     ushort,
     ishort,
     TypePtr(Box<FType>),
@@ -428,6 +428,12 @@ impl SemAn {
                 let rightdat = self.analyze_expr(&AstRoot::new(*val.clone(), self.line), logger);
                 self.expect_type = FType::none;
 
+                if Self::is_move_type(&rightdat.ftype) {
+                    if let Some(var) = rightdat.var_name.as_ref() {
+                        self.try_move(&mut logger.clone(), var, self.line);
+                    }
+                }
+
                 if self.symb_table.get(&name).is_some() {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::Redeclaration(name.to_owned())),
@@ -661,7 +667,7 @@ impl SemAn {
                 );
                 let newval_data = self.analyze_expr(&newval, logger);
                 match &newval_data.ftype {
-                    FType::Struct(s) if newval_data.var_name.is_some() => {
+                    ft if Self::is_move_type(ft) && newval_data.var_name.is_some() => {
                         self.try_move(
                             &mut logger.clone(),
                             &newval_data.var_name.unwrap(),
@@ -791,6 +797,12 @@ impl SemAn {
                         };
                     }
                     _other => {}
+                }
+            }
+            AstNode::Match { value, arms } => {
+                let _ = self.analyze_expr(value, logger);
+                for (_, body) in arms {
+                    let _ = self.analyze_expr(body, logger);
                 }
             }
             AstNode::CodeBlock { exprs } => {
@@ -985,6 +997,34 @@ impl SemAn {
                 let f_name_s = func_name.path_to_string();
                 let paths = self.get_use_paths();
 
+                if let Some((enum_name, variant)) = f_name_s.rsplit_once("::") {
+                    if let Some(info) = self.struct_tab.get(enum_name, &paths) {
+                        if info.is_enum() {
+                            if let Some(field) = info.fields.get(variant) {
+                                if args.len() != if matches!(field.ftype, FType::none) { 0 } else { 1 } {
+                                    logger.send(LogMessage::new(
+                                        LogLevel::Error(ErrKind::FuncArgsTypeIncompat(f_name_s.clone())),
+                                        self.line, self.fname.clone()));
+                                    return exprdat;
+                                }
+                                if let Some(arg) = args.first() {
+                                    let actual = self.analyze_expr(arg, logger);
+                                    if actual.ftype != field.ftype {
+                                        logger.send(LogMessage::new(
+                                            LogLevel::Error(ErrKind::MismatchFieldsTypes(
+                                                variant.to_owned(), field.ftype.clone(), actual.ftype)),
+                                            self.line, self.fname.clone()));
+                                        return exprdat;
+                                    }
+                                }
+                                self.matched_overloads.insert(*idx, (None, FType::Struct(info.name.clone())));
+                                exprdat.ftype = FType::Struct(info.name.clone());
+                                return exprdat;
+                            }
+                        }
+                    }
+                }
+
                 // if we're inside generic
                 let mut generic_f = None;
                 let f_name_end = f_name_s.rsplit("::").next().unwrap();
@@ -1036,9 +1076,11 @@ impl SemAn {
                         .map(|e| {(e.name.clone(), e.clone())})
                         .collect();
                     let mut substitutions: HashMap<String, FType> = HashMap::new();
+                    let mut arg_vars: Vec<Option<String>> = Vec::with_capacity(args.len());
 
                     for (idx, arg) in args.iter().enumerate() {
                         let argdat = self.analyze_expr(arg, logger); 
+                        arg_vars.push(argdat.var_name.clone());
 
                         if let FType::Generic(name) = &overload.args[idx].ftype {
                             substitutions.insert(name.clone(), argdat.ftype.clone());
@@ -1129,6 +1171,18 @@ impl SemAn {
                         self.matched_overloads.insert(*idx, 
                             (ov_idx_op, resolved_ret.clone())
                         );
+                        for (arg_idx, var) in arg_vars.iter().enumerate() {
+                            if let Some(var) = var {
+                                let expected = &overload.args[arg_idx].ftype;
+                                if Self::is_move_type(expected)
+                                    || matches!(expected, FType::Generic(_))
+                                        && self.symb_table.get(var)
+                                            .map(|(_, sym)| Self::is_move_type(&sym.ftype))
+                                            .unwrap_or(false) {
+                                    self.try_move(&mut logger.clone(), var, self.line);
+                                }
+                            }
+                        }
                         exprdat.ftype = resolved_ret;
                         return exprdat;
                     }
@@ -1142,6 +1196,11 @@ impl SemAn {
             }
             AstNode::ReturnVal { val } => {
                 let retval = self.analyze_expr(&*val, logger);
+                if Self::is_move_type(&retval.ftype) {
+                    if let Some(var) = retval.var_name.as_ref() {
+                        self.try_move(&mut logger.clone(), var, self.line);
+                    }
+                }
                 
                 let paths = self.get_use_paths();
 
@@ -1309,7 +1368,10 @@ impl SemAn {
                     ));
                 }
 
-                if struct_data.fields.len() != field_vals.len() {
+                let valid_field_count = if struct_data.is_union() { field_vals.len() == 1 } else {
+                    struct_data.fields.len() == field_vals.len()
+                };
+                if !valid_field_count {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::MismatchFieldsCount(
                             struct_data.fields.len(),
@@ -1341,7 +1403,7 @@ impl SemAn {
                                 );
                             };
                         }
-                        FType::Struct(snm) => {
+                        ft if Self::is_move_type(ft) => {
                             if let Some(vn) = field_ed.var_name {
                                 self.try_move(
                                     &mut logger.clone(),
@@ -1897,8 +1959,10 @@ impl SemAn {
             ));
         }
 
+        // Ownership is intentionally shallow: owning structs and heap pointers
+        // become unusable after transfer; raw pointers remain copyable.
         match &var_ref.ftype {
-            FType::Struct(_) => {
+            FType::Struct(_) | FType::StructHeapPtr(_) => {
                var_ref.moved = Some(line);
             }
             FType::Array(el, _) if matches!(**el, FType::Struct(_)) => {
@@ -1906,6 +1970,10 @@ impl SemAn {
             }
             other => {}
         }
+    }
+
+    fn is_move_type(ft: &FType) -> bool {
+        matches!(ft, FType::Struct(_) | FType::StructHeapPtr(_))
     }
 }
 
@@ -1940,6 +2008,14 @@ pub struct StructInfo {
 }
 
 impl StructInfo {
+    pub fn is_union(&self) -> bool {
+        self.attrs.contains(&Attr::Custom("union".into()))
+    }
+
+    pub fn is_enum(&self) -> bool {
+        self.attrs.contains(&Attr::Custom("enum".into()))
+    }
+
     pub fn from_astn(astn: &AstNode) -> StructInfo {
         match astn {
             AstNode::Structure { name, fields, public, attrs } => {
@@ -1987,6 +2063,7 @@ impl StructInfo {
 
     fn alignment_of(ft: &FType) -> usize {
         match ft {
+            FType::none => 1,
             FType::strconst | FType::int | FType::uint | FType::double 
                 | FType::StructPtr(_) | FType::StructHeapPtr(_) | FType::Ptr => {
                 8
@@ -2227,17 +2304,31 @@ impl StructTable {
                 .collect()
         };
 
-        let mut offset = 0usize;
+        let is_union = self.tab.get(name).map(|i| i.is_union()).unwrap_or(false);
+        let is_enum = self.tab.get(name).map(|i| i.is_enum()).unwrap_or(false);
+        let mut offset = if is_enum { 8 } else { 0 };
         let mut max_align = 1usize;
+        let mut max_union_size = 0usize;
         let mut computed_offsets: Vec<(String, usize)> = Vec::with_capacity(fields_snapshot.len());
 
         for (field_name, ftype) in fields_snapshot {
             let (field_size, field_align) = self.type_layout(&ftype, marks)?;
 
             max_align = max_align.max(field_align);
-            offset = Self::align_up(offset, field_align);
-            computed_offsets.push((field_name, offset));
-            offset += field_size;
+            if is_union {
+                computed_offsets.push((field_name, 0));
+                max_union_size = max_union_size.max(field_size);
+            } else {
+                offset = Self::align_up(offset, field_align);
+                computed_offsets.push((field_name, offset));
+                offset += field_size;
+            }
+        }
+
+        if is_union { offset = max_union_size; }
+        if is_enum {
+            max_align = max_align.max(8);
+            offset = Self::align_up(offset, max_align);
         }
 
         let struct_size = Self::align_up(offset, max_align);
@@ -2280,6 +2371,7 @@ impl StructTable {
                 self.layout_struct(&sn, marks)
             }
 
+            FType::none => Ok((0, 1)),
             FType::Generic(_) => Err("generic field reached concrete layout".to_owned()),
             other => Err(format!("layout not implemented for {:?}", other)),
         }
