@@ -1,0 +1,22 @@
+enum Result {
+    Ok(int),
+    Err(str),
+    None,
+}
+
+func main(argc: uint, argv: [str]) -> int {
+    let x = 2;
+    match x {
+        1 => { printintrin 10; }
+        2 => { printintrin 20; }
+        _ => { printintrin 30; }
+    }
+
+    let result = Result::None();
+    match result {
+        Result::Ok => { printintrin 1; }
+        Result::None => { printintrin 2; }
+        _ => { printintrin 3; }
+    }
+    return 0;
+}

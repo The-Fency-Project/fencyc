@@ -328,6 +328,7 @@ pub fn try_combine(ch: &char, nextch: Option<char>, line: usize) -> Option<Token
         ('&', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::Ampersand), Box::new(Tok::Equals)), line)),
         ('|', Some('=')) => Some(Token::new(Tok::Combined(Box::new(Tok::VerBar), Box::new(Tok::Equals)), line)),
         ('-', Some('>')) => Some(Token::new(Tok::Combined(Box::new(Tok::Minus), Box::new(Tok::RAngBr)), line)),
+        ('=', Some('>')) => Some(Token::new(Tok::Combined(Box::new(Tok::Equals), Box::new(Tok::RAngBr)), line)),
         (':', Some(':')) => Some(Token::new(Tok::Combined(Box::new(Tok::Colon), Box::new(Tok::Colon)), line)),
 
 
@@ -359,6 +360,7 @@ pub enum Kword {
     Trait,
     Union,
     Enum,
+    Match,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -395,6 +397,7 @@ fn match_symb_tok(word: &str) -> Tok {
         "trait" => Tok::Keyword(Kword::Trait),
         "union" => Tok::Keyword(Kword::Union),
         "enum" => Tok::Keyword(Kword::Enum),
+        "match" => Tok::Keyword(Kword::Match),
 
         "_len" => Tok::Intrin(Intrinsic::Len),
         "printintrin" => Tok::Intrin(Intrinsic::Print),

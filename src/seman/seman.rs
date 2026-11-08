@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use crate::cli::Target;
 use crate::codegen::codegen::CodeGen;
 use crate::codegen::mirtoqbe;
-use crate::fcparse::fcparse::{self as fparse, AstNode, Attr, FuncDat, GenericType, TraitInfo, TraitTable};
+ use crate::fcparse::fcparse::{self as fparse, AstNode, Attr, FuncDat, GenericType, MatchPattern, TraitInfo, TraitTable};
 use crate::fcparse::fcparse::{AstRoot, BinaryOp, FuncArg, 
     FuncTable, UnaryOp};
 use crate::lex::Intrinsic;
@@ -797,6 +797,12 @@ impl SemAn {
                         };
                     }
                     _other => {}
+                }
+            }
+            AstNode::Match { value, arms } => {
+                let _ = self.analyze_expr(value, logger);
+                for (_, body) in arms {
+                    let _ = self.analyze_expr(body, logger);
                 }
             }
             AstNode::CodeBlock { exprs } => {

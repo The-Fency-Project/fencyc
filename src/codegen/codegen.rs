@@ -572,6 +572,65 @@ impl CodeGen {
                     self.fbuild.add_instr(instr);
                 }
             }
+            AstNode::Match { value, arms } => {
+                let value_data = self.gen_expr(value.node);
+                let end = self.alloc_label();
+                let mut next = self.alloc_label();
+                for (idx, (pattern, body)) in arms.iter().enumerate() {
+                    let body_label = self.alloc_label();
+                    let is_last = idx + 1 == arms.len();
+                    let next_label = if is_last { end.clone() } else { next.clone() };
+                    let cond = match pattern {
+                        fparse::MatchPattern::Wildcard => {
+                            self.fbuild.add_term(FTerm::Jump(body_label.clone()));
+                            None
+                        }
+                        fparse::MatchPattern::Int(v) => Some(self.gen_cmp_op(
+                            CmpOp::Eq, value_data.clone(), GenData {
+                                var: None, ftype: FType::int,
+                                val: Some(FValue::new(FVal::IConst(*v), FType::int)),
+                                qtype: None, instrs: Vec::new(), returned: false, by_addr: false,
+                            })),
+                        fparse::MatchPattern::Uint(v) => Some(self.gen_cmp_op(
+                            CmpOp::Eq, value_data.clone(), GenData {
+                                var: None, ftype: FType::uint,
+                                val: Some(FValue::new(FVal::UConst(*v), FType::uint)),
+                                qtype: None, instrs: Vec::new(), returned: false, by_addr: false,
+                            })),
+                        fparse::MatchPattern::Bool(v) => Some(self.gen_cmp_op(
+                            CmpOp::Eq, value_data.clone(), GenData {
+                                var: None, ftype: FType::bool,
+                                val: Some(FValue::new(FVal::UConst(*v as u64), FType::bool)),
+                                qtype: None, instrs: Vec::new(), returned: false, by_addr: false,
+                            })),
+                        fparse::MatchPattern::Path(path) => {
+                            let segs = path.path_to_segs();
+                            let owner = segs[..segs.len().saturating_sub(1)].join("::");
+                            let variant = segs.last().cloned().unwrap_or_default();
+                            let paths = self.get_use_paths();
+                            let info = self.struct_tab.get(&owner, &paths)
+                                .expect("unknown enum in match pattern");
+                            let disc = info.fields.keys().position(|v| v == &variant).unwrap_or(usize::MAX);
+                            let disc_tmp = self.new_temp(&FType::uint);
+                            self.fbuild.assign_instr(disc_tmp.clone(), FType::uint,
+                                FInstr::Load(value_data.val.clone().unwrap(), FType::uint));
+                            Some(self.gen_cmp_op(CmpOp::Eq,
+                                GenData { var: None, ftype: FType::uint, val: Some(disc_tmp), qtype: None, instrs: Vec::new(), returned: false, by_addr: false },
+                                GenData { var: None, ftype: FType::uint, val: Some(FValue::new(FVal::UConst(disc as u64), FType::uint)), qtype: None, instrs: Vec::new(), returned: false, by_addr: false }))
+                        }
+                    };
+                    if let Some(cond) = cond {
+                        self.fbuild.add_term(FTerm::Branch { cond, then_bl: body_label.clone(), else_bl: next_label.clone() });
+                    }
+                    self.fbuild.add_block(body_label);
+                    let body_data = self.gen_expr(body.node.clone());
+                    res.returned |= body_data.returned;
+                    if !body_data.returned { self.fbuild.add_term(FTerm::Jump(end.clone())); }
+                    if !is_last { self.fbuild.add_block(next_label.clone()); next = self.alloc_label(); }
+                }
+                self.fbuild.add_block(end);
+                res.ftype = FType::none;
+            }
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
                 for expr in exprs {
