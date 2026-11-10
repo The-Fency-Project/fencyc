@@ -1,12 +1,12 @@
 ## Next planned steps (likely)
-- generic structs 
-- traits example + update struct example
-- unions, then enums
-- `h_T` move semantics 
+### Pre-stdlib polishing:
+- Optimize QBE code (from `src/codegen/mirtoqbe.rs`) from redundant copies
+- Add function pointers
+- Support va args function, including both fency functions with va args and external functions with va in declaration 
+### Stdlib
 - stdlib
 # Future
 ## Small/medium (unsorted)
-- Optimize QBE code (from `src/codegen/mirtoqbe.rs`) from redundant copies
 - further diagnostics (trait incompl func signature)
 - move in loops
 - incremential compilation
@@ -24,12 +24,6 @@
 - slices
 - ptrs for primitives
 ## Long-term
-- generics
-    - generic structs
-- smaller features 
-    - unions 
-    - enums 
-    - matches 
 - stdlib 
 - wiki
 - macros 
