@@ -12,9 +12,11 @@ Passing an owning struct or heap pointer by value moves it. Passing `*Type` lets
 func increment(x: int) -> int { return x + 1; }
 func apply(f: func(int) -> int, x: int) -> int { return f(x); }
 
+extern func printf(format: str, ...) -> i32;
+
 func main() {
     let callback: func(int) -> int = increment;
-    printintrin apply(callback, 4);
+    printf("%ld\n", apply(callback, 4));
     return;
 }
 ```

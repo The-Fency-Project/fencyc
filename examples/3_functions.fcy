@@ -1,22 +1,24 @@
+pub extern func printf(format: str, ...) -> i32;
+
 func main() {
     // main function (has to be in program!)
     print_1();
     let sum_res: int = add(3, 4);
-    printintrin sum_res; // will be 7
+    main::printf("%ld\n", sum_res); // will be 7
     
     let fact_res: int = factorial(5);
-    printintrin fact_res; // 120 
+    main::printf("%ld\n", fact_res); // 120
     
     // compiler will match func overload according to given params and return type
     let sum_float_res: double = add(15.5, 3.75);
-    printintrin sum_float_res;
+    main::printf("%f\n", sum_float_res);
 
     return; // just return for none return type
 }
 
 // simple example
 func print_1() {
-    printintrin 1;
+    main::printf("%ld\n", 1);
     return;
 }
 

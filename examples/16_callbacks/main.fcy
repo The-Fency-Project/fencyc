@@ -1,7 +1,9 @@
+pub extern func printf(format: str, ...) -> i32;
+
 func main() {
     let sum: func(...int) -> int = helpers::sum;
-    printintrin sum(1, 2, 3, 4, 5);
-    printintrin helpers::run(sum);
-    printintrin helpers::sum();
+    main::printf("%ld\n", sum(1, 2, 3, 4, 5));
+    main::printf("%ld\n", helpers::run(sum));
+    main::printf("%ld\n", helpers::sum());
     return;
 }

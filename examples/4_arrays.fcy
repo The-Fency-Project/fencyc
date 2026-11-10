@@ -1,3 +1,5 @@
+pub extern func printf(format: str, ...) -> i32;
+
 // Fixed-size arrays + `str` demo
 
 func main() {
@@ -11,15 +13,15 @@ func main() {
     arr[2u] = 7; 
 
     for let i: uint = 0u in i < _len arr; i += 1u {
-        printintrin arr[i];
+        main::printf("%ld\n", arr[i]);
     }
 
     // static string, placed in data segment
     let s: str = "Hello, world!"; 
     print_s(s); // passing by pointer (againt)
 
-    printintrin _len s; // 13 (chars count)
-    printintrin _len arr; // 3 (elems count)
+    main::printf("%lu\n", _len s); // 13 (chars count)
+    main::printf("%lu\n", _len arr); // 3 (elems count)
 
     // `.. @ N` means:
     // Repeat all elements thus far N times
@@ -27,7 +29,7 @@ func main() {
     // 8 elements basically 
     let rep_arr: [int] = [1, 2 @ 4u]int;
     print_nth(rep_arr, 6u); // 1
-    printintrin _len rep_arr; // 8
+    main::printf("%lu\n", _len rep_arr); // 8
 
     
 
@@ -35,11 +37,11 @@ func main() {
 }
 
 func print_s(s1: str) {
-    printintrin s1;
+    main::printf("%s\n", s1);
     return;
 }
 
 func print_nth(arr: [int], idx: uint) {
-    printintrin arr[idx];
+    main::printf("%ld\n", arr[idx]);
     return;
 }

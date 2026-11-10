@@ -1,6 +1,8 @@
 # Structs
 
 ```fcy
+extern func printf(format: str, ...) -> i32;
+
 struct Point {
     pub x: int
     pub y: int
@@ -8,7 +10,7 @@ struct Point {
 
 func main() -> int {
     let p = Point { x: 3; y: 4; };
-    printintrin p.x;
+    printf("%ld\n", p.x);
     return 0;
 }
 ```

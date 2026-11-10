@@ -96,7 +96,6 @@ impl CodeGen {
     }
 
     pub fn gen_everything(&mut self, nomain: bool) {
-        self.gen_stddat();
         self.gen_struct_typedefs();
         self.queue_generic_impls();
         let mut had_main = false;
@@ -2040,39 +2039,6 @@ impl CodeGen {
         ft.size(None)
     } 
 
-    fn gen_stddat(&mut self) {
-        let items = vec![
-            (FDataItem::Str("%lu\n".into()), FType::ubyte),
-            (FDataItem::Str("%ld\n".into()), FType::ubyte),
-            (FDataItem::Str("%f\n".into()), FType::ubyte),
-            (FDataItem::Str("%s\n".into()), FType::ubyte),
-        ];
-
-        self.module.add_datadef(FDataDef::new(
-            "fmt_uint".into(),
-            false,
-            None,
-            items[0..1].to_vec()
-        ));
-        self.module.add_datadef(FDataDef::new(
-            "fmt_int".into(),
-            false,
-            None,
-            items[1..2].to_vec()
-        ));
-        self.module.add_datadef(FDataDef::new(
-            "fmt_float".into(),
-            false,
-            None,
-            items[2..3].to_vec()
-        ));
-        self.module.add_datadef(FDataDef::new(
-            "fmt_str".into(),
-            false,
-            None,
-            items[3..4].to_vec()
-        ));
-    }
 
     fn gen_array_store(&mut self, el_type: &FType, idx_r: Option<AstRoot>, from: &FValue,
         to: &FValue) {
@@ -2150,30 +2116,6 @@ impl CodeGen {
             -> GenData {
         let mut resd = GenData::new();
         match intrin {
-            Intrinsic::Print => {
-                let ft = match &rightdat.ftype {
-                    FType::single => FType::double,
-                    FType::ibyte | FType::ishort | FType::i32 => FType::int,
-                    FType::bool | FType::ubyte | FType::ushort | FType::u32 => FType::uint,
-                    other => other.clone(),
-                };
-                let mut val = rightdat.val.expect("print requires a value");
-                if ft != rightdat.ftype {
-                    let tmp = self.new_temp(&ft);
-                    self.fbuild.assign_instr(tmp.clone(), ft.clone(), FInstr::Cast(val, rightdat.ftype, ft.clone()));
-                    val = tmp;
-                }
-                let fmt = match ft {
-                    FType::int => "fmt_int",
-                    FType::uint => "fmt_uint",
-                    FType::double => "fmt_float",
-                    FType::strconst => "fmt_str",
-                    _ => unreachable!("unsupported print type {ft}"),
-                };
-                self.fbuild.add_instr(FInstr::Invoke(
-                    FValue::new(FVal::VarGlb("printf".into()), FType::Function(vec![FType::Ptr, FType::Variadic(Box::new(FType::none))], Box::new(FType::i32))),
-                    vec![(FValue::new(FVal::VarGlb(fmt.into()), FType::Ptr), FType::Ptr), (val, ft)], Some(1)));
-            }
             Intrinsic::Len => {
                 let tmp = self.new_temp(&FType::uint);
                 resd.val = Some(tmp.clone());

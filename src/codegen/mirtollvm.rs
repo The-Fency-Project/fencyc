@@ -1015,7 +1015,7 @@ impl<'ctx> LLVMBackend<'ctx> {
     }
 
     /// Predefines libc functions that are used by fency intrinsics:
-    /// printf, memcpy, strlen, etc 
+    /// memcpy, strlen, strcmp, etc
     fn define_intrin_libc_funcs(&mut self) {
         let context = self.context;
 
@@ -1024,16 +1024,6 @@ impl<'ctx> LLVMBackend<'ctx> {
         let i64_type = context.i64_type();
 
         let i8_ptr = context.ptr_type(AddressSpace::default());
-
-        // printf: int printf(const char*, ...)
-        if self.module.get_function("printf").is_none() {
-            let printf_ty = i32_type.fn_type(
-                &[i8_ptr.into()],
-                true, // VARARGS
-            );
-
-            self.module.add_function("printf", printf_ty, None);
-        }
 
         // strlen: size_t strlen(const char*)
         if self.module.get_function("strlen").is_none() {

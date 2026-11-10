@@ -1,3 +1,5 @@
+pub extern func printf(format: str, ...) -> i32;
+
 // Generic structs are monomorphized at each concrete use site.
 struct Box<T> {
     pub value: T
@@ -23,7 +25,7 @@ func main(argc: uint, argv: [str]) -> int {
         second: boxed.get();
     };
 
-    printintrin pair.first;
-    printintrin pair.second;
+    main::printf("%lu\n", pair.first);
+    main::printf("%ld\n", pair.second);
     return 0;
 }

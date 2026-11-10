@@ -1,32 +1,34 @@
+pub extern func printf(format: str, ...) -> i32;
+
 struct Pair<Z, A> { pub first: Z pub second: A }
 
 func main() {
     let pair = Pair<uint, int> { first: 9u; second: -4; };
-    printintrin pair.first;
-    printintrin pair.second;
-    printintrin -1i < 0i;
-    printintrin 18446744073709551615u / 3u;
-    printintrin 18446744073709551615u % 3u;
-    printintrin (255ub)$int;
-    printintrin (-1ib)$int;
-    printintrin (260)$ubyte;
-    printintrin (255)$ibyte;
-    printintrin (-2i)$double;
-    printintrin (3.75f)$i32;
-    printintrin (6i)$float;
+    main::printf("%lu\n", pair.first);
+    main::printf("%ld\n", pair.second);
+    main::printf("%d\n", -1i < 0i);
+    main::printf("%lu\n", 18446744073709551615u / 3u);
+    main::printf("%lu\n", 18446744073709551615u % 3u);
+    main::printf("%ld\n", (255ub)$int);
+    main::printf("%ld\n", (-1ib)$int);
+    main::printf("%d\n", (260)$ubyte);
+    main::printf("%d\n", (255)$ibyte);
+    main::printf("%f\n", (-2i)$double);
+    main::printf("%d\n", (3.75f)$i32);
+    main::printf("%f\n", (6i)$float);
     let shorts = [12uh, 65000uh]ushort;
     let words = [-3i, -9i]i32;
-    printintrin shorts[1u];
-    printintrin words[1u];
-    printintrin "a" != "b";
-    printintrin "same" != "same";
-    printintrin "line one\nline two";
-    printintrin 0.5 < 1.5;
-    printintrin 2.0f >= 1.0f;
+    main::printf("%d\n", shorts[1u]);
+    main::printf("%d\n", words[1u]);
+    main::printf("%d\n", "a" != "b");
+    main::printf("%d\n", "same" != "same");
+    main::printf("%s\n", "line one\nline two");
+    main::printf("%d\n", 0.5 < 1.5);
+    main::printf("%d\n", 2.0f >= 1.0f);
     for let i = 0u in i < 3u; i += 1u {
         if i == 2u { break; }
         if i == 1u { break; }
-        printintrin i;
+        main::printf("%ld\n", i);
     }
     return;
 }

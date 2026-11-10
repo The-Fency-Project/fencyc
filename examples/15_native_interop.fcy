@@ -1,10 +1,12 @@
+pub extern func printf(format: str, ...) -> i32;
+
 extern func native_apply(callback: func(int) -> int, value: int) -> int;
 extern func native_check(marker: i32, ...) -> i32;
 
 func increment(x: int) -> int { return x + 1; }
 
 func main() {
-    printintrin native_apply(increment, 20);
-    printintrin native_check(9i, -7ib, 65535uh, 1.5f, 10, 20, 30, 40, "tail");
+    main::printf("%ld\n", native_apply(increment, 20));
+    main::printf("%d\n", native_check(9i, -7ib, 65535uh, 1.5f, 10, 20, 30, 40, "tail"));
     return;
 }

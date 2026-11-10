@@ -387,7 +387,6 @@ pub enum Kword {
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum Intrinsic {
-    Print,
     Len,
     Sizeof,
     Typeof,
@@ -422,7 +421,6 @@ fn match_symb_tok(word: &str) -> Tok {
         "match" => Tok::Keyword(Kword::Match),
 
         "_len" => Tok::Intrin(Intrinsic::Len),
-        "printintrin" => Tok::Intrin(Intrinsic::Print),
         "sizeof" => Tok::Intrin(Intrinsic::Sizeof),
         "typeof" => Tok::Intrin(Intrinsic::Typeof),
         "_bitsof" => Tok::Intrin(Intrinsic::BitsOf),

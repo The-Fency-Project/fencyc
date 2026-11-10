@@ -121,7 +121,7 @@ fn build_command_uses_default_backend() {
     let root = std::env::current_dir().unwrap();
     let dir = root.join("testbins/build_smoke");
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("build.fcy"), "func main() { printintrin \"builder ran\"; return; }").unwrap();
+    std::fs::write(dir.join("build.fcy"), "extern func printf(format: str, ...) -> i32; func main() { printf(\"builder ran\"); return; }").unwrap();
     let output = Command::new("cargo").args(["run", "--quiet", "--manifest-path"])
         .arg(root.join("Cargo.toml")).args(["--", "build"]).current_dir(dir)
         .output().expect("compiler failed to start");
@@ -156,7 +156,7 @@ fn reject_invalid_matches() {
     reject("match_enum", "enum E { A, B } func main() { let e = E::A; let n = match e { E::C => {1;} _ => {0;} }; return; }", "variant of the matched enum");
     reject("match_unit", "enum E { A } func main() { let n = match E::A { E::A(v) => {1;} }; return; }", "unit variant payload");
     reject("match_wrong_type", "func main() { let n = match 1 { true => {2;} _ => {0;} }; return; }", "requires a bool");
-    reject("match_void_arm", "func main() { let n = match true { true => {1;} false => { printintrin 0; } }; return; }", "Mismatched types");
+    reject("match_void_arm", "func nothing() { return; } func main() { let n = match true { true => {1;} false => { nothing(); } }; return; }", "Mismatched types");
     reject("tail_not_last", "func f(xs: ...int, n: int) { return; } func main() { return; }", "must be last");
 }
 

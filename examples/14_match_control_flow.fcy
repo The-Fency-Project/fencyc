@@ -1,3 +1,5 @@
+pub extern func printf(format: str, ...) -> i32;
+
 enum Choice { Number(int), Empty }
 
 func choose(c: Choice) -> int {
@@ -20,13 +22,13 @@ func branch(b: bool) -> int {
 }
 
 func main() {
-    printintrin choose(Choice::Number(6));
-    printintrin choose(Choice::Empty);
-    printintrin mixed(Choice::Number(9));
-    printintrin mixed(Choice::Empty);
-    printintrin branch(true);
-    printintrin branch(false);
+    main::printf("%ld\n", choose(Choice::Number(6)));
+    main::printf("%ld\n", choose(Choice::Empty));
+    main::printf("%ld\n", mixed(Choice::Number(9)));
+    main::printf("%ld\n", mixed(Choice::Empty));
+    main::printf("%ld\n", branch(true));
+    main::printf("%ld\n", branch(false));
     let n = match true { true => {11;} false => {12;} };
-    printintrin n;
+    main::printf("%ld\n", n);
     return;
 }

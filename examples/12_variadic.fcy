@@ -21,16 +21,16 @@ func first<T>(value: T, ignored: ...int) -> T {
 }
 
 func main() {
-    printintrin sum(10, 1, 2, 3);
-    printintrin sum(10);
+    main::printf("%ld\n", sum(10, 1, 2, 3));
+    main::printf("%ld\n", sum(10));
     let callback: func(int, ...int) -> int = sum;
-    printintrin callback(5, 4, 3, 2, 1);
-    printintrin callback(5);
-    printintrin sum_bytes(1ub, 2ub, 255ub);
+    main::printf("%ld\n", callback(5, 4, 3, 2, 1));
+    main::printf("%ld\n", callback(5));
+    main::printf("%lu\n", sum_bytes(1ub, 2ub, 255ub));
     printf("%s %d %.1f\n", "promoted", -7ib, 1.5f);
     let output: func(str, ...) -> i32 = printf;
     output("%d %u\n", true, 65535uh);
     printf("empty tail\n");
-    printintrin first(42u, 1, 2, 3);
+    main::printf("%lu\n", first(42u, 1, 2, 3));
     return;
 }
