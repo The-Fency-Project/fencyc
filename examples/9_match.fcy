@@ -12,11 +12,14 @@ func main(argc: uint, argv: [str]) -> int {
         _ => { printintrin 30; }
     }
 
-    let result = Result::None();
-    match result {
-        Result::Ok => { printintrin 1; }
-        Result::None => { printintrin 2; }
-        _ => { printintrin 3; }
-    }
+    let result: Result = Result::Ok(2);
+    let tag: uint = result$uint;
+    printintrin tag;
+    let payload = match result {
+        Result::Ok(v) => { v + 1; }
+        Result::None => { 0; }
+        _ => { 0; }
+    };
+    printintrin payload;
     return 0;
 }

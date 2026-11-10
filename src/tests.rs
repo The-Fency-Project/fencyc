@@ -195,5 +195,26 @@ fn test_unions_enums_example() {
 #[test]
 fn test_match_example() {
     compile(&["examples/9_match.fcy"], "testbins/9_match");
-    assert_eq!(run_bin("testbins/9_match"), "20\n2");
+    assert_eq!(run_bin("testbins/9_match"), "20\n0\n3");
+}
+
+#[test]
+fn test_comparison_loop_before_enum_match() {
+    let binary = "testbins/10_tribool";
+    compile(&["examples/10_tribool.fcy"], binary);
+    let out = Command::new(binary).args(["hello", "world"])
+        .output().expect("failed to run TriBool example");
+    assert!(out.status.success(), "TriBool program crashed");
+    assert_eq!(String::from_utf8(out.stdout).unwrap().trim(),
+        "testbins/10_tribool\nhello\nworld\n4");
+}
+
+#[test]
+fn test_parser_failure_does_not_report_success() {
+    let out = Command::new("cargo").args([
+        "run", "--", "input", "tests/fixtures/invalid_parse.fcy", "--nostd",
+    ]).output().expect("failed to run compiler");
+    assert!(!out.status.success(), "malformed input must fail compilation");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("Compilation succeed"), "{stdout}");
 }

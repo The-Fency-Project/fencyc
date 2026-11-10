@@ -576,6 +576,7 @@ impl CodeGen {
                 let value_data = self.gen_expr(value.node);
                 let end = self.alloc_label();
                 let mut next = self.alloc_label();
+                let mut result_tmp: Option<FValue> = None;
                 for (idx, (pattern, body)) in arms.iter().enumerate() {
                     let body_label = self.alloc_label();
                     let is_last = idx + 1 == arms.len();
@@ -603,7 +604,7 @@ impl CodeGen {
                                 val: Some(FValue::new(FVal::UConst(*v as u64), FType::bool)),
                                 qtype: None, instrs: Vec::new(), returned: false, by_addr: false,
                             })),
-                        fparse::MatchPattern::Path(path) => {
+                        fparse::MatchPattern::Path(path) | fparse::MatchPattern::PathBinding(path, _) => {
                             let segs = path.path_to_segs();
                             let owner = segs[..segs.len().saturating_sub(1)].join("::");
                             let variant = segs.last().cloned().unwrap_or_default();
@@ -623,13 +624,47 @@ impl CodeGen {
                         self.fbuild.add_term(FTerm::Branch { cond, then_bl: body_label.clone(), else_bl: next_label.clone() });
                     }
                     self.fbuild.add_block(body_label);
+                    let binding_name = match pattern {
+                        fparse::MatchPattern::PathBinding(path, name) => Some((path, name)),
+                        _ => None,
+                    };
+                    let has_binding = binding_name.is_some();
+                    if let Some((path, name)) = binding_name.as_ref() {
+                        let segs = path.path_to_segs();
+                        let owner = segs[..segs.len().saturating_sub(1)].join("::");
+                        let variant = segs.last().cloned().unwrap_or_default();
+                        let paths = self.get_use_paths();
+                        if let Some(info) = self.struct_tab.get(&owner, &paths) {
+                            if let Some(field) = info.fields.get(&variant) {
+                                if !matches!(field.ftype, FType::none) {
+                                    let tmp = self.new_temp(&field.ftype);
+                                    let addr = self.new_temp(&FType::Ptr);
+                                    self.fbuild.assign_instr(addr.clone(), FType::Ptr,
+                                        FInstr::BinaryOp(IRBinOp::Add, value_data.val.clone().unwrap(), FValue::new(FVal::UConst(field.offset as u64), FType::Usize)));
+                                    self.fbuild.assign_instr(tmp.clone(), field.ftype.clone(), FInstr::Load(addr, field.ftype.clone()));
+                                    self.symb_table.enter_scope();
+                                    self.symb_table.newsymb(FSymbol::new(name.to_string(), VarPosition::None, field.ftype.clone()));
+                                    self.fbuild.assign_instr(FValue::new(FVal::VarTmp(name.to_string()), field.ftype.clone()), field.ftype.clone(), FInstr::Copy(field.ftype.clone(), tmp));
+                                }
+                            }
+                        }
+                    }
                     let body_data = self.gen_expr(body.node.clone());
+                    if let Some(body_val) = body_data.val.clone() {
+                        if result_tmp.is_none() {
+                            result_tmp = Some(self.new_temp(&body_data.ftype));
+                            res.ftype = body_data.ftype.clone();
+                        }
+                        self.fbuild.assign_instr(result_tmp.clone().unwrap(), body_data.ftype.clone(),
+                            FInstr::Copy(body_data.ftype.clone(), body_val));
+                    }
                     res.returned |= body_data.returned;
                     if !body_data.returned { self.fbuild.add_term(FTerm::Jump(end.clone())); }
+                    if has_binding { self.symb_table.exit_scope(); }
                     if !is_last { self.fbuild.add_block(next_label.clone()); next = self.alloc_label(); }
                 }
                 self.fbuild.add_block(end);
-                res.ftype = FType::none;
+                res.val = result_tmp;
             }
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
@@ -640,6 +675,10 @@ impl CodeGen {
                     let gend = self.gen_expr(expr.node.clone());
                     res.instrs.extend(gend.instrs);
                     res.returned = gend.returned;
+                    if gend.val.is_some() {
+                        res.val = gend.val;
+                        res.ftype = gend.ftype;
+                    }
                 }
                
                 if !res.returned && self.fbuild.func.is_some() {
@@ -1117,8 +1156,22 @@ impl CodeGen {
             }
             AstNode::VariableCast { name, target_type } => {
                 res.ftype = target_type.clone();
-                let symb  = self.symb_table.get(&name).unwrap();
-                let og_ft = symb.1.ftype.clone();
+                let og_ft = self.symb_table.get(&name).unwrap().1.ftype.clone();
+
+                if let (FType::Struct(enum_name), target) = (&og_ft, &target_type) {
+                    if matches!(target, FType::uint | FType::u32 | FType::ushort | FType::ubyte) {
+                        let paths = self.get_use_paths();
+                        if let Some(info) = self.struct_tab.get(enum_name, &paths) {
+                            if info.is_enum() {
+                                let tmp = self.new_temp(target);
+                                self.fbuild.assign_instr(tmp.clone(), target.clone(),
+                                    FInstr::Load(FValue::new(FVal::VarTmp(name.clone()), og_ft.clone()), target.clone()));
+                                res.val = Some(tmp);
+                                return res;
+                            }
+                        }
+                    }
+                }
 
                 match (&og_ft, &target_type) {
                     (FType::Ptr, FType::StructPtr(_)) | (FType::Ptr, FType::Struct(_)) |
@@ -1139,7 +1192,7 @@ impl CodeGen {
                     _other => {}
                 };
 
-                let ft_src = symb.1.ftype.clone();
+                let ft_src = og_ft.clone();
 
                 let tmp = self.new_temp(&target_type);
                 
@@ -1158,6 +1211,20 @@ impl CodeGen {
             AstNode::ExprCast { expr, target_type } => {
                 res.ftype = target_type.clone();
                 let gd = self.gen_expr(*expr);
+                if let (FType::Struct(enum_name), target) = (&gd.ftype, &target_type) {
+                    if matches!(target, FType::uint | FType::u32 | FType::ushort | FType::ubyte) {
+                        let paths = self.get_use_paths();
+                        if let Some(info) = self.struct_tab.get(enum_name, &paths) {
+                            if info.is_enum() {
+                                let tmp = self.new_temp(target);
+                                self.fbuild.assign_instr(tmp.clone(), target.clone(),
+                                    FInstr::Load(gd.val.clone().unwrap(), target.clone()));
+                                res.val = Some(tmp);
+                                return res;
+                            }
+                        }
+                    }
+                }
                 match (&gd.ftype, &target_type) {
                     (FType::Ptr, FType::StructPtr(_)) | (FType::Ptr, FType::Struct(_)) |
                         (FType::Ptr, FType::StructHeapPtr(_)) |

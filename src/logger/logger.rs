@@ -71,9 +71,12 @@ impl Logger {
                     }
                     self.emit(m.level, m.line, m.filename);
                 }
-                Err(e) => {
-                    eprintln!("{}", e);
-                    break;
+                Err(_) => {
+                    // Stop is the only normal completion signal. A disconnected
+                    // sender can mean parsing/codegen panicked or the driver
+                    // returned early; reporting success here hides that failure.
+                    eprintln!("Compilation aborted before completion.");
+                    return;
                 }
             }
         }

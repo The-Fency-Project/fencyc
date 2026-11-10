@@ -41,6 +41,35 @@ pub struct FcParser {
     match_header: bool,
 }
 
+#[cfg(test)]
+mod generic_lookahead_tests {
+    use super::*;
+
+    fn looks_generic(tokens: Vec<Tok>) -> bool {
+        FcParser::new(tokens.into_iter().map(|tok| Token::new(tok, 1)).collect())
+            .looks_like_generic_path()
+    }
+
+    #[test]
+    fn generic_arguments_before_a_literal_are_recognized() {
+        assert!(looks_generic(vec![Tok::LAngBr, Tok::Identifier("int".into()),
+            Tok::RAngBr, Tok::LCurBr]));
+    }
+
+    #[test]
+    fn comparison_cannot_scan_across_a_statement_into_a_match_arrow() {
+        assert!(!looks_generic(vec![Tok::LAngBr, Tok::Identifier("argc".into()),
+            Tok::Semicol, Tok::Identifier("i".into()), Tok::Equals,
+            Tok::RAngBr, Tok::LCurBr]));
+    }
+
+    #[test]
+    fn comparison_cannot_scan_across_an_operator_into_a_match_arrow() {
+        assert!(!looks_generic(vec![Tok::LAngBr, Tok::Identifier("argc".into()),
+            Tok::Equals, Tok::RAngBr, Tok::LCurBr]));
+    }
+}
+
 /// Parser based on Pratt parsing algorithm
 impl FcParser {
     pub fn new(toks: Vec<Token>) -> FcParser {
@@ -287,6 +316,13 @@ impl FcParser {
                                         return self.parse_call(&path);
                                     } else if self.peek_is(Tok::LCurBr) {
                                         return self.parse_struct_create(&path);
+                                    } else {
+                                        self.call_ctr += 1;
+                                        return AstNode::Call {
+                                            func_name: Box::new(path),
+                                            args: Vec::new(),
+                                            idx: self.call_ctr - 1,
+                                        };
                                     }
                                 }
                                 (_, Tok::Equals) => {
@@ -878,7 +914,13 @@ impl FcParser {
                             Some(Tok::LCurBr) | Some(Tok::LPar));
                     }
                 }
-                _ => {}
+                // Only scan tokens that can belong to a generic argument list.
+                // In particular, never cross statements or match arrows while
+                // deciding whether an expression's `<` means comparison.
+                Tok::Identifier(_) | Tok::Comma | Tok::Colon | Tok::LBr | Tok::RBr => {}
+                Tok::Combined(left, right)
+                    if matches!((left.as_ref(), right.as_ref()), (Tok::Colon, Tok::Colon)) => {}
+                _ => return false,
             }
         }
         false
@@ -1157,6 +1199,13 @@ impl FcParser {
                 .or_else(|| self.generic_params.iter()
                     .find(|g| *g == &arg_typename_start)
                     .map(|g| FType::Generic(g.clone())))
+                .or_else(|| Some(FType::Struct(
+                    if arg_typename_start.contains("::") {
+                        arg_typename_start.clone()
+                    } else {
+                        format!("{}::{}", self.curmod, arg_typename_start)
+                    }
+                )))
             .unwrap_or_else(|| {
                     panic!("{}: unknown type {}", self.line, arg_typename_start)
                 })
@@ -1357,7 +1406,14 @@ impl FcParser {
                 Tok::Identifier(name) if name == "_" => MatchPattern::Wildcard,
                 Tok::Identifier(name) => {
                     let path = self.parse_path(name);
-                    MatchPattern::Path(path)
+                    if self.peek_is(Tok::LPar) {
+                        self.consume();
+                        let binding = self.expect_idt().expect("Expected match payload binding");
+                        self.expect(Tok::RPar);
+                        MatchPattern::PathBinding(path, binding)
+                    } else {
+                        MatchPattern::Path(path)
+                    }
                 }
                 other => panic!("Unsupported match pattern {:?}", other),
             };
@@ -1721,6 +1777,7 @@ pub enum MatchPattern {
     Bool(bool),
     Wildcard,
     Path(AstNode),
+    PathBinding(AstNode, String),
 }
 
 impl AstNode {
