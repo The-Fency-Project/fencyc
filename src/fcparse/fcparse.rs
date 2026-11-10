@@ -287,6 +287,13 @@ impl FcParser {
                                         return self.parse_call(&path);
                                     } else if self.peek_is(Tok::LCurBr) {
                                         return self.parse_struct_create(&path);
+                                    } else {
+                                        self.call_ctr += 1;
+                                        return AstNode::Call {
+                                            func_name: Box::new(path),
+                                            args: Vec::new(),
+                                            idx: self.call_ctr - 1,
+                                        };
                                     }
                                 }
                                 (_, Tok::Equals) => {
@@ -1157,6 +1164,13 @@ impl FcParser {
                 .or_else(|| self.generic_params.iter()
                     .find(|g| *g == &arg_typename_start)
                     .map(|g| FType::Generic(g.clone())))
+                .or_else(|| Some(FType::Struct(
+                    if arg_typename_start.contains("::") {
+                        arg_typename_start.clone()
+                    } else {
+                        format!("{}::{}", self.curmod, arg_typename_start)
+                    }
+                )))
             .unwrap_or_else(|| {
                     panic!("{}: unknown type {}", self.line, arg_typename_start)
                 })
@@ -1357,7 +1371,14 @@ impl FcParser {
                 Tok::Identifier(name) if name == "_" => MatchPattern::Wildcard,
                 Tok::Identifier(name) => {
                     let path = self.parse_path(name);
-                    MatchPattern::Path(path)
+                    if self.peek_is(Tok::LPar) {
+                        self.consume();
+                        let binding = self.expect_idt().expect("Expected match payload binding");
+                        self.expect(Tok::RPar);
+                        MatchPattern::PathBinding(path, binding)
+                    } else {
+                        MatchPattern::Path(path)
+                    }
                 }
                 other => panic!("Unsupported match pattern {:?}", other),
             };
@@ -1721,6 +1742,7 @@ pub enum MatchPattern {
     Bool(bool),
     Wildcard,
     Path(AstNode),
+    PathBinding(AstNode, String),
 }
 
 impl AstNode {

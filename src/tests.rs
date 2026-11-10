@@ -195,5 +195,5 @@ fn test_unions_enums_example() {
 #[test]
 fn test_match_example() {
     compile(&["examples/9_match.fcy"], "testbins/9_match");
-    assert_eq!(run_bin("testbins/9_match"), "20\n2");
+    assert_eq!(run_bin("testbins/9_match"), "20\n0\n3");
 }

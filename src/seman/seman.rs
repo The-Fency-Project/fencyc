@@ -800,16 +800,41 @@ impl SemAn {
                 }
             }
             AstNode::Match { value, arms } => {
-                let _ = self.analyze_expr(value, logger);
-                for (_, body) in arms {
-                    let _ = self.analyze_expr(body, logger);
+                let value_dat = self.analyze_expr(value, logger);
+                let mut result_type = FType::none;
+                for (pattern, body) in arms {
+                    let binding = match pattern {
+                        MatchPattern::PathBinding(path, binding) => {
+                            let segs = path.path_to_segs();
+                            let owner = segs[..segs.len().saturating_sub(1)].join("::");
+                            let variant = segs.last().cloned().unwrap_or_default();
+                            let paths = self.get_use_paths();
+                            self.struct_tab.get(&owner, &paths)
+                                .and_then(|info| info.fields.get(&variant).map(|f| (binding.clone(), f.ftype.clone())))
+                        }
+                        _ => None,
+                    };
+                    let has_binding = binding.is_some();
+                    if let Some((name, ftype)) = binding {
+                        self.symb_table.enter_scope();
+                        self.symb_table.newsymb(FSymbol::new(name, VarPosition::None, ftype));
+                    }
+                    let body_dat = self.analyze_expr(body, logger);
+                    if has_binding { self.symb_table.exit_scope(); }
+                    if result_type == FType::none { result_type = body_dat.ftype.clone(); }
+                    else if result_type != body_dat.ftype {
+                        logger.send(LogMessage::new(LogLevel::Error(ErrKind::MismatchedTypes(
+                            result_type.clone(), body_dat.ftype)), self.line, self.fname.clone()));
+                    }
                 }
+                exprdat.ftype = result_type;
             }
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
                 for expr in exprs {
                     let ed = self.analyze_expr(expr, logger);
                     exprdat.has_returned = ed.has_returned;
+                    exprdat.ftype = ed.ftype;
                 }
                 self.symb_table.exit_scope();
             }
@@ -1849,23 +1874,29 @@ impl SemAn {
     }
 
     pub fn chk_cast(&mut self, from: &FType, to: &FType, logger: Sender<LogMessage>) {
-        match (from, to) {
-            (FType::Struct(st1), FType::Struct(st2)) |
-            (FType::StructPtr(st1), FType::StructPtr(st2)) |
-            (FType::StructHeapPtr(st1), FType::StructHeapPtr(st2)) | 
-            (FType::StructPtr(st1), FType::StructHeapPtr(st2)) |
-            (FType::StructHeapPtr(st1), FType::StructHeapPtr(st2))
-            if st1 != st2 => {
-                logger.send(LogMessage::new(
-                    LogLevel::Error(ErrKind::IllegalCast(
-                        from.clone(), to.clone()
-                    )),
-                    self.line,
-                    self.fname.clone(),
-                ));
+        let numeric = |ft: &FType| matches!(ft,
+            FType::int | FType::uint | FType::i32 | FType::u32 |
+            FType::ubyte | FType::ibyte | FType::ushort | FType::ishort |
+            FType::single | FType::double);
+        let enum_to_uint = match from {
+            FType::Struct(name) => {
+                let paths = self.get_use_paths();
+                self.struct_tab.get(name, &paths).map(|info| info.is_enum()).unwrap_or(false)
+                    && matches!(to, FType::uint | FType::u32 | FType::ushort | FType::ubyte)
             }
-            _other => {}
-            
+            _ => false,
+        };
+        let allowed = from == to || (numeric(from) && numeric(to)) || enum_to_uint || matches!(
+            (from, to),
+            (FType::Ptr, FType::StructPtr(_)) |
+            (FType::Ptr, FType::Struct(_)) |
+            (FType::Ptr, FType::StructHeapPtr(_)) |
+            (FType::StructHeapPtr(_), FType::StructPtr(_))
+        );
+        if !allowed {
+            logger.send(LogMessage::new(
+                LogLevel::Error(ErrKind::IllegalCast(from.clone(), to.clone())),
+                self.line, self.fname.clone()));
         }
     }
 
