@@ -1631,7 +1631,7 @@ impl FcParser {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum AstNode {
     none,
     NoParse, // internal astnode to stop parsing expr
@@ -1817,7 +1817,7 @@ pub enum AstNode {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum MatchPattern {
     Int(i64),
     Uint(u64),
@@ -1991,7 +1991,7 @@ pub fn generic_instance_name(base: &str, args: &[FType]) -> String {
     result
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Copy)]
 pub enum BinaryOp {
     Add, 
     Substract,
@@ -2007,7 +2007,7 @@ pub enum BinaryOp {
     Compare(CmpOp),
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Copy)]
 pub enum UnaryOp {
     Negate, 
     Not,
@@ -2016,7 +2016,7 @@ pub enum UnaryOp {
     Deref,
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Copy)]
 pub enum CmpOp {
     Eq, // ==
     Ge, // >=
@@ -2026,7 +2026,7 @@ pub enum CmpOp {
     Ne, // !=
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParseFlags {
     Public,
     StructImpl(String),
@@ -2065,7 +2065,7 @@ pub fn match_ftype(lit: &str) -> Option<FType> {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct AstRoot {
     pub node: AstNode,
     pub line: usize,
@@ -2082,7 +2082,7 @@ impl AstRoot {
     }    
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FuncArg {
     pub name: String, 
     pub ftype: FType
@@ -2104,7 +2104,7 @@ impl FuncArg {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FuncDat {
     pub name: AstNode,
     pub args: Vec<FuncArg>,
@@ -2162,7 +2162,7 @@ impl FuncDat {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FuncTable {
     // function name
     pub ft: HashMap<String, Vec<FuncDat>>
@@ -2213,7 +2213,7 @@ impl FuncTable {
 }
 
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Attr {
     Heap,
     Target(Vec<Target>),
@@ -2241,7 +2241,7 @@ impl Attr {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GenericType {
     pub name:   String,
     pub bounds: Vec<String>, // vec of needed trait names
@@ -2253,7 +2253,7 @@ impl GenericType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct TraitInfo {
     pub path: AstNode,
     pub req_funcs: HashMap<String, FuncDat>,
@@ -2291,7 +2291,7 @@ impl TraitInfo {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct TraitTable {
     pub t: HashMap<String, TraitInfo>,
     pub impls: HashMap<String, HashSet<String>>, // struct -> traits

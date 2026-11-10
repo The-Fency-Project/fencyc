@@ -41,7 +41,7 @@ impl FSymbol {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub enum FType {
     uint,
     Usize,
@@ -409,6 +409,8 @@ impl SemAn {
         res.extend(self.usedmods.iter().cloned());
         res
     }
+
+    pub fn set_module(&mut self, module: String) { self.module = module; }
 
     pub fn analyze(&mut self, ast: Arc<Vec<AstRoot>>, logger: &Sender<LogMessage>) 
         -> Result<(), ()> {
@@ -2205,7 +2207,7 @@ impl ExprDat {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct StructInfo {
     pub name: String,
     pub fields: IndexMap<String, StructField>,
@@ -2294,7 +2296,7 @@ impl StructInfo {
     
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct StructField {
     pub name: String,
     pub offset: usize,
@@ -2378,7 +2380,7 @@ enum LayoutMark {
     Done,
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct StructTable {
     pub tab: HashMap<String, StructInfo>,
 }

@@ -1,4 +1,5 @@
 /target
+/.fency/incr/
 examples/*_temp.*
 examples/*.vve
 fencyc-*

@@ -583,14 +583,14 @@ pub enum LoggerQuery {
     StatusResp(bool), // err or no
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum LogLevel {
     Error(ErrKind),
     Warning(WarnKind),
     Info(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum ErrKind {
     Redeclaration(String), // var name
     MismatchedTypes(FType, FType), // expected, found
@@ -655,7 +655,7 @@ pub enum ErrKind {
     ParseUnexpected(Tok),
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum WarnKind {
     Internal,
     IfStmtNotBool,

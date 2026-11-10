@@ -3,6 +3,7 @@
 - [Introduction](README.md)
 - [Repository map](repository-map.md)
 - [Compilation pipeline](pipeline.md)
+- [Separate compilation and caching](separate-compilation.md)
 - [Frontend](frontend.md)
 - [Semantic analysis and ownership](sema.md)
 - [MIR and backends](backends.md)

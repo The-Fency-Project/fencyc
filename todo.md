@@ -10,7 +10,8 @@
 ## Small/medium (unsorted)
 - further diagnostics (trait incompl func signature)
 - move in loops
-- incremential compilation
+- [x] Initial separate compilation and whole-unit incremental cache (`--library`, `--dep`)
+- Finer incremental compilation, interface hashes, and cache garbage collection
 - maybe move keyword
 - glob for input
 - unsafe stuff

@@ -567,6 +567,7 @@ impl MIRTranslator for QBEBackend {
     }
 
     fn translate_function(&mut self, func: &FFunction) {
+        if matches!(func.kind, crate::mir::mir::FFunctionKind::Extern) { return; }
         let qlinkage = match func.public {
             true => Linkage::public(),
             false => Linkage::private()

@@ -33,10 +33,14 @@ pub struct CodeGen {
     pub symb_table: SymbolTable,
     func_tab: Arc<FuncTable>,
     struct_tab: Arc<StructTable>,
+    trait_tab: Arc<fparse::TraitTable>,
     should_push: bool,
     tmp_ctr: usize,
     dslbl_ctr: usize,
     local_funcs: HashSet<String>,
+    pub specialization_signatures: Vec<fparse::FuncDat>,
+    pub specialization_errors: Vec<crate::logger::logger::LogMessage>,
+    owned_generics: HashSet<String>,
     labels: HashMap<String, usize>, // usize for sbuf idx
     loop_exits: Vec<String>,
     loop_conts: Vec<String>,
@@ -54,7 +58,7 @@ pub struct CodeGen {
 
 impl CodeGen {
     pub fn new(ast: Arc<Vec<AstRoot>>, mo: OverloadTable, 
-        fnctb: Arc<FuncTable>, struct_tab: Arc<StructTable>, flags: Arc<InputFlags>,
+        fnctb: Arc<FuncTable>, struct_tab: Arc<StructTable>, trait_tab: Arc<fparse::TraitTable>, flags: Arc<InputFlags>,
         genfuncs: Arc<HashMap<String, AstRoot>>,
         genimpls: Arc<HashMap<String, AstRoot>>,
         prev_gen: Arc<RwLock<IndexSet<String>>>)
@@ -67,6 +71,7 @@ impl CodeGen {
             fbuild: FuncBuilder::new(),
             func_tab: fnctb,
             struct_tab: struct_tab,
+            trait_tab,
             should_push: true,
             symb_table: SymbolTable::new(),
             tmp_ctr: 0,
@@ -76,6 +81,9 @@ impl CodeGen {
             loop_conts: Vec::new(),
             matched_overloads: mo,
             local_funcs: HashSet::new(),
+            specialization_signatures: Vec::new(),
+            specialization_errors: Vec::new(),
+            owned_generics: HashSet::new(),
             need_addr: false,
             expected_type: FType::none,
             usedmods: Vec::new(),
@@ -120,25 +128,34 @@ impl CodeGen {
             let _gdat = self.gen_expr(node_cl);
             self.cur_ast += 1;
 
-            if !self.deffered_gen.is_empty() && was_func {
+            while !self.deffered_gen.is_empty() {
                 let ars: Vec<AstRoot> = self.deffered_gen.drain(..).collect(); 
                 for ar in ars {
                     let name = ar.node.get_func_name();
 
-                    let already_generated = {
-                        let lock = self.prev_gen.read().unwrap();
-                        lock.contains(&name)
+                    let claimed = self.owned_generics.remove(&name) || {
+                        self.prev_gen.write().unwrap().insert(name.clone())
                     };
-                    if already_generated {
-                        continue;
+                    if !claimed { continue; }
+                    if let Some(signature) = fparse::FuncDat::new_from_astn(&ar.node) {
+                        self.specialization_signatures.push(signature);
                     }
+                    let saved_overloads = self.matched_overloads.clone();
+                    self.analyze_specialization(&ar);
+                    if self.specialization_errors.is_empty() { self.gen_expr(ar.node); }
+                    self.matched_overloads = saved_overloads;
 
-                    self.gen_expr(ar.node);
-
-                    let mut lock = self.prev_gen.write().unwrap();
-                    lock.insert(name);
                 }
             }
+        }
+        for signature in self.specialization_signatures.clone() {
+            let symbol = signature.symbol_name(0);
+            if self.local_funcs.contains(&symbol) || self.module.funcs.iter().any(|f| f.name == symbol) { continue; }
+            let (types, ret, variadic) = FType::abi_signature(&signature.args.iter().map(|a| a.ftype.clone()).collect::<Vec<_>>(), &signature.ret_type);
+            let mut function = FFunction::new(symbol, false, types.iter().enumerate().map(|(i,t)|
+                (FValue::new(FVal::VarTmp(format!("arg_{i}")), t.clone()), t.clone())).collect(), ret, FFunctionKind::Extern);
+            function.variadic = variadic;
+            self.module.add_func(function);
         }
         self.finalize(); 
     }
@@ -1773,7 +1790,7 @@ impl CodeGen {
         let mname = name.path_to_segs().join("_");
         let mut func = FFunction::new(
             format!("{}_{}", mname, over_idx),
-            public,
+            public || self.flags.library,
             args_mir, 
             ret_mir_type,
             FFunctionKind::Local
@@ -1804,8 +1821,27 @@ impl CodeGen {
         self.fbuild.args_passed.clear();
     }
 
-    /// Generates generic function and returns name of it 
-    fn gen_generic_func(&mut self, fname: &str, args_ft: Vec<FType>, 
+    /// Recompute call IDs in a concrete body imported from another compilation unit.
+    fn analyze_specialization(&mut self, root: &AstRoot) {
+        let mut table = (*self.func_tab).clone();
+        if let Some(signature) = fparse::FuncDat::new_from_astn(&root.node) {
+            table.ft.insert(signature.name.path_to_string(), vec![signature]);
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut analyzer = crate::seman::seman::SemAn::new(self.flags.permissive, Arc::new(table),
+            "<generic specialization>".into(), self.struct_tab.clone(), self.flags.target, self.trait_tab.clone());
+        // Use the definition's namespace for visibility and unqualified body calls.
+        let owner = root.node.get_func_name().rsplit_once("::").map(|(m,_)| m.to_owned()).unwrap_or_default();
+        let owner = owner.rsplit_once("::").map(|(m,_)| m).unwrap_or(&owner).to_owned();
+        analyzer.set_module(owner);
+        analyzer.analyze(Arc::new(vec![root.clone()]), &tx).ok();
+        drop(tx);
+        self.specialization_errors.extend(rx.into_iter().filter(|m| matches!(m.level, crate::logger::logger::LogLevel::Error(_))));
+        self.matched_overloads.extend(analyzer.matched_overloads);
+    }
+
+    /// Generate or reference a monomorphized function.
+    fn gen_generic_func(&mut self, fname: &str, args_ft: Vec<FType>,
         ret_ft: &FType) -> String {
 
         let mut f_ast = self.genfuncs.get(fname)
@@ -1840,12 +1876,13 @@ impl CodeGen {
         };
 
         let mut res = new_name.join("_");
-        // don't generate if already did earlier 
-        let already_generated = {
-            let lock = self.prev_gen.read().unwrap();
-            lock.contains(&res)
-        };
-        if !already_generated {
+        let canonical = f_ast.node.get_func_name();
+        if let Some(signature) = fparse::FuncDat::new_from_astn(&f_ast.node) {
+            self.specialization_signatures.push(signature);
+        }
+        let claimed = self.prev_gen.write().unwrap().insert(canonical.clone());
+        if claimed {
+            self.owned_generics.insert(canonical);
             self.deffered_gen.push(f_ast);
         }
 
