@@ -45,6 +45,7 @@ pub enum Tok {
     LABEq, // <=
     Hash, // #
     DoubleDot, // ..
+    Ellipsis, // ...
     Dot,
     Comma,
     Percent, // %
@@ -71,6 +72,10 @@ impl Token {
 
 pub fn tokenize(filepath: &str) -> Vec<Token> {
     let contents = fs::read_to_string(filepath).unwrap();
+    tokenize_source(&contents)
+}
+
+pub fn tokenize_source(contents: &str) -> Vec<Token> {
     let mut chars = contents.chars().peekable();
     let mut res: Vec<Token> = Vec::new();
     let mut line: usize = 1;
@@ -192,7 +197,7 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
                 chars.next();
                 if let Some('/') = chars.peek() {
                     // ignoring comment
-                    while chars.peek() != Some(&'\n') {
+                    while chars.peek().is_some() && chars.peek() != Some(&'\n') {
                         chars.next();
                     }
                 } else {
@@ -208,13 +213,25 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '"' => {
                 chars.next();
                 let mut res_str = String::new();
-                while let Some(ch) = chars.peek() {
-                    if *ch == '"' {break;}
-                    res_str.push(*ch);
-                    chars.next();
-                };
+                while let Some(ch) = chars.next() {
+                    if ch == '"' { break; }
+                    if ch == '\\' {
+                        match chars.next() {
+                            Some('n') => res_str.push('\n'),
+                            Some('r') => res_str.push('\r'),
+                            Some('t') => res_str.push('\t'),
+                            Some('0') => res_str.push('\0'),
+                            Some('"') => res_str.push('"'),
+                            Some('\\') => res_str.push('\\'),
+                            Some(other) => { res_str.push('\\'); res_str.push(other); }
+                            None => break,
+                        }
+                    } else {
+                        if ch == '\n' { line += 1; }
+                        res_str.push(ch);
+                    }
+                }
                 res.push(Token::new(Tok::strlit(res_str), line));
-                chars.next();
             }
             '[' => {res.push(Token::new(Tok::LBr, line)); chars.next();},
             ']' => {res.push(Token::new(Tok::RBr, line)); chars.next();},
@@ -293,8 +310,13 @@ pub fn tokenize(filepath: &str) -> Vec<Token> {
             '.' => {
                 chars.next();
                 if Some('.') == chars.peek().copied() {
-                    res.push(Token::new(Tok::DoubleDot, line));
                     chars.next();
+                    if chars.peek() == Some(&'.') {
+                        chars.next();
+                        res.push(Token::new(Tok::Ellipsis, line));
+                    } else {
+                        res.push(Token::new(Tok::DoubleDot, line));
+                    }
                 } else {
                     res.push(Token::new(Tok::Dot, line));
                 }
@@ -365,7 +387,6 @@ pub enum Kword {
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum Intrinsic {
-    Print,
     Len,
     Sizeof,
     Typeof,
@@ -400,7 +421,6 @@ fn match_symb_tok(word: &str) -> Tok {
         "match" => Tok::Keyword(Kword::Match),
 
         "_len" => Tok::Intrin(Intrinsic::Len),
-        "printintrin" => Tok::Intrin(Intrinsic::Print),
         "sizeof" => Tok::Intrin(Intrinsic::Sizeof),
         "typeof" => Tok::Intrin(Intrinsic::Typeof),
         "_bitsof" => Tok::Intrin(Intrinsic::BitsOf),

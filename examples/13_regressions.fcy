@@ -1,0 +1,34 @@
+pub extern func printf(format: str, ...) -> i32;
+
+struct Pair<Z, A> { pub first: Z pub second: A }
+
+func main() {
+    let pair = Pair<uint, int> { first: 9u; second: -4; };
+    main::printf("%lu\n", pair.first);
+    main::printf("%ld\n", pair.second);
+    main::printf("%d\n", -1i < 0i);
+    main::printf("%lu\n", 18446744073709551615u / 3u);
+    main::printf("%lu\n", 18446744073709551615u % 3u);
+    main::printf("%ld\n", (255ub)$int);
+    main::printf("%ld\n", (-1ib)$int);
+    main::printf("%d\n", (260)$ubyte);
+    main::printf("%d\n", (255)$ibyte);
+    main::printf("%f\n", (-2i)$double);
+    main::printf("%d\n", (3.75f)$i32);
+    main::printf("%f\n", (6i)$float);
+    let shorts = [12uh, 65000uh]ushort;
+    let words = [-3i, -9i]i32;
+    main::printf("%d\n", shorts[1u]);
+    main::printf("%d\n", words[1u]);
+    main::printf("%d\n", "a" != "b");
+    main::printf("%d\n", "same" != "same");
+    main::printf("%s\n", "line one\nline two");
+    main::printf("%d\n", 0.5 < 1.5);
+    main::printf("%d\n", 2.0f >= 1.0f);
+    for let i = 0u in i < 3u; i += 1u {
+        if i == 2u { break; }
+        if i == 1u { break; }
+        main::printf("%ld\n", i);
+    }
+    return;
+}

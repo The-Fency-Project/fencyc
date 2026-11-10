@@ -78,6 +78,38 @@ impl QBEBackend {
     }
 
     fn get_conv(ft_src: &FType, target_type: &FType, src: QValue) -> QInstr {
+        if ft_src.is_numerical() && target_type.is_numerical() {
+            if ft_src == target_type { return QInstr::Copy(src); }
+            return match (ft_src.is_float(), target_type.is_float()) {
+                (true, true) => if matches!(target_type, FType::double) { QInstr::Exts(src) } else { QInstr::Truncd(src) },
+                (true, false) => match (ft_src, target_type.is_signed()) {
+                    (FType::single, true) => QInstr::Stosi(src),
+                    (FType::single, false) => QInstr::Stoui(src),
+                    (_, true) => QInstr::Dtosi(src),
+                    (_, false) => QInstr::Dtoui(src),
+                },
+                (false, true) => match (ft_src.size(None) > 4, ft_src.is_signed()) {
+                    (true, true) => QInstr::Sltof(src),
+                    (true, false) => QInstr::Ultof(src),
+                    (false, true) => QInstr::Swtof(src),
+                    (false, false) => QInstr::Uwtof(src),
+                },
+                (false, false) => {
+                    if target_type.size(None) <= ft_src.size(None) { QInstr::Copy(src) }
+                    else { match ft_src {
+                        FType::ibyte => QInstr::Extsb(src),
+                        FType::ubyte => QInstr::Extub(src),
+                        FType::ishort => QInstr::Extsh(src),
+                        FType::ushort => QInstr::Extuh(src),
+                        FType::i32 => QInstr::Extsw(src),
+                        FType::u32 => QInstr::Extuw(src),
+                        _ => QInstr::Copy(src),
+                    }}
+                }
+            };
+        }
+        if matches!((ft_src, target_type), (FType::bool, FType::i32)) { return QInstr::Copy(src); }
+        if matches!((ft_src, target_type), (FType::bool, FType::uint)) { return QInstr::Extuw(src); }
         match (ft_src, target_type) {
             (ft1, ft2) if *ft1 == *ft2 => {
                 QInstr::Copy(src)
@@ -189,32 +221,18 @@ impl QBEBackend {
                 => (QType::Word, Self::get_conv(cur, &FType::u32, ogv)),
             FType::ibyte | FType::ishort 
                 => (QType::Word, Self::get_conv(cur, &FType::i32, ogv)),
-            other => {
-                self.emit_assign(
-                    tmp.clone(),
-                    Self::match_ft_qbf(cur),
-                    QInstr::Copy(ogv)
-                );
-                return tmp;
-            }
+            _ => return ogv,
         };
 
         self.emit_assign(tmp.clone(), new_qt, qi);
         tmp
     }
 
-    fn lower_expr(&mut self, expr: &FInstr, need_type: &FType) -> QValue {
+    fn lower_expr(&mut self, expr: &FInstr, need_type: &FType, destination: Option<QValue>) -> QValue {
         match expr {
-            FInstr::Copy(ft, fv) => {
-                let tmp = self.new_tmp();
-                let qv = Self::transl_val(&fv);
-                let qt = Self::match_ft_qbf_t(ft, true);
-
-                self.emit_assign(tmp.clone(), qt, QInstr::Copy(qv));
-                tmp
-            }
+            FInstr::Copy(_, fv) => Self::transl_val(fv),
             FInstr::BinaryOp(bop, fv1, fv2) => {
-                let tmp = self.new_tmp();
+                let tmp = destination.clone().unwrap_or_else(|| self.new_tmp());
 
                 let qt = Self::qt_from_var(fv1);
                 let (qv1, qv2) = (Self::transl_val(fv1), Self::transl_val(fv2));
@@ -223,7 +241,9 @@ impl QBEBackend {
                     IRBinOp::Add => QInstr::Add(qv1, qv2),
                     IRBinOp::Sub => QInstr::Sub(qv1, qv2),
                     IRBinOp::Mul => QInstr::Mul(qv1, qv2),
+                    IRBinOp::Div if !fv1.ftype.is_signed() && !fv1.ftype.is_float() => QInstr::Udiv(qv1, qv2),
                     IRBinOp::Div => QInstr::Div(qv1, qv2),
+                    IRBinOp::Rem if !fv1.ftype.is_signed() => QInstr::Urem(qv1, qv2),
                     IRBinOp::Rem => QInstr::Rem(qv1, qv2),
 
                     IRBinOp::And => QInstr::And(qv1, qv2),
@@ -260,12 +280,19 @@ impl QBEBackend {
                     other => todo!("{:?}", other)
                 };
 
-                let tmp = self.new_tmp();
+                let tmp = destination.clone().unwrap_or_else(|| self.new_tmp());
                 self.emit_assign(
                     tmp.clone(), 
-                    qt.clone(), 
+                    QType::Word,
                     QInstr::Cmp(qt, qop, qv1, qv2)
                 );
+                tmp
+            }
+            FInstr::Invoke(target, args, boundary) => {
+                let tmp = destination.clone().unwrap_or_else(|| self.new_tmp());
+                let args = args.iter().map(|(v, t)| (Self::match_ft_qbf_t(t, true), Self::transl_val(v))).collect();
+                self.emit_assign(tmp.clone(), Self::match_ft_qbf(need_type),
+                    QInstr::CallIndirect(Self::transl_val(target), args, boundary.map(|n| n as u64)));
                 tmp
             }
             FInstr::Call(nm, args) => {
@@ -276,7 +303,7 @@ impl QBEBackend {
                     ))
                     .collect();
 
-                let tmp = self.new_tmp();
+                let tmp = destination.clone().unwrap_or_else(|| self.new_tmp());
                 self.emit_assign(
                     tmp.clone(),
                     Self::match_ft_qbf(need_type),
@@ -290,7 +317,7 @@ impl QBEBackend {
             }
             FInstr::Neg(fv) => {
                 let qv = Self::transl_val(fv);
-                let tmp = self.new_tmp();
+                let tmp = destination.clone().unwrap_or_else(|| self.new_tmp());
                 self.emit_assign(
                     tmp.clone(), 
                     Self::match_ft_qbf_t(need_type, true), 
@@ -307,7 +334,7 @@ impl QBEBackend {
                     allocated in QBE, but found {other}")
                 };
 
-                let tmp = self.new_tmp();
+                let tmp = destination.clone().unwrap_or_else(|| self.new_tmp());
                 self.emit_assign(
                     tmp.clone(),
                     QType::Long,
@@ -318,11 +345,11 @@ impl QBEBackend {
             FInstr::Load(fv, ft) => {
                 let qv = Self::transl_val(fv);
                 let qt = match ft {
-                    FType::none => Self::match_ft_qbf_t(need_type, false),
-                    other => Self::match_ft_qbf_t(other, false),
+                    FType::none => Self::match_ft_qbf_t(need_type, true),
+                    other => Self::match_ft_qbf_t(other, true),
                 };
 
-                let tmp = self.new_tmp();
+                let tmp = destination.clone().unwrap_or_else(|| self.new_tmp());
                 self.emit_assign(
                     tmp.clone(), 
                     qt.clone(), 
@@ -335,7 +362,7 @@ impl QBEBackend {
                 let qv_base   = Self::transl_val(fv_base);
                 let qv_offset = Self::transl_val(fv_offset);
                 
-                let tmp = self.new_tmp();
+                let tmp = destination.clone().unwrap_or_else(|| self.new_tmp());
                 self.emit_assign(
                     tmp.clone(),
                     QType::Long,
@@ -354,8 +381,8 @@ impl QBEBackend {
                     QInstr::Add(qv_base, qv_offset)
                 );
 
-                let qt = Self::match_ft_qbf(&ft);
-                let res_tmp = self.new_tmp();
+                let qt = Self::match_ft_qbf_t(&ft, true);
+                let res_tmp = destination.clone().unwrap_or_else(|| self.new_tmp());
                 self.emit_assign(
                     res_tmp.clone(), 
                     qt.clone(), 
@@ -372,7 +399,7 @@ impl QBEBackend {
 
                 let cast_instr = Self::get_conv(ft_from, ft_to, qv.clone());
                 
-                let tmp = self.new_tmp();
+                let tmp = destination.clone().unwrap_or_else(|| self.new_tmp());
                 self.emit_assign(
                     tmp.clone(),
                     qt_to.clone(),
@@ -393,7 +420,7 @@ impl QBEBackend {
 
                 let qt_to = Self::match_ft_qbf_t(ft_to, false);
                 
-                let tmp = self.new_tmp();
+                let tmp = destination.clone().unwrap_or_else(|| self.new_tmp());
                 self.emit_assign(
                     tmp.clone(),
                     qt_to.clone(),
@@ -415,7 +442,8 @@ impl QBEBackend {
 
     fn fdi_to_qdi(fdi: &FDataItem) -> QDataItem {
         match fdi {
-            FDataItem::Str(s) => QDataItem::Str(s.clone()),
+            FDataItem::Str(s) => QDataItem::Str(s.replace('\\', "\\\\").replace('"', "\\\"")
+                .replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t").replace('\0', "\\000")),
             FDataItem::Zeroes(c) => QDataItem::Zero(*c as u64)
         }
     }
@@ -481,13 +509,9 @@ impl QBEBackend {
             FType::double            => QType::Double,
             FType::single            => QType::Single,
             FType::u32 | FType::i32  => QType::Word,
-            FType::Array(el, _)    => {
-                Self::match_ft_qbf(
-                    &*el
-                )
-            },
+            FType::Array(_, _) => QType::Long,
             FType::strconst | FType::StructPtr(_)
-                | FType::StructHeapPtr(_) | FType::Ptr => QType::Long, // ptr 
+                | FType::StructHeapPtr(_) | FType::Ptr | FType::Function(..) => QType::Long, // ptr
             FType::bool | FType::ubyte if straight 
                 => QType::UnsignedByte,
             FType::ibyte if straight => QType::SignedByte,
@@ -596,13 +620,18 @@ impl MIRTranslator for QBEBackend {
                 let q_lhs = Self::transl_val(&lhs);
                 let qt = Self::match_ft_qbf(ft);
 
-                let q_rhs = self.lower_expr(&**rhs, &ft); 
+                let narrow = matches!(ft, FType::ubyte | FType::ibyte | FType::ushort | FType::ishort);
+                let q_rhs = self.lower_expr(&**rhs, ft, if narrow { None } else { Some(q_lhs.clone()) });
 
                 let q_rhs = self.border_qtype(q_rhs, ft);
 
-                self.emit_assign(q_lhs, qt, QInstr::Copy(q_rhs));
+                if q_lhs != q_rhs { self.emit_assign(q_lhs, qt, QInstr::Copy(q_rhs)); }
             }
 
+            FInstr::Invoke(target, args, boundary) => {
+                let args = args.iter().map(|(v, t)| (Self::match_ft_qbf_t(t, true), Self::transl_val(v))).collect();
+                self.emit(QInstr::CallIndirect(Self::transl_val(target), args, boundary.map(|n| n as u64)));
+            }
             FInstr::Call(nm, args) => {
                 let qargs: Vec<(QType, QValue)> = args.iter()
                     .map(|(fv, ft)| (
@@ -638,6 +667,7 @@ impl MIRTranslator for QBEBackend {
 
     fn translate_term(&mut self, term: &FTerm) {
         match term {
+            FTerm::Unreachable => self.emit(QInstr::Hlt),
             FTerm::Return(v) => match v {
                 Some(v) => self.emit(QInstr::Ret(
                     Some(Self::transl_val(&v))
@@ -646,20 +676,7 @@ impl MIRTranslator for QBEBackend {
             }
             FTerm::Jump(lbl) => self.emit(QInstr::Jmp(lbl.clone())),
             FTerm::Branch { cond, then_bl, else_bl } => {
-                let cond_val = Self::transl_val(&cond);
-                let qt = Self::match_ft_qbf(&Self::ft_from_var(cond));
-                let tmp = self.new_tmp();
-                self.emit_assign(
-                    tmp.clone(),
-                    qt.clone(),
-                    QInstr::Cmp(
-                        qt,
-                        qbe::Cmp::Eq,
-                        cond_val.clone(),
-                        QValue::Const(1))
-                    );
-                
-                self.emit(QInstr::Jnz(tmp, then_bl.clone(), else_bl.clone()));
+                self.emit(QInstr::Jnz(Self::transl_val(cond), then_bl.clone(), else_bl.clone()));
             }
             FTerm::none => 
                 panic!("Reached none terminator; each block must end with some term"),

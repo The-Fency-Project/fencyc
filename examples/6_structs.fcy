@@ -1,3 +1,5 @@
+pub extern func printf(format: str, ...) -> i32;
+
 // Structures example.
 // Fency structures are represented in memory like C structs.
 
@@ -35,9 +37,9 @@ impl second {
 // Pass struct by pointer 
 // So you may modify original struct here
 func print_both(s: *second) {
-    printintrin s.a;
+    main::printf("%ld\n", s.a);
     s.b = 289;
-    printintrin s.b;
+    main::printf("%ld\n", s.b);
 
     return;
 }
@@ -49,14 +51,14 @@ func print_both_pass(v: s_second) {
     // passed by value (like here), we only change this copy 
     // so original struct wont be affected
     v.a = 99;
-    printintrin v.c;
+    main::printf("%ld\n", v.c);
 
     return;
 }
 
 // passing by heap pointer
 func print_h(s: h_second) {
-    printintrin s.b;
+    main::printf("%ld\n", s.b);
 
     return;
 }
@@ -78,9 +80,9 @@ func main() {
 
     print_both(&test); // would change b to 289 btw
 
-    printintrin test.a;
-    printintrin test.b;
-    printintrin test.c;
+    main::printf("%ld\n", test.a);
+    main::printf("%ld\n", test.b);
+    main::printf("%ld\n", test.c);
 
     // Passing a struct by value destructively moves it; use it last.
     print_both_pass(test);
@@ -101,7 +103,7 @@ func main() {
     
     let test4 = second::new(321, 123, 234);
     test4.incb();
-    printintrin test4.b; // 124
+    main::printf("%ld\n", test4.b); // 124
     // every h_ ptr will be freed with RAII.
 
     return;

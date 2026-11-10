@@ -1,14 +1,8 @@
 # Unions and enums
 
-Unions and Rust-like enums currently support declarations, concrete layout, construction, and ownership-aware aggregate storage.
+Unions provide overlapping storage with an explicitly chosen member. Enums provide an eight-byte discriminant and shared storage for the largest payload, with zero or one payload per variant. Both can be named directly in type annotations.
 
-The intended direction is:
-
-- unions provide overlapping storage with an explicitly chosen active member;
-- enums provide a discriminant and zero or one payload field per variant;
-- payloads follow the normal `s_T`/`h_T` move and destruction rules;
-- simple literal, wildcard, and enum-variant matching is supported;
-- payload bindings and exhaustive-match diagnostics are not implemented yet.
+Aggregate ownership checks are currently shallow. Nested payload destruction and moves across control flow still need work before these types can underpin owning stdlib containers.
 
 Current syntax is:
 
@@ -18,9 +12,16 @@ enum Result { Ok(int), Err(str), None }
 ```
 
 ```fcy
-match result {
-    Result::Ok => { printintrin 1; }
-    Result::None => { printintrin 2; }
-    _ => { printintrin 3; }
-}
+let result: Result = Result::Ok(7);
+let value = match result {
+    Result::Ok(v) => { v + 1; }
+    Result::Err => { 0; }
+    Result::None => { -1; }
+};
 ```
+
+`Result::None` constructs a unit variant. A payload binding such as `Ok(v)` is scoped to its arm; a variant pattern without a binding ignores its payload. All arms that produce a value must agree on its type. Arms may also return from the enclosing function.
+
+Matches must be exhaustive: cover each enum variant, both boolean values, or include `_`. Integer matches require a wildcard. Integer literals, booleans, wildcards, and enum variants are supported. Struct value matching through the future `Eq` trait is not implemented yet.
+
+Casting an enum to `uint`, `u32`, `ushort`, or `ubyte` yields its zero-based declaration index, truncated to the destination width. The first variant has index zero.

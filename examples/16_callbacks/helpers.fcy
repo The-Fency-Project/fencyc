@@ -1,0 +1,13 @@
+module helpers {
+    pub func sum(values: ...int) -> int {
+        let total = 0;
+        for let i = 0u in i < _len values; i += 1u {
+            total += values[i];
+        }
+        return total;
+    }
+
+    pub func run(callback: func(...int) -> int) -> int {
+        return callback(3, 7);
+    }
+}

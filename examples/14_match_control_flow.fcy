@@ -1,0 +1,34 @@
+pub extern func printf(format: str, ...) -> i32;
+
+enum Choice { Number(int), Empty }
+
+func choose(c: Choice) -> int {
+    match c {
+        Choice::Number(v) => { return v + 1; }
+        Choice::Empty => { return 0; }
+    }
+}
+
+func mixed(c: Choice) -> int {
+    let n = match c {
+        Choice::Number(v) => { v; }
+        Choice::Empty => { return -1; }
+    };
+    return n;
+}
+
+func branch(b: bool) -> int {
+    if b { return 1; } else { return 2; }
+}
+
+func main() {
+    main::printf("%ld\n", choose(Choice::Number(6)));
+    main::printf("%ld\n", choose(Choice::Empty));
+    main::printf("%ld\n", mixed(Choice::Number(9)));
+    main::printf("%ld\n", mixed(Choice::Empty));
+    main::printf("%ld\n", branch(true));
+    main::printf("%ld\n", branch(false));
+    let n = match true { true => {11;} false => {12;} };
+    main::printf("%ld\n", n);
+    return;
+}

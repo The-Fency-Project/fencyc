@@ -113,6 +113,11 @@ impl FcParser {
             line_n = tok.line;
             let optok = &tok.tok.clone();
 
+            if *optok == Tok::LPar {
+                left = AstNode::CallValue { callee: Box::new(left), args: self.parse_args_call() };
+                continue;
+            }
+
             if *optok == Tok::Semicol {
                 self.consume();
                 break;
@@ -314,15 +319,10 @@ impl FcParser {
                                     
                                     if self.peek_is(Tok::LPar) {
                                         return self.parse_call(&path);
-                                    } else if self.peek_is(Tok::LCurBr) {
+                                    } else if self.peek_is(Tok::LCurBr) && !self.match_header {
                                         return self.parse_struct_create(&path);
                                     } else {
-                                        self.call_ctr += 1;
-                                        return AstNode::Call {
-                                            func_name: Box::new(path),
-                                            args: Vec::new(),
-                                            idx: self.call_ctr - 1,
-                                        };
+                                        return AstNode::Variable(path.path_to_string());
                                     }
                                 }
                                 (_, Tok::Equals) => {
@@ -359,12 +359,16 @@ impl FcParser {
                             self.consume();
                             let ftype = self.parse_ftype();
 
-                            return AstNode::VariableCast {
-                                name: idt.to_owned(), 
-                                target_type: ftype, 
+                            return AstNode::ExprCast {
+                                expr: Box::new(buf.last().unwrap().clone()),
+                                target_type: ftype,
                             }
                         }
                         Tok::LPar => { // function call
+                            if !matches!(buf.last(), Some(AstNode::Variable(_))) {
+                                let callee = Box::new(buf.last().unwrap().clone());
+                                return AstNode::CallValue { callee, args: self.parse_args_call() };
+                            }
                             let name = AstNode::string_to_path(idt);
 
                             return self.parse_call(&name); 
@@ -827,6 +831,7 @@ impl FcParser {
 
     fn parse_args_call(&mut self) -> Vec<AstRoot> {
         let mut res: Vec<AstRoot> = Vec::new();
+        let old_header = std::mem::replace(&mut self.match_header, false);
 
         self.expect(Tok::LPar);
         while let Some(t) = self.peek() {
@@ -838,11 +843,13 @@ impl FcParser {
                 self.expect(Tok::Comma);
             }
 
+
             let newval = self.parse_expr(0);
 
             res.push(newval);
         };
 
+        self.match_header = old_header;
         res
     }
 
@@ -931,7 +938,9 @@ impl FcParser {
     }
 
     fn parse_if(&mut self) -> AstNode {
+        let old_header = std::mem::replace(&mut self.match_header, true);
         let condition = self.parse_expr(0); 
+        self.match_header = old_header;
 
         let iftrue = Box::new(self.parse_expr(0));
         let iffalse: Option<Box<AstRoot>> = match self.peek() {
@@ -1000,7 +1009,9 @@ impl FcParser {
     }
 
     fn parse_whileloop(&mut self) -> AstNode {
+        let old_header = std::mem::replace(&mut self.match_header, true);
         let condition = self.parse_expr(0);
+        self.match_header = old_header;
 
         let body = self.parse_expr(0);
 
@@ -1096,10 +1107,22 @@ impl FcParser {
                 self.expect(Tok::Comma);
             }
 
+            if self.peek_is(Tok::Ellipsis) {
+                self.consume();
+                res.push(FuncArg::new("__c_varargs".into(), FType::Variadic(Box::new(FType::none))));
+                continue;
+            }
+
             let arg_name = self.expect_idt().unwrap_or_else(|| {
                 panic!("{}: expected arg name", self.line)}
             );
             self.expect(Tok::Colon);
+            if self.peek_is(Tok::Ellipsis) {
+                self.consume();
+                let ft = self.parse_ftype();
+                res.push(FuncArg::new(arg_name, FType::Variadic(Box::new(ft))));
+                continue;
+            }
             if let Some(v) = self.peek() {
                 if v.tok == Tok::LBr {
                     self.consume();
@@ -1133,6 +1156,23 @@ impl FcParser {
     }
 
     fn parse_ftype(&mut self) -> FType {
+        if self.peek_is(Tok::Keyword(Kword::Func)) {
+            self.consume();
+            self.expect(Tok::LPar);
+            let mut args = Vec::new();
+            while !self.peek_is(Tok::RPar) {
+                if !args.is_empty() { self.expect(Tok::Comma); }
+                if self.peek_is(Tok::Ellipsis) {
+                    self.consume();
+                    let tail = if self.peek_is(Tok::RPar) { FType::none } else { self.parse_ftype() };
+                    args.push(FType::Variadic(Box::new(tail)));
+                    break;
+                }
+                args.push(self.parse_ftype());
+            }
+            self.expect(Tok::RPar);
+            return FType::Function(args, Box::new(self.parse_func_rettype()));
+        }
         let mut is_ptr = false;
         let mut is_arr = false;
        
@@ -1199,13 +1239,16 @@ impl FcParser {
                 .or_else(|| self.generic_params.iter()
                     .find(|g| *g == &arg_typename_start)
                     .map(|g| FType::Generic(g.clone())))
-                .or_else(|| Some(FType::Struct(
-                    if arg_typename_start.contains("::") {
-                        arg_typename_start.clone()
-                    } else {
-                        format!("{}::{}", self.curmod, arg_typename_start)
+                .or_else(|| {
+                    let path = self.parse_path(arg_typename_start.clone());
+                    let base = self.qualify_generic_struct(&path.path_to_string());
+                    let params = path.get_generic_names();
+                    if params.is_empty() { Some(FType::Struct(base)) } else {
+                        let args = params.iter().map(|arg| self.generic_arg_type(arg)).collect::<Vec<_>>();
+                        self.generic_structs.push((base.clone(), args.clone()));
+                        Some(FType::Struct(generic_instance_name(&base, &args)))
                     }
-                )))
+                })
             .unwrap_or_else(|| {
                     panic!("{}: unknown type {}", self.line, arg_typename_start)
                 })
@@ -1668,6 +1711,10 @@ pub enum AstNode {
         args: Vec<AstRoot>,
         idx: usize, // call id
     },
+    CallValue {
+        callee: Box<AstNode>,
+        args: Vec<AstRoot>,
+    },
 
     Intrinsic {
         intr: Intrinsic,
@@ -2068,6 +2115,14 @@ pub struct FuncDat {
 }
 
 impl FuncDat {
+    pub fn function_type(&self) -> FType {
+        FType::Function(self.args.iter().map(|a| a.ftype.clone()).collect(), Box::new(self.ret_type.clone()))
+    }
+
+    pub fn symbol_name(&self, overload: usize) -> String {
+        self.real_name.clone().unwrap_or_else(|| format!("{}_{}", self.name.path_to_string().replace("::", "_"), overload))
+    }
+
     pub fn new(nm: AstNode, ar: Vec<FuncArg>, ret: FType, ext: bool) -> FuncDat {
         FuncDat { 
             name: nm, 
@@ -2095,7 +2150,7 @@ impl FuncDat {
             }
             AstNode::ExternedFunc { name, args, ret_type, public, real_name } => {
                 let mut fdat = FuncDat::new(
-                    *name.clone(), args.clone(), ret_type.clone(), false
+                    *name.clone(), args.clone(), ret_type.clone(), true
                 );
                 fdat.public = *public;
                 fdat.real_name = Some(real_name.path_to_string());

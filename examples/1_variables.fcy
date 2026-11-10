@@ -1,3 +1,5 @@
+pub extern func printf(format: str, ...) -> i32;
+
 func main() {
     let uvar: uint = 10u; // declaring unsigned integer (64 bit)
     let ivar: int = -5; // declaring signed integer (64 bit)
@@ -18,12 +20,12 @@ func main() {
     let some_ops: double = fvar_from_uvar * (2.0 + 1.0);
     some_ops -= 2.5; // subtract and assign
 
-    // printing it all using print intrinsic (later would be std::print)
-    printintrin fvar_sq;
-    printintrin ivar_negated;
-    printintrin uvar_from_fvar;
-    printintrin fvar_from_uvar;
-    printintrin some_ops;
+    // Printing through the C variadic interface (later std::print).
+    main::printf("%f\n", fvar_sq);
+    main::printf("%ld\n", ivar_negated);
+    main::printf("%lu\n", uvar_from_fvar);
+    main::printf("%f\n", fvar_from_uvar);
+    main::printf("%f\n", some_ops);
 
     return;
 }
