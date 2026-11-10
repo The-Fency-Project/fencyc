@@ -1,0 +1,36 @@
+extern func printf(format: str, ...) -> i32;
+
+func sum(initial: int, values: ...int) -> int {
+    let total = initial;
+    for let i = 0u in i < _len values; i += 1u {
+        total += values[i];
+    }
+    return total;
+}
+
+func sum_bytes(values: ...ubyte) -> uint {
+    let total = 0u;
+    for let i = 0u in i < _len values; i += 1u {
+        total += values[i]$uint;
+    }
+    return total;
+}
+
+func first<T>(value: T, ignored: ...int) -> T {
+    return value;
+}
+
+func main() {
+    printintrin sum(10, 1, 2, 3);
+    printintrin sum(10);
+    let callback: func(int, ...int) -> int = sum;
+    printintrin callback(5, 4, 3, 2, 1);
+    printintrin callback(5);
+    printintrin sum_bytes(1ub, 2ub, 255ub);
+    printf("%s %d %.1f\n", "promoted", -7ib, 1.5f);
+    let output: func(str, ...) -> i32 = printf;
+    output("%d %u\n", true, 65535uh);
+    printf("empty tail\n");
+    printintrin first(42u, 1, 2, 3);
+    return;
+}

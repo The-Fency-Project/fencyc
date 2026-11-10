@@ -1,8 +1,9 @@
 ## Next planned steps (likely)
 ### Pre-stdlib polishing:
-- Optimize QBE code (from `src/codegen/mirtoqbe.rs`) from redundant copies
-- Add function pointers
-- Support va args function, including both fency functions with va args and external functions with va in declaration 
+- [x] Reduce redundant QBE copies by lowering expressions directly into destinations
+- [x] Add typed function pointers
+- [x] Support typed Fency variadic tails and external C variadic declarations
+- Stdlib integration proposal: `docs/compiler/src/stdlib-integration.md`
 ### Stdlib
 - stdlib
 # Future
@@ -17,9 +18,7 @@
 - iterators for `for`
 - default args values in funcs (maybe)
 - make error if trying to override func that wasnt declared
-- function pointers
 - block return
-- va args
 - stack strs
 - slices
 - ptrs for primitives

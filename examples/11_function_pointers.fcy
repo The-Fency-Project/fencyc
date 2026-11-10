@@ -1,0 +1,34 @@
+func increment(value: int) -> int { return value + 1; }
+func twice(value: int) -> int { return value * 2; }
+
+func apply(callback: func(int) -> int, value: int) -> int {
+    return callback(value);
+}
+
+func choose() -> func(int) -> int { return increment; }
+
+extern func abs(value: i32) -> i32;
+
+struct Handler { pub callback: func(int) -> int }
+func notify(value: int) { printintrin value; return; }
+
+func main() {
+    let callback: func(int) -> int = increment;
+    printintrin callback(4);
+    let copied = callback;
+    callback = twice;
+    printintrin copied(9);
+    printintrin apply(callback, 7);
+    let selected = choose();
+    printintrin selected(20);
+    let c_abs = abs;
+    printintrin c_abs(-12i);
+    let handler = Handler { callback: increment; };
+    printintrin handler.callback(40);
+    printintrin choose()(30);
+    let callbacks = [increment, twice]func(int) -> int;
+    printintrin callbacks[1u](6);
+    let event: func(int) = notify;
+    event(99);
+    return;
+}

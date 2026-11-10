@@ -111,6 +111,8 @@ impl<'ctx> LLVMBackend<'ctx> {
         matches!(
             ft,
             FType::Ptr
+                | FType::Function(..)
+                | FType::Array(..)
                 | FType::strconst
                 | FType::StructPtr(_)
                 | FType::StructHeapPtr(_)
@@ -159,7 +161,7 @@ impl<'ctx> LLVMBackend<'ctx> {
             FType::uint | FType::int => self.i64_ty().into(),
             FType::single => self.f32_ty().into(),
             FType::double => self.f64_ty().into(),
-            FType::Ptr | FType::strconst | FType::StructPtr(_) 
+            FType::Function(..) | FType::Ptr | FType::strconst | FType::StructPtr(_)
                 | FType::StructHeapPtr(_) | FType::Struct(_) => {
                 self.ptr_ty().into()
             }
@@ -203,7 +205,7 @@ impl<'ctx> LLVMBackend<'ctx> {
             FType::uint | FType::int => self.i64_ty().const_zero().into(),
             FType::single => self.f32_ty().const_float(0.0).into(),
             FType::double => self.f64_ty().const_float(0.0).into(),
-            FType::Ptr | FType::strconst | FType::StructPtr(_) | FType::StructHeapPtr(_) => {
+            FType::Function(..) | FType::Ptr | FType::strconst | FType::StructPtr(_) | FType::StructHeapPtr(_) => {
                 self.ptr_ty().const_null().into()
             }
             FType::Array(elem, count) => {
@@ -304,6 +306,10 @@ impl<'ctx> LLVMBackend<'ctx> {
             }
 
             FVal::VarGlb(name) => {
+                if matches!(v.ftype, FType::Function(..)) {
+                    let function = self.module.get_function(name).expect("function address was not declared");
+                    return (function.as_global_value().as_pointer_value().into(), v.ftype.clone());
+                }
                 let gv = self.ensure_global(name, &v.ftype);
                 (gv.as_pointer_value().into(), v.ftype.clone())
             }
@@ -733,6 +739,14 @@ impl<'ctx> LLVMBackend<'ctx> {
                 }
             }
 
+            FInstr::Invoke(target, args, _) => {
+                let call = self.build_invoke(target, args);
+                match call.try_as_basic_value() {
+                    ValueKind::Basic(v) => v,
+                    _ => panic!("void indirect call used as value"),
+                }
+            }
+
             FInstr::Call(nm, args) => {
                 let callee = self
                     .module
@@ -957,6 +971,18 @@ impl<'ctx> LLVMBackend<'ctx> {
         }
     }
 
+    fn build_invoke(&mut self, target: &FValue, args: &[(FValue, FType)]) -> inkwell::values::CallSiteValue<'ctx> {
+        let FType::Function(params, ret) = &target.ftype else { panic!("missing call signature") };
+        let (params, ret, variadic) = FType::abi_signature(params, ret);
+        let types = params.iter().map(|t| self.llvm_basic_type_or_panic(t).into()).collect::<Vec<BasicMetadataTypeEnum>>();
+        let fn_type = if matches!(ret, FType::none) { self.context.void_type().fn_type(&types, variadic) }
+            else { self.llvm_basic_type_or_panic(&ret).fn_type(&types, variadic) };
+        let (pointer, _) = self.operand_value(target);
+        let values = args.iter().map(|(v, ft)| self.operand_value_as(v, ft).into()).collect::<Vec<BasicMetadataValueEnum>>();
+        self.builder.build_indirect_call(fn_type, pointer.into_pointer_value(), &values,
+            if matches!(ret, FType::none) { "" } else { "indirect.call" }).expect("indirect call")
+    }
+
     fn create_function_type(&mut self, func: &FFunction) -> inkwell::types::FunctionType<'ctx> {
         let mut param_tys: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::with_capacity(func.params.len());
 
@@ -965,8 +991,8 @@ impl<'ctx> LLVMBackend<'ctx> {
         }
 
         match &func.ret_ft {
-            FType::none => self.context.void_type().fn_type(&param_tys, false),
-            ret => self.llvm_basic_type_or_panic(ret).fn_type(&param_tys, false),
+            FType::none => self.context.void_type().fn_type(&param_tys, func.variadic),
+            ret => self.llvm_basic_type_or_panic(ret).fn_type(&param_tys, func.variadic),
         }
     }
 
@@ -1017,6 +1043,11 @@ impl<'ctx> LLVMBackend<'ctx> {
             );
 
             self.module.add_function("strlen", strlen_ty, None);
+        }
+
+        if self.module.get_function("strcmp").is_none() {
+            let ty = i32_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+            self.module.add_function("strcmp", ty, None);
         }
 
         // memcpy: void* memcpy(void*, const void*, size_t)
@@ -1250,6 +1281,8 @@ impl<'ctx> MIRTranslator for LLVMBackend<'ctx> {
                 self.store_to_lhs(lhs, ft, result);
             }
 
+            FInstr::Invoke(target, args, _) => { self.build_invoke(target, args); }
+
             FInstr::Call(nm, args) => {
                 let callee = self
                     .module
@@ -1291,6 +1324,7 @@ impl<'ctx> MIRTranslator for LLVMBackend<'ctx> {
 
     fn translate_term(&mut self, term: &FTerm) {
         match term {
+            FTerm::Unreachable => { self.builder.build_unreachable().expect("unreachable"); }
             FTerm::Return(v) => {
                 match v {
                     Some(v) => {

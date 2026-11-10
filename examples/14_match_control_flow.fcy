@@ -1,0 +1,32 @@
+enum Choice { Number(int), Empty }
+
+func choose(c: Choice) -> int {
+    match c {
+        Choice::Number(v) => { return v + 1; }
+        Choice::Empty => { return 0; }
+    }
+}
+
+func mixed(c: Choice) -> int {
+    let n = match c {
+        Choice::Number(v) => { v; }
+        Choice::Empty => { return -1; }
+    };
+    return n;
+}
+
+func branch(b: bool) -> int {
+    if b { return 1; } else { return 2; }
+}
+
+func main() {
+    printintrin choose(Choice::Number(6));
+    printintrin choose(Choice::Empty);
+    printintrin mixed(Choice::Number(9));
+    printintrin mixed(Choice::Empty);
+    printintrin branch(true);
+    printintrin branch(false);
+    let n = match true { true => {11;} false => {12;} };
+    printintrin n;
+    return;
+}

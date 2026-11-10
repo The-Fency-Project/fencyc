@@ -12,7 +12,7 @@ indexset = "0.15.0"
 inkwell = { version = "0.7.0", features = ["llvm21-1"] }
 
 itertools = "0.14.0"
-qbe = { git = "https://github.com/Freemorger/qbe-rs.git" }
+qbe = { path = "vendor/qbe" }
 rayon = "1.11.0"
 strum = "0.28.0"
 strum_macros = "0.28.0"

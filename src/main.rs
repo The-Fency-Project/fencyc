@@ -77,7 +77,7 @@ fn main() {
 
             match compile(
                 vec![build_scr_spath], Some(build_o_name.clone()), 
-                iflags,
+                iflags.finalize(),
                 vec![], paths, vec![]
             ) {
                 Ok(_) => {},
@@ -219,7 +219,7 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     let flags_arc   = Arc::new(flags.clone());
 
     let counter                 = Arc::new(AtomicUsize::new(0));
-    let nat_fnames: Vec<String> = asts.par_iter().enumerate().map(|(idx, ast)| {
+    let nat_results: Vec<Result<String, CompilationError>> = asts.par_iter().enumerate().map(|(idx, ast)| {
         let fname = files[idx].clone();
         let cflags = flags_arc.clone();
 
@@ -251,12 +251,14 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
 
         let temp_fname = format!("{}_temp.ssa", fname.replace(".fcy", ""));
         match lower_mir(&gene, &cflags, &temp_fname) {
-            CompilationError::OkFile(f) => f,
-            _ => String::new(),
+            CompilationError::OkFile(f) => Ok(f),
+            error => Err(error),
         }
 
         
     }).collect();
+
+    let nat_fnames = nat_results.into_iter().collect::<Result<Vec<_>, _>>()?;
 
     if !flags.check {
         let strs = nat_fnames.iter()

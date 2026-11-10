@@ -1,0 +1,7 @@
+func main() {
+    let sum: func(...int) -> int = helpers::sum;
+    printintrin sum(1, 2, 3, 4, 5);
+    printintrin helpers::run(sum);
+    printintrin helpers::sum();
+    return;
+}

@@ -1,0 +1,32 @@
+struct Pair<Z, A> { pub first: Z pub second: A }
+
+func main() {
+    let pair = Pair<uint, int> { first: 9u; second: -4; };
+    printintrin pair.first;
+    printintrin pair.second;
+    printintrin -1i < 0i;
+    printintrin 18446744073709551615u / 3u;
+    printintrin 18446744073709551615u % 3u;
+    printintrin (255ub)$int;
+    printintrin (-1ib)$int;
+    printintrin (260)$ubyte;
+    printintrin (255)$ibyte;
+    printintrin (-2i)$double;
+    printintrin (3.75f)$i32;
+    printintrin (6i)$float;
+    let shorts = [12uh, 65000uh]ushort;
+    let words = [-3i, -9i]i32;
+    printintrin shorts[1u];
+    printintrin words[1u];
+    printintrin "a" != "b";
+    printintrin "same" != "same";
+    printintrin "line one\nline two";
+    printintrin 0.5 < 1.5;
+    printintrin 2.0f >= 1.0f;
+    for let i = 0u in i < 3u; i += 1u {
+        if i == 2u { break; }
+        if i == 1u { break; }
+        printintrin i;
+    }
+    return;
+}

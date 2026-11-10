@@ -41,7 +41,7 @@ impl FSymbol {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FType {
     uint,
     Usize,
@@ -70,6 +70,9 @@ pub enum FType {
     TypePtr(Box<FType>),
 
     Generic(String),
+    Function(Vec<FType>, Box<FType>),
+    // Declaration-only tail. `none` denotes an untyped C variadic tail.
+    Variadic(Box<FType>),
 }
 
 impl Into<qbe::Type> for FType {
@@ -88,16 +91,6 @@ impl Into<qbe::Type> for FType {
                 => qbe::Type::Long, // ptr
             ref _other => todo!("Match ft qbf for {:?}", self)
         }
-    }
-}
-
-impl PartialEq for FType {
-    fn eq(&self, other: &Self) -> bool {
-        self.is_compatible_with(other)
-    }
-
-    fn ne(&self, other: &Self) -> bool {
-        !self.eq(other)
     }
 }
 
@@ -133,15 +126,61 @@ impl fmt::Display for FType {
             FType::ishort     => write!(f, "ishort"),
             FType::TypePtr(t) => write!(f, "*{}", t),
             FType::Generic(t) => write!(f, "generic type {}", t),
+            FType::Variadic(t) => write!(f, "...{t}"),
+            FType::Function(args, ret) => {
+                write!(f, "func(")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, ") -> {ret}")
+            }
         }
     }
 }
 
 impl FType {
-    fn is_compatible_with(&self, other: &FType) -> bool {
+    pub fn variadic_parts(args: &[FType]) -> (usize, Option<&FType>) {
+        match args.last() {
+            Some(FType::Variadic(t)) => (args.len() - 1, Some(t)),
+            _ => (args.len(), None),
+        }
+    }
+
+    pub fn is_vararg_scalar(&self) -> bool {
+        self.is_numerical() || matches!(self, FType::bool | FType::strconst | FType::Ptr | FType::StructPtr(_) | FType::Function(..))
+    }
+
+    pub fn c_promoted(&self) -> FType {
+        match self {
+            FType::single => FType::double,
+            FType::bool | FType::ubyte | FType::ibyte | FType::ushort | FType::ishort => FType::i32,
+            _ => self.clone(),
+        }
+    }
+
+    pub fn abi_signature(args: &[FType], ret: &FType) -> (Vec<FType>, FType, bool) {
+        let (fixed, tail) = Self::variadic_parts(args);
+        let mut params = args[..fixed].to_vec();
+        let mut result = ret.clone();
+        if matches!(ret, FType::Struct(_)) {
+            params.insert(0, FType::Ptr);
+            result = FType::Ptr;
+        }
+        if let Some(el) = tail {
+            if !matches!(el, FType::none) {
+                params.extend([FType::Array(Box::new(el.clone()), 0), FType::uint]);
+            }
+        }
+        (params, result, matches!(tail, Some(FType::none)))
+    }
+
+    pub fn is_compatible_with(&self, other: &FType) -> bool {
         match (self, other) {
             (_, FType::any) | (FType::any, _) => true,
-            _ => discriminant(self) == discriminant(other),
+            (FType::Array(a, n), FType::Array(b, m)) =>
+                a.is_compatible_with(b) && (n == m || *n == 0 || *m == 0),
+            _ => self == other,
         }
     }
 
@@ -207,7 +246,7 @@ impl FType {
 
     pub fn is_signed(&self) -> bool {
         match self {
-            FType::ibyte | FType::ishort | FType::int 
+            FType::ibyte | FType::ishort | FType::i32 | FType::int
                 | FType::single | FType::double => true,
             _ => false,
         }
@@ -302,7 +341,10 @@ impl SymbolTable {
             let symb = FSymbol::new(
                 fa.name.clone(), 
                 VarPosition::None, 
-                fa.ftype.clone()
+                match &fa.ftype {
+                    FType::Variadic(el) => FType::Array(el.clone(), 0),
+                    other => other.clone(),
+                }
             );
             self.newsymb(symb);
         }
@@ -647,14 +689,35 @@ impl SemAn {
             }
             AstNode::Variable(var) => {
                 let paths = self.get_use_paths();
+                if self.symb_table.get(var).is_some() {
+                    exprdat.var_name = Some(var.clone());
+                    self.chk_move(&mut logger.clone(), var, &mut exprdat, self.line);
+                    return exprdat;
+                }
                 if let Some(_v) = self.struct_tab.get(var, &paths) {
                     exprdat.ftype = FType::Struct(var.to_owned());
                     return exprdat;
                 }
     
-                if self.func_table.get_func(var, &paths).is_some() {
-                    // TODO: func type
+                if let Some(funcs) = self.func_table.get_func(var, &paths) {
+                    if funcs.len() != 1 || !funcs[0].name.get_generics().is_empty() {
+                        self.signature_error(logger, "Taking an overloaded or generic function as a value is not supported");
+                    } else {
+                        let f = &funcs[0];
+                        let owner = f.name.path_to_string().rsplit_once("::").map(|(m, _)| m.to_owned()).unwrap_or_default();
+                        if !f.public && owner != self.module {
+                            self.signature_error(logger, "Cannot take the address of a private function from another module");
+                        }
+                        exprdat.ftype = f.function_type();
+                    }
                     return exprdat;
+                }
+                if let Some((owner, variant)) = var.rsplit_once("::") {
+                    if self.struct_tab.get(owner, &paths).map(|s| s.is_enum() && s.fields.contains_key(variant)).unwrap_or(false) {
+                        return self.analyze_expr(&AstRoot::new(AstNode::Call {
+                            func_name: Box::new(AstNode::string_to_path(var)), args: vec![], idx: usize::MAX,
+                        }, self.line), logger);
+                    }
                 }
 
                 exprdat.var_name = Some(var.clone());
@@ -702,9 +765,10 @@ impl SemAn {
                     self.permissive_error(self.line, logger.clone(), lerr, lwarn);
                 }
 
-                self.analyze_expr(*&if_true, logger);
+                let then_data = self.analyze_expr(if_true, logger);
                 if let Some(iff_root) = if_false {
-                    self.analyze_expr(iff_root, logger);
+                    let else_data = self.analyze_expr(iff_root, logger);
+                    exprdat.has_returned = then_data.has_returned && else_data.has_returned;
                 }
             }
             AstNode::VariableCast { name, target_type } => {
@@ -801,40 +865,79 @@ impl SemAn {
             }
             AstNode::Match { value, arms } => {
                 let value_dat = self.analyze_expr(value, logger);
-                let mut result_type = FType::none;
+                let mut result_type: Option<FType> = None;
+                let mut covered = HashSet::new();
+                let mut wildcard = false;
+                let mut all_returned = !arms.is_empty();
+                let paths = self.get_use_paths();
+                let enum_info = value_dat.ftype.if_struct().and_then(|name| self.struct_tab.get(&name, &paths)).filter(|s| s.is_enum());
                 for (pattern, body) in arms {
-                    let binding = match pattern {
-                        MatchPattern::PathBinding(path, binding) => {
-                            let segs = path.path_to_segs();
-                            let owner = segs[..segs.len().saturating_sub(1)].join("::");
-                            let variant = segs.last().cloned().unwrap_or_default();
-                            let paths = self.get_use_paths();
-                            self.struct_tab.get(&owner, &paths)
-                                .and_then(|info| info.fields.get(&variant).map(|f| (binding.clone(), f.ftype.clone())))
+                    let mut binding = None;
+                    if wildcard { self.signature_error(logger, "Unreachable pattern after wildcard"); }
+                    match pattern {
+                        MatchPattern::Wildcard => wildcard = true,
+                        MatchPattern::Int(v) => {
+                            if !matches!(value_dat.ftype, FType::int | FType::i32 | FType::ishort | FType::ibyte) {
+                                self.signature_error(logger, "Signed integer pattern requires a signed integer value");
+                            }
+                            covered.insert(format!("int:{v}"));
                         }
-                        _ => None,
-                    };
-                    let has_binding = binding.is_some();
-                    if let Some((name, ftype)) = binding {
-                        self.symb_table.enter_scope();
-                        self.symb_table.newsymb(FSymbol::new(name, VarPosition::None, ftype));
+                        MatchPattern::Uint(v) => {
+                            if !matches!(value_dat.ftype, FType::uint | FType::u32 | FType::ushort | FType::ubyte) {
+                                self.signature_error(logger, "Unsigned integer pattern requires an unsigned integer value");
+                            }
+                            covered.insert(format!("uint:{v}"));
+                        }
+                        MatchPattern::Bool(v) => {
+                            if value_dat.ftype != FType::bool { self.signature_error(logger, "Boolean pattern requires a bool value"); }
+                            covered.insert(v.to_string());
+                        }
+                        MatchPattern::Path(path) | MatchPattern::PathBinding(path, _) => {
+                            let (owner, variant) = path.path_to_string().rsplit_once("::").map(|(a,b)| (a.to_owned(),b.to_owned())).unwrap_or_default();
+                            let info = self.struct_tab.get(&owner, &paths);
+                            match info.filter(|info| enum_info.as_ref().map(|e| &e.name) == Some(&info.name)) {
+                                Some(info) if info.fields.contains_key(&variant) => {
+                                    let field = &info.fields[&variant];
+                                    covered.insert(variant);
+                                    if let MatchPattern::PathBinding(_, name) = pattern {
+                                        if field.ftype == FType::none { self.signature_error(logger, "Cannot bind a unit variant payload"); }
+                                        else { binding = Some((name.clone(), field.ftype.clone())); }
+                                    }
+                                }
+                                _ => self.signature_error(logger, "Pattern must name a variant of the matched enum"),
+                            }
+                        }
                     }
+                    self.symb_table.enter_scope();
+                    if let Some((name, ftype)) = binding { self.symb_table.newsymb(FSymbol::new(name, VarPosition::None, ftype)); }
                     let body_dat = self.analyze_expr(body, logger);
-                    if has_binding { self.symb_table.exit_scope(); }
-                    if result_type == FType::none { result_type = body_dat.ftype.clone(); }
-                    else if result_type != body_dat.ftype {
-                        logger.send(LogMessage::new(LogLevel::Error(ErrKind::MismatchedTypes(
-                            result_type.clone(), body_dat.ftype)), self.line, self.fname.clone()));
+                    self.symb_table.exit_scope();
+                    all_returned &= body_dat.has_returned;
+                    if !body_dat.has_returned {
+                        if let Some(expected) = &result_type {
+                            if expected != &body_dat.ftype {
+                                let _ = logger.send(LogMessage::new(LogLevel::Error(ErrKind::MismatchedTypes(expected.clone(), body_dat.ftype.clone())), self.line, self.fname.clone()));
+                            }
+                        } else { result_type = Some(body_dat.ftype); }
                     }
                 }
-                exprdat.ftype = result_type;
+                let exhaustive = wildcard || match &enum_info {
+                    Some(info) => info.fields.keys().all(|name| covered.contains(name)),
+                    None if value_dat.ftype == FType::bool => covered.contains("true") && covered.contains("false"),
+                    _ => false,
+                };
+                if !exhaustive { self.signature_error(logger, "Non-exhaustive match: cover every variant or add `_ => ...`"); }
+                exprdat.ftype = result_type.unwrap_or(FType::none);
+                exprdat.has_returned = exhaustive && all_returned;
             }
+
             AstNode::CodeBlock { exprs } => {
                 self.symb_table.enter_scope();
                 for expr in exprs {
                     let ed = self.analyze_expr(expr, logger);
                     exprdat.has_returned = ed.has_returned;
                     exprdat.ftype = ed.ftype;
+                    if ed.has_returned { break; }
                 }
                 self.symb_table.exit_scope();
             }
@@ -898,6 +1001,10 @@ impl SemAn {
                 public: _,
             } => {
                 let mut override_flag = false;
+                self.validate_variadic_args(args, false, logger);
+                if name.path_to_string() == "main::main" && args.iter().any(|a| matches!(a.ftype, FType::Variadic(_))) {
+                    self.signature_error(logger, "The program entry point cannot be variadic");
+                }
                 if let Some(v) = &self.parsing_func {
                     self.parsing_func = Some((name.path_to_string(), v.1));
                     override_flag = true;
@@ -983,6 +1090,7 @@ impl SemAn {
                 public: _,
                 real_name: _,
             } => {
+                self.validate_variadic_args(args, true, logger);
                 let mut override_flag = false;
                 if let Some(v) = &self.parsing_func {
                     self.parsing_func = Some((name.path_to_string(), v.1));
@@ -1014,6 +1122,31 @@ impl SemAn {
                 self.parsing_func = Some(("".to_owned(), *idx));
                 self.analyze_expr(&AstRoot::new(*func.clone(), self.line), logger);
             }
+            AstNode::CallValue { callee, args } => {
+                let signature = self.analyze_expr(&AstRoot::new(*callee.clone(), self.line), logger).ftype;
+                if let FType::Function(params, ret) = signature {
+                    let (fixed, tail) = FType::variadic_parts(&params);
+                    if args.len() < fixed || (tail.is_none() && args.len() != fixed) {
+                        self.signature_error(logger, "Incorrect argument count in function pointer call");
+                    }
+                    for (i, arg) in args.iter().enumerate() {
+                        let data = self.analyze_expr(arg, logger);
+                        let expected = params.get(i).filter(|_| i < fixed).or(tail);
+                        if let Some(expected) = expected {
+                            if (matches!(expected, FType::none) && !data.ftype.is_vararg_scalar())
+                                || (!matches!(expected, FType::none) && !data.ftype.is_compatible_with(expected)) {
+                                self.signature_error(logger, "Incompatible argument in function pointer call");
+                            }
+                        }
+                        if Self::is_move_type(&data.ftype) {
+                            if let Some(var) = data.var_name { self.try_move(&mut logger.clone(), &var, self.line); }
+                        }
+                    }
+                    exprdat.ftype = *ret;
+                } else {
+                    self.signature_error(logger, "Called value is not a function pointer");
+                }
+            }
             AstNode::Call {
                 func_name,
                 args,
@@ -1021,6 +1154,12 @@ impl SemAn {
             } => {
                 let f_name_s = func_name.path_to_string();
                 let paths = self.get_use_paths();
+                let local_name = f_name_s.strip_prefix(&format!("{}::", self.module)).unwrap_or(&f_name_s);
+                if self.symb_table.get(local_name).is_some() {
+                    return self.analyze_expr(&AstRoot::new(AstNode::CallValue {
+                        callee: Box::new(AstNode::Variable(local_name.into())), args: args.clone(),
+                    }, self.line), logger);
+                }
 
                 if let Some((enum_name, variant)) = f_name_s.rsplit_once("::") {
                     if let Some(info) = self.struct_tab.get(enum_name, &paths) {
@@ -1091,7 +1230,9 @@ impl SemAn {
                         extrn = true;
                     }
                     
-                    if overload.args.len() != args.len() {
+                    let params = overload.args.iter().map(|a| a.ftype.clone()).collect::<Vec<_>>();
+                    let (fixed, tail) = FType::variadic_parts(&params);
+                    if args.len() < fixed || (tail.is_none() && args.len() != fixed) {
                         continue;
                     }
 
@@ -1106,21 +1247,31 @@ impl SemAn {
                     for (idx, arg) in args.iter().enumerate() {
                         let argdat = self.analyze_expr(arg, logger); 
                         arg_vars.push(argdat.var_name.clone());
+                        if idx >= fixed {
+                            let expected = tail.unwrap();
+                            if matches!(expected, FType::none) {
+                                flag_matches &= argdat.ftype.is_vararg_scalar();
+                            } else {
+                                flag_matches &= argdat.ftype.is_compatible_with(expected);
+                            }
+                            continue;
+                        }
 
                         if let FType::Generic(name) = &overload.args[idx].ftype {
                             substitutions.insert(name.clone(), argdat.ftype.clone());
                             continue;
                         }
+                        let mut generic_owner_matches = false;
                         if let (Some(expected_struct), Some(passed_struct)) =
                             (overload.args[idx].ftype.if_struct(), argdat.ftype.if_struct()) {
                             let expected_template = self.struct_tab.template_name(&expected_struct);
                             if let Some(info) = self.struct_tab.tab.get(&passed_struct) {
                                 if info.generic_origin.as_deref() == Some(expected_template.as_str()) {
+                                    generic_owner_matches = discriminant(&overload.args[idx].ftype) == discriminant(&argdat.ftype);
                                     let template = self.struct_tab.tab.get(&expected_template);
                                     if let Some(template) = template {
                                         let mut params: Vec<String> = template.generic_params.iter()
                                             .map(|g| g.name.clone()).collect();
-                                        params.sort();
                                         for (param, arg) in params.into_iter().zip(info.generic_args.iter()) {
                                             substitutions.insert(param, arg.clone());
                                         }
@@ -1157,7 +1308,7 @@ impl SemAn {
                             continue;
                         };
                                                                      
-                        if !argdat.ftype
+                        if !generic_owner_matches && !argdat.ftype
                                 .is_compatible_with(&overload.args[idx].ftype) {
                             flag_matches = false;
                             break;
@@ -1170,11 +1321,7 @@ impl SemAn {
                         }
                     }
                     if flag_matches {
-                        let ov_idx_op = if extrn {
-                            None
-                        } else {
-                            Some(over_idx)
-                        };
+                        let ov_idx_op = Some(over_idx);
                        
                         let funame = func_name.path_to_string();
                         let ov_module = match funame.rfind("::") {
@@ -1197,6 +1344,7 @@ impl SemAn {
                             (ov_idx_op, resolved_ret.clone())
                         );
                         for (arg_idx, var) in arg_vars.iter().enumerate() {
+                            if arg_idx >= fixed { continue; }
                             if let Some(var) = var {
                                 let expected = &overload.args[arg_idx].ftype;
                                 if Self::is_move_type(expected)
@@ -1605,6 +1753,14 @@ impl SemAn {
                     }
                 };
 
+                let paths = self.get_use_paths();
+                if self.struct_tab.get(&struct_name, &paths).and_then(|s| s.fields.get(&name.path_to_string()).cloned()).is_some() {
+                    return self.analyze_expr(&AstRoot::new(AstNode::CallValue {
+                        callee: Box::new(AstNode::StructFieldAddr { val: Box::new(first_arg.clone()), field_name: name.path_to_string() }),
+                        args: args[1..].to_vec(),
+                    }, self.line), logger);
+                }
+
                 let func_name = format!("{}::{}",
                     self.struct_tab.template_name(&struct_name),
                     name.path_to_string());
@@ -1900,6 +2056,30 @@ impl SemAn {
         }
     }
 
+    fn signature_error(&self, logger: &Sender<LogMessage>, message: &str) {
+        let _ = logger.send(LogMessage::new(
+            LogLevel::Error(ErrKind::InvalidSignature(message.to_owned())), self.line, self.fname.clone()));
+    }
+
+    fn validate_variadic_args(&self, args: &[FuncArg], external: bool, logger: &Sender<LogMessage>) {
+        for (i, arg) in args.iter().enumerate() {
+            if let FType::Variadic(el) = &arg.ftype {
+                if i + 1 != args.len() {
+                    self.signature_error(logger, "A variadic parameter must be last");
+                }
+                if external != matches!(**el, FType::none) {
+                    self.signature_error(logger, "Use `...` for externs and `name: ...T` for Fency functions");
+                }
+                if external && i == 0 {
+                    self.signature_error(logger, "An external variadic function needs at least one fixed parameter");
+                }
+                if !external && !el.is_vararg_scalar() {
+                    self.signature_error(logger, "Typed variadic tails currently require a copyable scalar or function pointer element type");
+                }
+            }
+        }
+    }
+
     pub fn has_trait(&mut self, struct_name: &str, trait_name: &str) -> bool {
         let traits = match self.traits.impls.get(struct_name) {
             Some(v) => v,
@@ -2058,7 +2238,7 @@ impl StructInfo {
                     max_alignment: 1,
                     public: *public,
                     attrs: attrs.clone(),
-                    generic_params: name.get_generics().into_iter().collect(),
+                    generic_params: name.get_generic_names().iter().map(|param| name.get_generics().into_iter().find(|g| &g.name == param).unwrap()).collect(),
                     generic_origin: None,
                     generic_args: Vec::new(),
                 }
@@ -2132,6 +2312,8 @@ pub fn substitute_ftype(ft: &FType, substitutions: &HashMap<String, FType>) -> F
         FType::Array(el, count) => FType::Array(
             Box::new(substitute_ftype(el, substitutions)), *count
         ),
+        FType::Variadic(el) => FType::Variadic(Box::new(substitute_ftype(el, substitutions))),
+        FType::Function(args, ret) => FType::Function(args.iter().map(|t| substitute_ftype(t, substitutions)).collect(), Box::new(substitute_ftype(ret, substitutions))),
         other => other.clone(),
     }
 }
@@ -2254,7 +2436,6 @@ impl StructTable {
             let mut params: Vec<String> = template.generic_params.iter()
                 .map(|g| g.name.clone())
                 .collect();
-            params.sort();
             for (param, arg) in params.iter().zip(args.iter()) {
                 substitutions.insert(param.clone(), arg.clone());
             }
@@ -2349,6 +2530,10 @@ impl StructTable {
             if is_union {
                 computed_offsets.push((field_name, 0));
                 max_union_size = max_union_size.max(field_size);
+            } else if is_enum {
+                let payload_offset = Self::align_up(8, field_align);
+                computed_offsets.push((field_name, payload_offset));
+                offset = offset.max(payload_offset + field_size);
             } else {
                 offset = Self::align_up(offset, field_align);
                 computed_offsets.push((field_name, offset));
@@ -2384,10 +2569,11 @@ impl StructTable {
     ) -> Result<(usize, usize), String> {
         match ft {
             FType::strconst | FType::int | FType::uint | FType::double
-            | FType::StructPtr(_) | FType::StructHeapPtr(_) | FType::Ptr => Ok((8, 8)),
+            | FType::StructPtr(_) | FType::StructHeapPtr(_) | FType::Ptr | FType::Function(..) => Ok((8, 8)),
 
             FType::i32 | FType::u32 | FType::single => Ok((4, 4)),
             FType::bool | FType::ubyte | FType::ibyte => Ok((1, 1)),
+            FType::ushort | FType::ishort => Ok((2, 2)),
 
             FType::Array(el, ct) => {
                 let (elem_size, elem_align) = self.type_layout(el, marks)?;
