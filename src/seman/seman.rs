@@ -1807,7 +1807,7 @@ impl SemAn {
             }
             AstNode::Usemod { name, alias } => {
                 let name_st = name.path_to_string();
-                self.usedmods.push(alias.map(|a| format!("{}={}", a, name_st)).unwrap_or(name_st));
+                self.usedmods.push(alias.as_ref().map(|a| format!("{}={}", a, name_st)).unwrap_or(name_st));
             }
             _ => {}
         }

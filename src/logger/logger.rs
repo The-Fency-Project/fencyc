@@ -284,6 +284,7 @@ impl Logger {
                     ErrKind::OverrideUndeclared(name) => {
                         format!("Function `{name}` is marked `overload`, but no base declaration exists")
                     }
+                    ErrKind::InvalidSignature(message) => message.clone(),
                     ErrKind::IncompatReturn(name, expected, got) => {
                         format!("Function {} has return type {} but {} were returned\n\
                             {}: try converting explicitly, e.g. var${}",
@@ -582,14 +583,14 @@ pub enum LoggerQuery {
     StatusResp(bool), // err or no
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum LogLevel {
     Error(ErrKind),
     Warning(WarnKind),
     Info(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum ErrKind {
     Redeclaration(String), // var name
     MismatchedTypes(FType, FType), // expected, found
@@ -611,6 +612,7 @@ pub enum ErrKind {
     MuchArgsPassed(String, usize, usize), // name, expected, got 
     FuncArgsTypeIncompat(String), // func name
     OverrideUndeclared(String),
+    InvalidSignature(String),
     IncompatReturn(String, FType, FType), // func name, expected, got
     ReturnOutOfFunc,
     FewMains(usize), // count
@@ -654,7 +656,7 @@ pub enum ErrKind {
     ParseUnexpected(Tok),
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum WarnKind {
     Internal,
     IfStmtNotBool,
