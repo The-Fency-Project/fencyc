@@ -1,12 +1,12 @@
 # Standard library integration proposal
 
-This chapter proposes the next ecosystem steps. It does not implement the standard library or a package manager.
+This chapter proposes the next ecosystem steps. It does not implement the standard library or a package manager. Explicit binary library imports and coarse compilation-unit caching are now implemented; see [Separate compilation](separate-compilation.md) for the current workflow and limits.
 
 ## Starting point
 
-The compiler currently compiles an explicit list of source files together. `use` changes name lookup; it does not discover or load source files. Generic definitions and aggregate layouts are available only for the files in that invocation. `--nostd` disables automatic runtime linking. The default driver otherwise searches `~/.fency/runtime` and `~/.fency/libs` and links `libfcyrt`. `build.fcy` is compiled as a host executable and then run.
+The compiler compiles an explicit list of source files together and accepts compiled dependencies through `--dep`. `use` changes name lookup; it does not discover or load source files. Binary metadata supplies declarations, layouts, traits, and generic definitions from dependencies. `--nostd` disables automatic runtime linking. The default driver otherwise searches `~/.fency/runtime` and `~/.fency/libs` and links `libfcyrt`. `build.fcy` is compiled as a host executable and then run.
 
-Consequently, linking `libstd.a` alone would not make generic types, traits, or source signatures visible to semantic analysis. Start by making stdlib source available to the existing frontend, and defer serialized compiler metadata until there is a stable format worth caching.
+Linking `libstd.a` alone would not make generic types, traits, or source signatures visible to semantic analysis. The initial `.fmeta` format provides this information alongside objects. It is tied to the compiler build, so stdlib packaging should install matching compiler and library artifacts together.
 
 ## Library boundaries
 

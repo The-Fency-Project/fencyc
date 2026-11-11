@@ -70,6 +70,23 @@ mod generic_lookahead_tests {
     }
 }
 
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+    #[test]
+    fn parses_module_aliases() {
+        let mut parser = FcParser::new(crate::lexer::lexer::tokenize_source("use vendor::graphics as gfx;"));
+        let ast = parser.parse_everything().0;
+        assert!(matches!(&ast[0].node, AstNode::Usemod { alias: Some(alias), .. } if alias == "gfx"));
+    }
+    #[test]
+    fn rejects_overload_without_base_function() {
+        let mut parser = FcParser::new(crate::lexer::lexer::tokenize_source("overload func missing(x: int) { return; }"));
+        let ast = parser.parse_everything().0;
+        assert!(matches!(&ast[0].node, AstNode::Invalid(LogLevel::Error(ErrKind::OverrideUndeclared(name))) if name == "main::missing"));
+    }
+}
+
 /// Parser based on Pratt parsing algorithm
 impl FcParser {
     pub fn new(toks: Vec<Token>) -> FcParser {
@@ -547,7 +564,9 @@ impl FcParser {
                 self.funcs.push_func(FuncDat::new_from_astn(&f.0)
                     .expect(&format!("{}: Expected func", self.line)));
                 let idx = {
-                    let h = self.overload_ctr.get_mut(&f.1).unwrap();
+                    let Some(h) = self.overload_ctr.get_mut(&f.1) else {
+                        return AstNode::Invalid(LogLevel::Error(ErrKind::OverrideUndeclared(f.1)));
+                    };
                     *h += 1;
                     *h
                 };
@@ -655,8 +674,12 @@ impl FcParser {
                     }
                 };
                 let path = self.parse_path(first);
+                let alias = if self.peek_is(Tok::Keyword(Kword::As)) {
+                    self.consume();
+                    Some(self.expect_idt().unwrap_or_else(|| panic!("{}: expected alias", self.line)))
+                } else { None };
                 AstNode::Usemod { 
-                    name: Box::new(path)
+                    name: Box::new(path), alias
                 }
             }
 
@@ -1631,7 +1654,7 @@ impl FcParser {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum AstNode {
     none,
     NoParse, // internal astnode to stop parsing expr
@@ -1808,6 +1831,7 @@ pub enum AstNode {
 
     Usemod {
         name: Box<AstNode>, // path
+        alias: Option<String>,
     },
 
     Trait {
@@ -1817,7 +1841,7 @@ pub enum AstNode {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum MatchPattern {
     Int(i64),
     Uint(u64),
@@ -1991,7 +2015,7 @@ pub fn generic_instance_name(base: &str, args: &[FType]) -> String {
     result
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Copy)]
 pub enum BinaryOp {
     Add, 
     Substract,
@@ -2007,7 +2031,7 @@ pub enum BinaryOp {
     Compare(CmpOp),
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Copy)]
 pub enum UnaryOp {
     Negate, 
     Not,
@@ -2016,7 +2040,7 @@ pub enum UnaryOp {
     Deref,
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Copy)]
 pub enum CmpOp {
     Eq, // ==
     Ge, // >=
@@ -2026,7 +2050,7 @@ pub enum CmpOp {
     Ne, // !=
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParseFlags {
     Public,
     StructImpl(String),
@@ -2065,7 +2089,7 @@ pub fn match_ftype(lit: &str) -> Option<FType> {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct AstRoot {
     pub node: AstNode,
     pub line: usize,
@@ -2082,7 +2106,7 @@ impl AstRoot {
     }    
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FuncArg {
     pub name: String, 
     pub ftype: FType
@@ -2104,7 +2128,7 @@ impl FuncArg {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FuncDat {
     pub name: AstNode,
     pub args: Vec<FuncArg>,
@@ -2162,7 +2186,7 @@ impl FuncDat {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FuncTable {
     // function name
     pub ft: HashMap<String, Vec<FuncDat>>
@@ -2202,7 +2226,11 @@ impl FuncTable {
         };
 
         for modnm in usemods {
-            if let Some(v) = self.ft.get(&format!("{}::{}", modnm, name)) {
+            let (alias, module) = modnm.split_once('=').unwrap_or(("", modnm.as_str()));
+            let prefix = if alias == name.split("::").next().unwrap_or("") && !alias.is_empty() {
+                name.replacen(alias, module, 1)
+            } else { format!("{}::{}", module, name) };
+            if let Some(v) = self.ft.get(&prefix) {
                 return Some(v);
             };
         }
@@ -2213,7 +2241,7 @@ impl FuncTable {
 }
 
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Attr {
     Heap,
     Target(Vec<Target>),
@@ -2241,7 +2269,7 @@ impl Attr {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GenericType {
     pub name:   String,
     pub bounds: Vec<String>, // vec of needed trait names
@@ -2253,7 +2281,7 @@ impl GenericType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct TraitInfo {
     pub path: AstNode,
     pub req_funcs: HashMap<String, FuncDat>,
@@ -2291,7 +2319,7 @@ impl TraitInfo {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct TraitTable {
     pub t: HashMap<String, TraitInfo>,
     pub impls: HashMap<String, HashSet<String>>, // struct -> traits

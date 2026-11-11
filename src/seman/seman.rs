@@ -41,7 +41,7 @@ impl FSymbol {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub enum FType {
     uint,
     Usize,
@@ -409,6 +409,8 @@ impl SemAn {
         res.extend(self.usedmods.iter().cloned());
         res
     }
+
+    pub fn set_module(&mut self, module: String) { self.module = module; }
 
     pub fn analyze(&mut self, ast: Arc<Vec<AstRoot>>, logger: &Sender<LogMessage>) 
         -> Result<(), ()> {
@@ -1803,10 +1805,9 @@ impl SemAn {
 
                 exprdat = self.analyze_expr(&call_node, &logger.clone());
             }
-            AstNode::Usemod { name } => {
+            AstNode::Usemod { name, alias } => {
                 let name_st = name.path_to_string();
-
-                self.usedmods.push(name_st);
+                self.usedmods.push(alias.as_ref().map(|a| format!("{}={}", a, name_st)).unwrap_or(name_st));
             }
             _ => {}
         }
@@ -2205,7 +2206,7 @@ impl ExprDat {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct StructInfo {
     pub name: String,
     pub fields: IndexMap<String, StructField>,
@@ -2294,7 +2295,7 @@ impl StructInfo {
     
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct StructField {
     pub name: String,
     pub offset: usize,
@@ -2378,7 +2379,7 @@ enum LayoutMark {
     Done,
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct StructTable {
     pub tab: HashMap<String, StructInfo>,
 }
@@ -2395,7 +2396,10 @@ impl StructTable {
             return Some(v.clone())
         }; 
         for modnm in usemods {
-            let nm = format!("{}::{}", modnm, name);
+            let (alias, module) = modnm.split_once('=').unwrap_or(("", modnm.as_str()));
+            let nm = if !alias.is_empty() && name.starts_with(&format!("{}::", alias)) {
+                name.replacen(alias, module, 1)
+            } else { format!("{}::{}", module, name) };
             if let Some(v) = self.tab.get(&nm) {
                 return Some(v.clone());
             };

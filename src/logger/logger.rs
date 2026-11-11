@@ -71,12 +71,9 @@ impl Logger {
                     }
                     self.emit(m.level, m.line, m.filename);
                 }
-                Err(_) => {
-                    // Stop is the only normal completion signal. A disconnected
-                    // sender can mean parsing/codegen panicked or the driver
-                    // returned early; reporting success here hides that failure.
-                    eprintln!("Compilation aborted before completion.");
-                    return;
+                Err(e) => {
+                    eprintln!("{}", e);
+                    break;
                 }
             }
         }
@@ -283,6 +280,9 @@ impl Logger {
                         format!("None of `{}` function overloads are compatible with given arguments\n\
                             {}: try converting explicitly, e.g. var$int",
                         name, help)
+                    }
+                    ErrKind::OverrideUndeclared(name) => {
+                        format!("Function `{name}` is marked `overload`, but no base declaration exists")
                     }
                     ErrKind::InvalidSignature(message) => message.clone(),
                     ErrKind::IncompatReturn(name, expected, got) => {
@@ -583,14 +583,14 @@ pub enum LoggerQuery {
     StatusResp(bool), // err or no
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum LogLevel {
     Error(ErrKind),
     Warning(WarnKind),
     Info(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum ErrKind {
     Redeclaration(String), // var name
     MismatchedTypes(FType, FType), // expected, found
@@ -611,6 +611,7 @@ pub enum ErrKind {
     UndeclaredFunc(String), // name
     MuchArgsPassed(String, usize, usize), // name, expected, got 
     FuncArgsTypeIncompat(String), // func name
+    OverrideUndeclared(String),
     InvalidSignature(String),
     IncompatReturn(String, FType, FType), // func name, expected, got
     ReturnOutOfFunc,
@@ -655,7 +656,7 @@ pub enum ErrKind {
     ParseUnexpected(Tok),
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum WarnKind {
     Internal,
     IfStmtNotBool,

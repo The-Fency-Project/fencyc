@@ -2,7 +2,7 @@ use std::{char, fs};
 
 use crate::seman::seman::FType;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub enum Tok {
     Int(i64),
     Double(f64),
@@ -58,7 +58,7 @@ pub enum Tok {
     EOF,
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct Token {
     pub tok: Tok,
     pub line: usize,
@@ -358,7 +358,7 @@ pub fn try_combine(ch: &char, nextch: Option<char>, line: usize) -> Option<Token
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub enum Kword {
     Let,
     True,
@@ -379,13 +379,14 @@ pub enum Kword {
     Struct,
     Impl,
     Usemod,
+    As,
     Trait,
     Union,
     Enum,
     Match,
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Copy)]
 pub enum Intrinsic {
     Len,
     Sizeof,
@@ -415,6 +416,7 @@ fn match_symb_tok(word: &str) -> Tok {
         "struct" => Tok::Keyword(Kword::Struct),
         "impl" => Tok::Keyword(Kword::Impl),
         "use" => Tok::Keyword(Kword::Usemod),
+        "as" => Tok::Keyword(Kword::As),
         "trait" => Tok::Keyword(Kword::Trait),
         "union" => Tok::Keyword(Kword::Union),
         "enum" => Tok::Keyword(Kword::Enum),

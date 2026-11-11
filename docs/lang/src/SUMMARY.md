@@ -2,6 +2,7 @@
 
 - [Introduction](README.md)
 - [Program structure](program-structure.md)
+- [Compiled libraries](libraries.md)
 - [Types](types.md)
 - [Ownership and moves](ownership.md)
 - [Structs](structs.md)
