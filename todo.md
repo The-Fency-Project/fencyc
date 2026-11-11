@@ -1,24 +1,16 @@
 ## Next planned steps (likely)
-### Pre-stdlib polishing:
-- [x] Reduce redundant QBE copies by lowering expressions directly into destinations
-- [x] Add typed function pointers
-- [x] Support typed Fency variadic tails and external C variadic declarations
-- Stdlib integration proposal: `docs/compiler/src/stdlib-integration.md`
 ### Stdlib
 - stdlib
 # Future
 ## Small/medium (unsorted)
 - further diagnostics (trait incompl func signature)
 - move in loops
-- [x] Initial separate compilation and whole-unit incremental cache (`--library`, `--dep`)
 - Finer incremental compilation, interface hashes, and cache garbage collection
 - maybe move keyword
 - glob for input
 - unsafe stuff
-- imports?
 - iterators for `for`
 - default args values in funcs (maybe)
-- make error if trying to override func that wasnt declared
 - block return
 - stack strs
 - slices
