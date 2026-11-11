@@ -334,12 +334,26 @@ fn compile_unit(recipe: &artifact::Recipe, imports: &[artifact::Metadata], stagi
 
 fn build_ast(input: &str, log_tx: Sender<LogMessage>)
     -> (Vec<AstRoot>, FuncTable, FcParser) {
-    let toks = lex::tokenize(&input);
-
-    let mut parser = fparser::FcParser::new(toks);
-    let parsing_res = parser.parse_everything();
-    let ast = parsing_res.0;
-    let func_tab = parsing_res.1;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let toks = lex::tokenize(&input);
+        let mut parser = fparser::FcParser::new(toks);
+        let parsing_res = parser.parse_everything();
+        (parsing_res.0, parsing_res.1, parser)
+    }));
+    let (ast, func_tab, parser) = match result {
+        Ok(value) => value,
+        Err(_) => {
+            log_tx.send(LogMessage::new(
+                logger::logger::LogLevel::Error(logger::logger::ErrKind::Internal(
+                    "parser panicked while reading input".into())),
+                0, input.to_owned())).ok();
+            let parser = fparser::FcParser::new(Vec::new());
+            (vec![AstRoot::new(fparser::AstNode::Invalid(
+                logger::logger::LogLevel::Error(logger::logger::ErrKind::Internal(
+                    "parser panicked while reading input".into()))), 0)],
+                FuncTable::new(), parser)
+        }
+    };
     for root in &ast {
         if let fparser::AstNode::Invalid(level) = &root.node {
             log_tx.send(LogMessage::new(level.clone(), root.line, input.to_owned())).ok();
