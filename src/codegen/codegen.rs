@@ -1398,8 +1398,8 @@ impl CodeGen {
 
                 res = self.gen_expr(call_node);
             }
-            AstNode::Usemod { name } => {
-                self.usedmods.push(name.path_to_string());
+            AstNode::Usemod { name, alias } => {
+                self.usedmods.push(alias.map(|a| format!("{}={}", a, name.path_to_string())).unwrap_or(name.path_to_string()));
             }
             AstNode::Trait { name, body, public } => {
 

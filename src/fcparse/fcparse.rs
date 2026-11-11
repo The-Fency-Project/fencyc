@@ -37,6 +37,23 @@ pub struct FcParser {
     pub generic_funcs: HashMap<String, AstRoot>,
 }
 
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+    #[test]
+    fn parses_module_aliases() {
+        let mut parser = FcParser::new(crate::lexer::lexer::tokenize_source("use long::module as short;"));
+        let ast = parser.parse_everything().0;
+        assert!(matches!(&ast[0].node, AstNode::Usemod { alias: Some(alias), .. } if alias == "short"));
+    }
+    #[test]
+    fn rejects_overload_without_base_function() {
+        let mut parser = FcParser::new(crate::lexer::lexer::tokenize_source("overload func missing(x: int) { return; }"));
+        let ast = parser.parse_everything().0;
+        assert!(matches!(&ast[0].node, AstNode::Invalid(LogLevel::Error(ErrKind::OverrideUndeclared(name))) if name == "main::missing"));
+    }
+}
+
 /// Parser based on Pratt parsing algorithm
 impl FcParser {
     pub fn new(toks: Vec<Token>) -> FcParser {
@@ -490,7 +507,9 @@ impl FcParser {
                 self.funcs.push_func(FuncDat::new_from_astn(&f.0)
                     .expect(&format!("{}: Expected func", self.line)));
                 let idx = {
-                    let h = self.overload_ctr.get_mut(&f.1).unwrap();
+                    let Some(h) = self.overload_ctr.get_mut(&f.1) else {
+                        return AstNode::Invalid(LogLevel::Error(ErrKind::OverrideUndeclared(f.1)));
+                    };
                     *h += 1;
                     *h
                 };
@@ -584,8 +603,12 @@ impl FcParser {
                     }
                 };
                 let path = self.parse_path(first);
+                let alias = if self.peek_is(Tok::Keyword(Kword::As)) {
+                    self.consume();
+                    Some(self.expect_idt().unwrap_or_else(|| panic!("{}: expected alias", self.line)))
+                } else { None };
                 AstNode::Usemod { 
-                    name: Box::new(path)
+                    name: Box::new(path), alias
                 }
             }
 
@@ -1476,6 +1499,7 @@ pub enum AstNode {
 
     Usemod {
         name: Box<AstNode>, // path
+        alias: Option<String>,
     },
 
     Trait {
@@ -1813,7 +1837,11 @@ impl FuncTable {
         };
 
         for modnm in usemods {
-            if let Some(v) = self.ft.get(&format!("{}::{}", modnm, name)) {
+            let (alias, module) = modnm.split_once('=').unwrap_or(("", modnm.as_str()));
+            let prefix = if alias == name.split("::").next().unwrap_or("") && !alias.is_empty() {
+                name.replacen(alias, module, 1)
+            } else { format!("{}::{}", module, name) };
+            if let Some(v) = self.ft.get(&prefix) {
                 return Some(v);
             };
         }

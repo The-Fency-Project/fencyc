@@ -356,6 +356,7 @@ pub enum Kword {
     Struct,
     Impl,
     Usemod,
+    As,
     Trait,
 }
 
@@ -390,6 +391,7 @@ fn match_symb_tok(word: &str) -> Tok {
         "struct" => Tok::Keyword(Kword::Struct),
         "impl" => Tok::Keyword(Kword::Impl),
         "use" => Tok::Keyword(Kword::Usemod),
+        "as" => Tok::Keyword(Kword::As),
         "trait" => Tok::Keyword(Kword::Trait),
 
         "_len" => Tok::Intrin(Intrinsic::Len),

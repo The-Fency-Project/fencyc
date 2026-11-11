@@ -1519,10 +1519,9 @@ impl SemAn {
 
                 exprdat = self.analyze_expr(&call_node, &logger.clone());
             }
-            AstNode::Usemod { name } => {
+            AstNode::Usemod { name, alias } => {
                 let name_st = name.path_to_string();
-
-                self.usedmods.push(name_st);
+                self.usedmods.push(alias.map(|a| format!("{}={}", a, name_st)).unwrap_or(name_st));
             }
             _ => {}
         }
@@ -1990,7 +1989,10 @@ impl StructTable {
             return Some(v.clone())
         }; 
         for modnm in usemods {
-            let nm = format!("{}::{}", modnm, name);
+            let (alias, module) = modnm.split_once('=').unwrap_or(("", modnm.as_str()));
+            let nm = if !alias.is_empty() && name.starts_with(&format!("{}::", alias)) {
+                name.replacen(alias, module, 1)
+            } else { format!("{}::{}", module, name) };
             if let Some(v) = self.tab.get(&nm) {
                 return Some(v.clone());
             };

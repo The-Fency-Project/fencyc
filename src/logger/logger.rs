@@ -281,6 +281,9 @@ impl Logger {
                             {}: try converting explicitly, e.g. var$int",
                         name, help)
                     }
+                    ErrKind::OverrideUndeclared(name) => {
+                        format!("Function `{name}` is marked `overload`, but no base declaration exists")
+                    }
                     ErrKind::IncompatReturn(name, expected, got) => {
                         format!("Function {} has return type {} but {} were returned\n\
                             {}: try converting explicitly, e.g. var${}",
@@ -607,6 +610,7 @@ pub enum ErrKind {
     UndeclaredFunc(String), // name
     MuchArgsPassed(String, usize, usize), // name, expected, got 
     FuncArgsTypeIncompat(String), // func name
+    OverrideUndeclared(String),
     IncompatReturn(String, FType, FType), // func name, expected, got
     ReturnOutOfFunc,
     FewMains(usize), // count
