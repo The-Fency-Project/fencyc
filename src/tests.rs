@@ -197,3 +197,9 @@ fn test_match_example() {
     compile(&["examples/9_match.fcy"], "testbins/9_match");
     assert_eq!(run_bin("testbins/9_match"), "20\n2");
 }
+
+#[test]
+fn test_ranges_and_slices_example() {
+    compile(&["examples/10_ranges_slices.fcy"], "testbins/10_ranges_slices");
+    assert_eq!(run_bin("testbins/10_ranges_slices"), "3\n30\n99\n2\n2\n50");
+}

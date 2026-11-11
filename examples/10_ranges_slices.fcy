@@ -1,0 +1,23 @@
+// Rust-like ranges and zero-copy array slices
+
+func main() {
+    let arr: [int] = [10, 20, 30, 40, 50]int;
+
+    let middle_range: range = 1..4;
+    let middle = arr[middle_range];
+    printintrin _len middle;
+    printintrin middle[1u];
+
+    // Slice writes update the source array.
+    middle[1u] = 99;
+    printintrin arr[2u];
+
+    let prefix = arr[..2];
+    printintrin _len prefix;
+
+    let suffix = arr[3..];
+    printintrin _len suffix;
+    printintrin suffix[1u];
+
+    return;
+}

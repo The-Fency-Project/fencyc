@@ -100,6 +100,18 @@ impl FcParser {
 
             let _ = self.consume(); 
 
+            if *optok == Tok::DoubleDot {
+                let end = match self.peek() {
+                    None | Some(Token { tok: Tok::RBr | Tok::Semicol | Tok::Comma | Tok::RPar | Tok::RCurBr, .. }) => None,
+                    _ => Some(Box::new(self.parse_expr(4).node)),
+                };
+                left = AstNode::Range {
+                    start: Some(Box::new(left)),
+                    end,
+                };
+                continue;
+            }
+
             let right = self.parse_expr(rbp);
        
             let nexttok: Option<Tok> = match self.peek() {
@@ -234,6 +246,17 @@ impl FcParser {
                 expr: Box::new(self.parse_expr(255).node) 
             },
 
+            Tok::DoubleDot => {
+                // An omitted lower bound (`..end`). The right hand side is
+                // parsed at range precedence so arithmetic in the bound is
+                // still part of the range expression.
+                let end = match self.peek() {
+                    None | Some(Token { tok: Tok::RBr | Tok::Semicol | Tok::Comma | Tok::RPar | Tok::RCurBr, .. }) => None,
+                    _ => Some(Box::new(self.parse_expr(4).node)),
+                };
+                AstNode::Range { start: None, end }
+            }
+
             Tok::LBr => {
                 let mut vals: Vec<AstNode> = Vec::new();
                 self.allowed_tok = Some(Tok::Comma);
@@ -341,10 +364,12 @@ impl FcParser {
                             self.expect(Tok::RBr);
                             el_idx = Some(Box::new(idx_ast.clone()));
 
-                            let n = AstNode::ArrayElem(
-                                Box::new(buf.last().unwrap().clone()), 
-                                Box::new(idx_ast)
-                            );
+                            let base = Box::new(buf.last().unwrap().clone());
+                            let n = if matches!(&idx_ast.node, AstNode::Range { .. }) {
+                                AstNode::ArraySlice(base, Box::new(idx_ast))
+                            } else {
+                                AstNode::ArrayElem(base, Box::new(idx_ast))
+                            };
                             buf.push(n);
                         }
                         Tok::LAngBr if self.looks_like_generic_path() => {
@@ -853,6 +878,7 @@ impl FcParser {
             Tok::VerBar => Some((8, 9)),
             Tok::Caret => Some((10, 11)),
             Tok::Ampersand => Some((12, 13)),
+            Tok::DoubleDot => Some((4, 5)),
 
             Tok::DoubleEq | Tok::RABEq | Tok::LABEq | Tok::ExclEq 
             | Tok::LAngBr | Tok::RAngBr => Some((8, 9)),
@@ -1107,6 +1133,13 @@ impl FcParser {
         let arg_typename_start = self.expect_idt().unwrap_or_else(|| {
             panic!("{}: expected typename for arg", self.line)}
         );
+
+        if arg_typename_start == "slice" && self.peek_is(Tok::LBr) {
+            self.consume();
+            let element = self.parse_ftype();
+            self.expect(Tok::RBr);
+            return FType::Slice(Box::new(element));
+        }
 
         let is_h = arg_typename_start.starts_with("h_");
         let is_s = arg_typename_start.starts_with("s_");
@@ -1553,6 +1586,11 @@ pub enum AstNode {
     Variable(String),
     Array(FType, Vec<AstNode>),
     ArrayElem(Box<AstNode>, Box<AstRoot>), // arrname, idx val
+    ArraySlice(Box<AstNode>, Box<AstRoot>), // arrname, range
+    Range {
+        start: Option<Box<AstNode>>,
+        end: Option<Box<AstNode>>,
+    },
     ArrRep(u64), // repeat array elems N times
 
     CodeBlock {
@@ -1873,6 +1911,7 @@ pub fn type_key(ft: &FType) -> String {
         FType::StructPtr(name) => format!("ptr_{}", name),
         FType::StructHeapPtr(name) => format!("h_{}", name),
         FType::Array(el, count) => format!("arr_{}_{}", type_key(el), count),
+        FType::Slice(el) => format!("slice_{}", type_key(el)),
         FType::Generic(name) => name.clone(),
         other => format!("{}", other),
     }
@@ -1947,6 +1986,10 @@ pub fn match_ftype(lit: &str) -> Option<FType> {
         "ubyte" => Some(FType::ubyte),
         "ibyte" => Some(FType::ibyte),
         "ptr" => Some(FType::Ptr),
+        "range" => Some(FType::Range),
+        // A bare `slice` is only useful as a marker in diagnostics; concrete
+        // slices are inferred from `array[range]` expressions.
+        "slice" => Some(FType::Slice(Box::new(FType::any))),
         other if lit.starts_with("s_") => Some(
             FType::Struct(lit[2..].to_owned())
         ),

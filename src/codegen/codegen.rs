@@ -787,6 +787,54 @@ impl CodeGen {
                 res.val = Some(FValue::new(FVal::VarGlb(st_name), FType::strconst));
                 res.ftype = FType::strconst;
             }
+            AstNode::Range { start, end } => {
+                let range_ptr = self.new_temp(&FType::Ptr);
+                self.fbuild.assign_instr(
+                    range_ptr.clone(),
+                    FType::Ptr,
+                    FInstr::Alloca(8, 16),
+                );
+
+                let start_val = match start {
+                    Some(bound) => {
+                        let gd = self.gen_expr(*bound);
+                        self.coerce_uint(gd)
+                    }
+                    None => FValue::new(FVal::UConst(0), FType::uint),
+                };
+                self.fbuild.add_instr(FInstr::Store(
+                    range_ptr.clone(),
+                    start_val,
+                    FType::uint,
+                ));
+
+                let end_addr = self.new_temp(&FType::Ptr);
+                self.fbuild.assign_instr(
+                    end_addr.clone(),
+                    FType::Ptr,
+                    FInstr::GetAddr(
+                        range_ptr.clone(),
+                        FValue::new(FVal::UConst(8), FType::uint),
+                    ),
+                );
+                let end_val = match end {
+                    Some(bound) => {
+                        let gd = self.gen_expr(*bound);
+                        self.coerce_uint(gd)
+                    }
+                    // `u64::MAX` is the unbounded-end marker. Slices resolve
+                    // it against their source length when they are created.
+                    None => FValue::new(FVal::UConst(u64::MAX), FType::uint),
+                };
+                self.fbuild.add_instr(FInstr::Store(
+                    end_addr,
+                    end_val,
+                    FType::uint,
+                ));
+
+                res.ftype = FType::Range;
+                res.val = Some(range_ptr);
+            }
             AstNode::Array(ft, elems) => {
                 let (mut el_size, agg) = match &ft {
                     FType::Struct(sn) => {
@@ -885,17 +933,36 @@ impl CodeGen {
                 let idx_gd   = self.gen_expr(idx_val.node);
                 self.need_addr = old_needaddr;
 
+                if idx_gd.ftype == FType::Range {
+                    return self.gen_slice_view(val_dat, idx_gd.val.expect("range has no value"));
+                }
+
                 // agg - whether element ftype is aggregate (dense array)
-                let (el_ftype, agg) = match val_dat.ftype {
+                let source_val = val_dat.val.clone().unwrap();
+                let (el_ftype, agg, base_val) = match val_dat.ftype {
                     FType::Array(el, _ctr) => {
                         let res = *el.clone();
                         let agg = match &res {
                             FType::Struct(s) => Some(s.clone()),
                             other => None,
                         };
-                        (res, agg)
+                        (res, agg, source_val)
                     }
-                    FType::strconst => (FType::ubyte, None), // byte-wise indexing
+                    FType::Slice(el) => {
+                        let res = *el.clone();
+                        let agg = match &res {
+                            FType::Struct(s) => Some(s.clone()),
+                            other => None,
+                        };
+                        let base_addr = self.new_temp(&FType::Ptr);
+                        self.fbuild.assign_instr(
+                            base_addr.clone(),
+                            FType::Ptr,
+                            FInstr::Load(source_val, FType::Ptr),
+                        );
+                        (res, agg, base_addr)
+                    }
+                    FType::strconst => (FType::ubyte, None, source_val), // byte-wise indexing
                     _other => unreachable!()
                 };
                 let tmp      = self.new_temp(&el_ftype);
@@ -927,7 +994,7 @@ impl CodeGen {
                     addr.clone(),
                     FType::Ptr,
                     FInstr::GetAddr(
-                        val_dat.val.unwrap().clone(),
+                        base_val,
                         offset.clone()
                     )
                 );                
@@ -947,6 +1014,195 @@ impl CodeGen {
                     Some(nm) => FType::StructPtr(nm),
                     None     => el_ftype
                 };
+            }
+            AstNode::ArraySlice(arr, range) => {
+                let old_needaddr = self.need_addr;
+                self.need_addr = false;
+                let arr_dat = self.gen_expr(*arr);
+                let range_dat = self.gen_expr(range.node);
+                self.need_addr = old_needaddr;
+
+                let range_ptr = range_dat.val.expect("range expression has no value");
+                let (el_ftype, base_ptr, source_len) = match arr_dat.ftype {
+                    FType::Array(el, count) => (
+                        *el,
+                        arr_dat.val.clone().expect("array expression has no value"),
+                        FValue::new(FVal::UConst(count as u64), FType::uint),
+                    ),
+                    FType::Slice(el) => {
+                        let view_ptr = arr_dat.val.clone().expect("slice expression has no value");
+                        let data_ptr = self.new_temp(&FType::Ptr);
+                        self.fbuild.assign_instr(
+                            data_ptr.clone(),
+                            FType::Ptr,
+                            FInstr::Load(view_ptr.clone(), FType::Ptr),
+                        );
+                        let len_addr = self.new_temp(&FType::Ptr);
+                        self.fbuild.assign_instr(
+                            len_addr.clone(),
+                            FType::Ptr,
+                            FInstr::GetAddr(
+                                view_ptr,
+                                FValue::new(FVal::UConst(8), FType::uint),
+                            ),
+                        );
+                        let len = self.new_temp(&FType::uint);
+                        self.fbuild.assign_instr(
+                            len.clone(),
+                            FType::uint,
+                            FInstr::Load(len_addr, FType::uint),
+                        );
+                        (*el, data_ptr, len)
+                    }
+                    FType::strconst => {
+                        let string_ptr = arr_dat.val.clone().expect("string expression has no value");
+                        let len = self.new_temp(&FType::uint);
+                        self.fbuild.assign_instr(
+                            len.clone(),
+                            FType::uint,
+                            FInstr::Call("strlen".into(), vec![(string_ptr.clone(), FType::Ptr)]),
+                        );
+                        (FType::ubyte, string_ptr, len)
+                    }
+                    other => panic!("cannot slice value of type {}", other),
+                };
+
+                let element_size = match &el_ftype {
+                    ft if ft.if_struct().is_some() => {
+                        let paths = self.get_use_paths();
+                        self.struct_tab
+                            .get(&ft.if_struct().unwrap(), &paths)
+                            .expect("unknown slice element struct")
+                            .size as u64
+                    }
+                    other => Self::sizeof(other),
+                };
+
+                let start_addr = self.new_temp(&FType::Ptr);
+                self.fbuild.assign_instr(
+                    start_addr.clone(),
+                    FType::Ptr,
+                    FInstr::GetAddr(
+                        range_ptr.clone(),
+                        FValue::new(FVal::UConst(0), FType::uint),
+                    ),
+                );
+                let start = self.new_temp(&FType::uint);
+                self.fbuild.assign_instr(
+                    start.clone(),
+                    FType::uint,
+                    FInstr::Load(start_addr, FType::uint),
+                );
+
+                let end_addr = self.new_temp(&FType::Ptr);
+                self.fbuild.assign_instr(
+                    end_addr.clone(),
+                    FType::Ptr,
+                    FInstr::GetAddr(
+                        range_ptr,
+                        FValue::new(FVal::UConst(8), FType::uint),
+                    ),
+                );
+                let raw_end = self.new_temp(&FType::uint);
+                self.fbuild.assign_instr(
+                    raw_end.clone(),
+                    FType::uint,
+                    FInstr::Load(end_addr, FType::uint),
+                );
+
+                // Resolve an omitted end (`start..`) against the source
+                // length. This is a small control-flow diamond so ranges can
+                // be stored in variables and still behave correctly.
+                let unbounded = self.new_temp(&FType::bool);
+                self.fbuild.assign_instr(
+                    unbounded.clone(),
+                    FType::bool,
+                    FInstr::Cmp(
+                        IRCmpOp::Eq,
+                        FType::uint,
+                        raw_end.clone(),
+                        FValue::new(FVal::UConst(u64::MAX), FType::uint),
+                    ),
+                );
+                let use_len = self.alloc_label();
+                let use_end = self.alloc_label();
+                let after_end = self.alloc_label();
+                self.fbuild.add_term(FTerm::Branch {
+                    cond: unbounded,
+                    then_bl: use_len.clone(),
+                    else_bl: use_end.clone(),
+                });
+                let end = self.new_temp(&FType::uint);
+                self.fbuild.add_block(use_len);
+                self.fbuild.assign_instr(
+                    end.clone(),
+                    FType::uint,
+                    FInstr::Copy(FType::uint, source_len.clone()),
+                );
+                self.fbuild.add_term(FTerm::Jump(after_end.clone()));
+                self.fbuild.add_block(use_end);
+                self.fbuild.assign_instr(
+                    end.clone(),
+                    FType::uint,
+                    FInstr::Copy(FType::uint, raw_end),
+                );
+                self.fbuild.add_term(FTerm::Jump(after_end.clone()));
+                self.fbuild.add_block(after_end);
+
+                let offset = self.new_temp(&FType::uint);
+                self.fbuild.assign_instr(
+                    offset.clone(),
+                    FType::uint,
+                    FInstr::BinaryOp(
+                        IRBinOp::Mul,
+                        start.clone(),
+                        FValue::new(FVal::UConst(element_size), FType::uint),
+                    ),
+                );
+                let data = self.new_temp(&FType::Ptr);
+                self.fbuild.assign_instr(
+                    data.clone(),
+                    FType::Ptr,
+                    FInstr::GetAddr(base_ptr, offset),
+                );
+
+                let view = self.new_temp(&FType::Ptr);
+                self.fbuild.assign_instr(
+                    view.clone(),
+                    FType::Ptr,
+                    FInstr::Alloca(8, 16),
+                );
+                self.fbuild.add_instr(FInstr::Store(
+                    view.clone(),
+                    data,
+                    FType::Ptr,
+                ));
+                let view_len_addr = self.new_temp(&FType::Ptr);
+                self.fbuild.assign_instr(
+                    view_len_addr.clone(),
+                    FType::Ptr,
+                    FInstr::GetAddr(
+                        view.clone(),
+                        FValue::new(FVal::UConst(8), FType::uint),
+                    ),
+                );
+                let view_len = self.new_temp(&FType::uint);
+                self.fbuild.assign_instr(
+                    view_len.clone(),
+                    FType::uint,
+                    FInstr::BinaryOp(
+                        IRBinOp::Sub,
+                        end,
+                        start.clone(),
+                    ),
+                );
+                self.fbuild.add_instr(FInstr::Store(
+                    view_len_addr,
+                    view_len,
+                    FType::uint,
+                ));
+                res.ftype = FType::Slice(Box::new(el_ftype));
+                res.val = Some(view);
             }
             AstNode::UnaryOp { op, expr } => {
                 let mut gd = self.gen_expr(*expr);
@@ -1716,6 +1972,204 @@ impl CodeGen {
         FValue::new(FVal::VarTmp(name), ft.clone())
     }
 
+    fn coerce_uint(&mut self, gd: GenData) -> FValue {
+        let value = gd.val.expect("range bound has no value");
+        if gd.ftype == FType::uint {
+            return value;
+        }
+        let value = match gd.ftype {
+            FType::ibyte | FType::ishort | FType::i32 => {
+                let widened = self.new_temp(&FType::int);
+                self.fbuild.assign_instr(
+                    widened.clone(),
+                    FType::int,
+                    FInstr::Cast(value, gd.ftype.clone(), FType::int),
+                );
+                widened
+            }
+            _ => value,
+        };
+        let source_type = match gd.ftype {
+            FType::ibyte | FType::ishort | FType::i32 => FType::int,
+            other => other,
+        };
+        let tmp = self.new_temp(&FType::uint);
+        self.fbuild.assign_instr(
+            tmp.clone(),
+            FType::uint,
+            FInstr::Cast(value, source_type, FType::uint),
+        );
+        tmp
+    }
+
+    fn gen_slice_view(&mut self, arr_dat: GenData, range_ptr: FValue) -> GenData {
+        let mut res = GenData::new();
+        let (el_ftype, base_ptr, source_len) = match arr_dat.ftype {
+            FType::Array(el, count) => (
+                *el,
+                arr_dat.val.clone().expect("array expression has no value"),
+                FValue::new(FVal::UConst(count as u64), FType::uint),
+            ),
+            FType::Slice(el) => {
+                let view_ptr = arr_dat.val.clone().expect("slice expression has no value");
+                let data_ptr = self.new_temp(&FType::Ptr);
+                self.fbuild.assign_instr(
+                    data_ptr.clone(),
+                    FType::Ptr,
+                    FInstr::Load(view_ptr.clone(), FType::Ptr),
+                );
+                let len_addr = self.new_temp(&FType::Ptr);
+                self.fbuild.assign_instr(
+                    len_addr.clone(),
+                    FType::Ptr,
+                    FInstr::GetAddr(
+                        view_ptr,
+                        FValue::new(FVal::UConst(8), FType::uint),
+                    ),
+                );
+                let len = self.new_temp(&FType::uint);
+                self.fbuild.assign_instr(
+                    len.clone(),
+                    FType::uint,
+                    FInstr::Load(len_addr, FType::uint),
+                );
+                (*el, data_ptr, len)
+            }
+            FType::strconst => {
+                let string_ptr = arr_dat.val.clone().expect("string expression has no value");
+                let len = self.new_temp(&FType::uint);
+                self.fbuild.assign_instr(
+                    len.clone(),
+                    FType::uint,
+                    FInstr::Call("strlen".into(), vec![(string_ptr.clone(), FType::Ptr)]),
+                );
+                (FType::ubyte, string_ptr, len)
+            }
+            other => panic!("cannot slice value of type {}", other),
+        };
+
+        let element_size = match &el_ftype {
+            ft if ft.if_struct().is_some() => {
+                let paths = self.get_use_paths();
+                self.struct_tab
+                    .get(&ft.if_struct().unwrap(), &paths)
+                    .expect("unknown slice element struct")
+                    .size as u64
+            }
+            other => Self::sizeof(other),
+        };
+
+        let start_addr = self.new_temp(&FType::Ptr);
+        self.fbuild.assign_instr(
+            start_addr.clone(),
+            FType::Ptr,
+            FInstr::GetAddr(
+                range_ptr.clone(),
+                FValue::new(FVal::UConst(0), FType::uint),
+            ),
+        );
+        let start = self.new_temp(&FType::uint);
+        self.fbuild.assign_instr(
+            start.clone(),
+            FType::uint,
+            FInstr::Load(start_addr, FType::uint),
+        );
+        let end_addr = self.new_temp(&FType::Ptr);
+        self.fbuild.assign_instr(
+            end_addr.clone(),
+            FType::Ptr,
+            FInstr::GetAddr(
+                range_ptr,
+                FValue::new(FVal::UConst(8), FType::uint),
+            ),
+        );
+        let raw_end = self.new_temp(&FType::uint);
+        self.fbuild.assign_instr(
+            raw_end.clone(),
+            FType::uint,
+            FInstr::Load(end_addr, FType::uint),
+        );
+
+        let unbounded = self.new_temp(&FType::bool);
+        self.fbuild.assign_instr(
+            unbounded.clone(),
+            FType::bool,
+            FInstr::Cmp(
+                IRCmpOp::Eq,
+                FType::uint,
+                raw_end.clone(),
+                FValue::new(FVal::UConst(u64::MAX), FType::uint),
+            ),
+        );
+        let use_len = self.alloc_label();
+        let use_end = self.alloc_label();
+        let after_end = self.alloc_label();
+        self.fbuild.add_term(FTerm::Branch {
+            cond: unbounded,
+            then_bl: use_len.clone(),
+            else_bl: use_end.clone(),
+        });
+        let end = self.new_temp(&FType::uint);
+        self.fbuild.add_block(use_len);
+        self.fbuild.assign_instr(
+            end.clone(),
+            FType::uint,
+            FInstr::Copy(FType::uint, source_len),
+        );
+        self.fbuild.add_term(FTerm::Jump(after_end.clone()));
+        self.fbuild.add_block(use_end);
+        self.fbuild.assign_instr(
+            end.clone(),
+            FType::uint,
+            FInstr::Copy(FType::uint, raw_end),
+        );
+        self.fbuild.add_term(FTerm::Jump(after_end.clone()));
+        self.fbuild.add_block(after_end);
+
+        let offset = self.new_temp(&FType::uint);
+        self.fbuild.assign_instr(
+            offset.clone(),
+            FType::uint,
+            FInstr::BinaryOp(
+                IRBinOp::Mul,
+                start.clone(),
+                FValue::new(FVal::UConst(element_size), FType::uint),
+            ),
+        );
+        let data = self.new_temp(&FType::Ptr);
+        self.fbuild.assign_instr(
+            data.clone(),
+            FType::Ptr,
+            FInstr::GetAddr(base_ptr, offset),
+        );
+        let view = self.new_temp(&FType::Ptr);
+        self.fbuild.assign_instr(
+            view.clone(),
+            FType::Ptr,
+            FInstr::Alloca(8, 16),
+        );
+        self.fbuild.add_instr(FInstr::Store(view.clone(), data, FType::Ptr));
+        let view_len_addr = self.new_temp(&FType::Ptr);
+        self.fbuild.assign_instr(
+            view_len_addr.clone(),
+            FType::Ptr,
+            FInstr::GetAddr(
+                view.clone(),
+                FValue::new(FVal::UConst(8), FType::uint),
+            ),
+        );
+        let view_len = self.new_temp(&FType::uint);
+        self.fbuild.assign_instr(
+            view_len.clone(),
+            FType::uint,
+            FInstr::BinaryOp(IRBinOp::Sub, end, start),
+        );
+        self.fbuild.add_instr(FInstr::Store(view_len_addr, view_len, FType::uint));
+        res.ftype = FType::Slice(Box::new(el_ftype));
+        res.val = Some(view);
+        res
+    }
+
     fn new_dslab(&mut self) -> String {
         let name = format!("dsval_{}", self.dslbl_ctr);
         self.dslbl_ctr += 1;
@@ -1891,7 +2345,11 @@ impl CodeGen {
     pub fn sizeof(ft: &FType) -> u64 {
         match ft {
             FType::int | FType::uint | FType::double => 8,
-            FType::bool => 4, // word type for bool asignments 
+            FType::Ptr | FType::strconst | FType::Range | FType::Slice(_)
+                | FType::StructPtr(_) | FType::StructHeapPtr(_) => 8,
+            FType::i32 | FType::u32 | FType::single => 4,
+            FType::ishort | FType::ushort => 2,
+            FType::bool | FType::ubyte | FType::ibyte => 1,
             _other => 8,
         }
     } 
@@ -2124,6 +2582,22 @@ impl CodeGen {
                                     FType::uint
                                 )
                             )
+                        );
+                    }
+                    FType::Slice(_el) => {
+                        let len_addr = self.new_temp(&FType::Ptr);
+                        self.fbuild.assign_instr(
+                            len_addr.clone(),
+                            FType::Ptr,
+                            FInstr::GetAddr(
+                                rightdat.val.unwrap(),
+                                FValue::new(FVal::UConst(8), FType::uint),
+                            ),
+                        );
+                        self.fbuild.assign_instr(
+                            tmp.clone(),
+                            FType::uint,
+                            FInstr::Load(len_addr, FType::uint),
                         );
                     }
                     other => unimplemented!("{:#?}", other)

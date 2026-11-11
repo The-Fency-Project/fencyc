@@ -115,6 +115,8 @@ impl<'ctx> LLVMBackend<'ctx> {
                 | FType::StructPtr(_)
                 | FType::StructHeapPtr(_)
                 | FType::Struct(_)
+                | FType::Range
+                | FType::Slice(_)
         )
     }
 
@@ -160,7 +162,8 @@ impl<'ctx> LLVMBackend<'ctx> {
             FType::single => self.f32_ty().into(),
             FType::double => self.f64_ty().into(),
             FType::Ptr | FType::strconst | FType::StructPtr(_) 
-                | FType::StructHeapPtr(_) | FType::Struct(_) => {
+                | FType::StructHeapPtr(_) | FType::Struct(_)
+                | FType::Range | FType::Slice(_) => {
                 self.ptr_ty().into()
             }
             FType::Usize => {
@@ -203,7 +206,8 @@ impl<'ctx> LLVMBackend<'ctx> {
             FType::uint | FType::int => self.i64_ty().const_zero().into(),
             FType::single => self.f32_ty().const_float(0.0).into(),
             FType::double => self.f64_ty().const_float(0.0).into(),
-            FType::Ptr | FType::strconst | FType::StructPtr(_) | FType::StructHeapPtr(_) => {
+            FType::Ptr | FType::strconst | FType::StructPtr(_) | FType::StructHeapPtr(_)
+                | FType::Range | FType::Slice(_) => {
                 self.ptr_ty().const_null().into()
             }
             FType::Array(elem, count) => {
