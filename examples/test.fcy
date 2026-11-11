@@ -1,3 +1,5 @@
+pub extern func printf(format: str, ...) -> i32;
+
 use main::Person;
 
 module libc {
@@ -46,7 +48,7 @@ impl std::mem::Clone for Person {
 
 impl std::mem::Drop for Person {
     pub func drop(self: *Person) {
-        printintrin self.name;
+        main::printf("%s\n", self.name);
         return;
     }
 }
@@ -115,8 +117,8 @@ func main(argc: uint, argv: [str]) -> int {
         vec.push(p2);
     } 
     
-    printintrin vec.len;
-    printintrin vec.buf[4u].age; 
+    main::printf("%ld\n", vec.len);
+    main::printf("%ld\n", vec.buf[4u].age);
 
     return 0;
 }

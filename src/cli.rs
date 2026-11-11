@@ -45,8 +45,22 @@ pub enum Commands {
     },
 }
 
-#[derive(Args, Debug, Default, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Args, Debug, Default, Clone)]
 pub struct InputFlags {
+    #[arg(long, help = "Build a reusable library (output is binary .fmeta metadata)")]
+    pub library: bool,
+
+    #[arg(long = "dep", help = "Import a compiled library .fmeta; repeat for multiple dependencies")]
+    pub dependencies: Vec<std::path::PathBuf>,
+
+    #[arg(long, help = "Use installed dependency artifacts without checking or rebuilding their sources")]
+    pub frozen_deps: bool,
+
+    #[arg(long, help = "Override the project .fency/incr cache directory")]
+    pub cache_dir: Option<std::path::PathBuf>,
+
+    #[arg(long, help = "Rebuild this unit even if its cached objects are current")]
+    pub no_incremental: bool,
     #[arg(short, long, help = "Prints current status during different steps")]
     pub verbose: bool,
 
@@ -116,7 +130,7 @@ pub fn def_ldas() -> String {
     "gcc".to_string()
 }
 
-#[derive(Clone, ValueEnum, Copy, Debug, Default, EnumIter, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, ValueEnum, Copy, Debug, Default, EnumIter, PartialEq, Eq, Hash)]
 #[clap(rename_all = "snake_case")]
 pub enum Target {
     #[default]
@@ -196,7 +210,7 @@ impl ToString for Target {
     }
 }
 
-#[derive(Clone, ValueEnum, Copy, Debug, Default, EnumIter, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, ValueEnum, Copy, Debug, Default, EnumIter, PartialEq, Eq, Hash)]
 #[clap(rename_all = "snake_case")]
 pub enum CompBackend {
     #[default]

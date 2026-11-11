@@ -1,35 +1,21 @@
 ## Next planned steps (likely)
-- generic structs 
-- traits example + update struct example
-- unions, then enums
-- `h_T` move semantics 
+### Stdlib
 - stdlib
 # Future
 ## Small/medium (unsorted)
-- Optimize QBE code (from `src/codegen/mirtoqbe.rs`) from redundant copies
 - further diagnostics (trait incompl func signature)
 - move in loops
-- incremential compilation
+- Finer incremental compilation, interface hashes, and cache garbage collection
 - maybe move keyword
 - glob for input
 - unsafe stuff
-- imports?
 - iterators for `for`
 - default args values in funcs (maybe)
-- make error if trying to override func that wasnt declared
-- function pointers
 - block return
-- va args
 - stack strs
 - slices
 - ptrs for primitives
 ## Long-term
-- generics
-    - generic structs
-- smaller features 
-    - unions 
-    - enums 
-    - matches 
 - stdlib 
 - wiki
 - macros 

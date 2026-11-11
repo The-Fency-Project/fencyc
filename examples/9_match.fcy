@@ -1,3 +1,5 @@
+pub extern func printf(format: str, ...) -> i32;
+
 enum Result {
     Ok(int),
     Err(str),
@@ -7,16 +9,19 @@ enum Result {
 func main(argc: uint, argv: [str]) -> int {
     let x = 2;
     match x {
-        1 => { printintrin 10; }
-        2 => { printintrin 20; }
-        _ => { printintrin 30; }
+        1 => { main::printf("%ld\n", 10); }
+        2 => { main::printf("%ld\n", 20); }
+        _ => { main::printf("%ld\n", 30); }
     }
 
-    let result = Result::None();
-    match result {
-        Result::Ok => { printintrin 1; }
-        Result::None => { printintrin 2; }
-        _ => { printintrin 3; }
-    }
+    let result: Result = Result::Ok(2);
+    let tag: uint = result$uint;
+    main::printf("%ld\n", tag);
+    let payload = match result {
+        Result::Ok(v) => { v + 1; }
+        Result::None => { 0; }
+        _ => { 0; }
+    };
+    main::printf("%ld\n", payload);
     return 0;
 }

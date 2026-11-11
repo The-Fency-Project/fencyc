@@ -1,7 +1,10 @@
 /target
+/.fency/incr/
 examples/*_temp.*
 examples/*.vve
 fencyc-*
 testbins/*
 !testbins/.gitkeep
 examples/5_modules/*_temp.*
+examples/16_callbacks/*_temp.*
+docs/*/book/

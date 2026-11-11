@@ -1,23 +1,25 @@
 // Rust-like ranges and zero-copy array slices
 
+pub extern func printf(format: str, ...) -> i32;
+
 func main() {
     let arr: [int] = [10, 20, 30, 40, 50]int;
 
     let middle_range: range = 1..4;
     let middle = arr[middle_range];
-    printintrin _len middle;
-    printintrin middle[1u];
+    main::printf("%ld\n", _len middle);
+    main::printf("%ld\n", middle[1u]);
 
     // Slice writes update the source array.
     middle[1u] = 99;
-    printintrin arr[2u];
+    main::printf("%ld\n", arr[2u]);
 
     let prefix = arr[..2];
-    printintrin _len prefix;
+    main::printf("%ld\n", _len prefix);
 
     let suffix = arr[3..];
-    printintrin _len suffix;
-    printintrin suffix[1u];
+    main::printf("%ld\n", _len suffix);
+    main::printf("%ld\n", suffix[1u]);
 
     return;
 }

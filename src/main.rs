@@ -14,6 +14,9 @@ mod logger {pub mod logger;}
 mod mir {pub mod mir;}
 mod tests;
 mod cli;
+mod artifact;
+#[cfg(test)]
+mod artifact_tests;
 use crate::{cli::{Commands, CompBackend, InputFlags, Target, def_ldas}, codegen::{codegen::{self as cgen, CodeGen}, mirtollvm::LLVMBackend, mirtoqbe::QBEBackend}, fcparse::fcparse::{self as fparser, AstRoot, FcParser, FuncTable, TraitTable}, lexer::lexer as lex, logger::logger::{LogMessage, LoggerQuery, spawn_logger_thread}, mir::mir::{self as fmir, FFunction, FModule, MIRTranslator}, seman::seman::{self as Seman, OverloadTable, SemanResult, StructTable}};
 
 // prepend home here 
@@ -77,7 +80,7 @@ fn main() {
 
             match compile(
                 vec![build_scr_spath], Some(build_o_name.clone()), 
-                iflags,
+                iflags.finalize(),
                 vec![], paths, vec![]
             ) {
                 Ok(_) => {},
@@ -114,14 +117,18 @@ fn main() {
 fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
     ldflags: Vec<String>, paths: Vec<PathBuf>, extfiles: Vec<String>)
     -> Result<(), CompilationError> {
+    let recipe = artifact::Recipe::new(files, output, flags, ldflags, paths, extfiles)
+        .map_err(|message| { eprintln!("{message}"); CompilationError::Compilation })?;
+    artifact::run(recipe).map_err(|message| { eprintln!("{message}"); CompilationError::Compilation })
+}
+
+fn compile_unit(recipe: &artifact::Recipe, imports: &[artifact::Metadata], staging: &Path)
+    -> Result<artifact::Product, CompilationError> {
+    let files = &recipe.files;
+    let flags = &recipe.flags;
     let (log_tx, log_rx) = mpsc::channel::<LogMessage>();
     let (log_resp, resp_get) = mpsc::channel::<LogMessage>();
     let handle = spawn_logger_thread(log_rx, log_resp);
-
-    let out = match output {
-        Some(s) => s,
-        None => String::from("program")
-    };
 
     let ast_results: Vec<_> = files.par_iter()
         .map(|file| {
@@ -148,23 +155,27 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         genimpl_tabs.push(p.generic_impls);
     }   
 
-    let functab    = Arc::new(FuncTable::from_several(func_tabs));
-    
-    let mut struct_tab = StructTable::from_several(&struct_tabs);
-    struct_tab.instantiate_many(&genstruct_uses);
-    struct_tab.recalc_layouts()
-        .map_err(CompilationError::LayoutErr)?;
+    let own = artifact::Interface {
+        functions: FuncTable::from_several(func_tabs),
+        structs: StructTable::from_several(&struct_tabs),
+        traits: TraitTable::from_several(trait_tabs),
+        generic_functions: genfunc_tabs.into_iter().flat_map(|g| g.into_iter()).collect(),
+        generic_impls: genimpl_tabs.into_iter().flat_map(|g| g.into_iter()).collect(),
+        generic_uses: genstruct_uses,
+    };
+    let merged = artifact::merge(&own, imports).map_err(|message| {
+        eprintln!("{message}"); CompilationError::Compilation
+    })?;
+    let functab = Arc::new(merged.functions);
+    let mut struct_tab = merged.structs;
+    struct_tab.instantiate_many(&merged.generic_uses);
+    struct_tab.recalc_layouts().map_err(|message| {
+        eprintln!("{message}"); CompilationError::LayoutErr(message)
+    })?;
     let struct_tab = Arc::new(struct_tab);
-
-    let trait_tab  = Arc::new(TraitTable::from_several(trait_tabs)); 
-    let genfunc_tab: Arc<HashMap<String, AstRoot>> = Arc::new(genfunc_tabs
-        .into_iter()
-        .flat_map(|g| {g.into_iter()})
-        .collect());
-    let genimpl_tab: Arc<HashMap<String, AstRoot>> = Arc::new(genimpl_tabs
-        .into_iter()
-        .flat_map(|g| g.into_iter())
-        .collect());
+    let trait_tab = Arc::new(merged.traits);
+    let genfunc_tab = Arc::new(merged.generic_functions);
+    let genimpl_tab = Arc::new(merged.generic_impls);
 
     let fin_msg = LogMessage::from_query(LoggerQuery::Stop);
     let int_msg = LogMessage::from_query(LoggerQuery::Status);
@@ -215,11 +226,21 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
         Err(_e) => {}
     }
 
-    let global_gens = Arc::new(RwLock::new(IndexSet::new()));
+    if flags.check {
+        log_tx.send(fin_msg).ok();
+        handle.join().unwrap();
+        return Ok(artifact::Product { interface: own, objects: vec![], specializations: vec![] });
+    }
+
+    let mut known_generics = IndexSet::new();
+    for import in imports { known_generics.extend(import.specializations.iter().cloned()); }
+    let initial_generics = known_generics.clone();
+    let global_gens = Arc::new(RwLock::new(known_generics));
     let flags_arc   = Arc::new(flags.clone());
+    let signatures = Arc::new(Mutex::new(Vec::new()));
 
     let counter                 = Arc::new(AtomicUsize::new(0));
-    let nat_fnames: Vec<String> = asts.par_iter().enumerate().map(|(idx, ast)| {
+    let nat_results: Vec<Result<String, CompilationError>> = asts.par_iter().enumerate().map(|(idx, ast)| {
         let fname = files[idx].clone();
         let cflags = flags_arc.clone();
 
@@ -237,48 +258,107 @@ fn compile(files: Vec<String>, output: Option<String>, flags: InputFlags,
             matched_ovs.get(&idx).unwrap().clone(),
             functab.clone(),
             struct_tab.clone(),
+            trait_tab.clone(),
             flags_arc.clone(),
             genfunc_tab.clone(),
             genimpl_tab.clone(),
             gens, 
         );
 
-        gene.gen_everything(cflags.shared);
+        gene.gen_everything(cflags.shared || cflags.library || cflags.onlyobjs);
 
-        if cfg!(debug_assertions) { 
-            println!("DBG module \n{}", gene.module);
+        if !gene.specialization_errors.is_empty() {
+            for message in gene.specialization_errors { log_tx.send(message).ok(); }
+            return Err(CompilationError::Compilation);
         }
+        {
+            let defined = gene.module.funcs.iter().filter(|f| !f.blocks.is_empty()).map(|f| &f.name).collect::<HashSet<_>>();
+            signatures.lock().unwrap().extend(gene.specialization_signatures.iter().filter(|s| defined.contains(&s.symbol_name(0))).cloned());
+        }
+        if cfg!(debug_assertions) { println!("DBG module \n{}", gene.module); }
 
-        let temp_fname = format!("{}_temp.ssa", fname.replace(".fcy", ""));
+        let temp_fname = staging.join(format!("unit_{idx}.ssa")).to_string_lossy().into_owned();
         match lower_mir(&gene, &cflags, &temp_fname) {
-            CompilationError::OkFile(f) => f,
-            _ => String::new(),
+            CompilationError::OkFile(f) => {
+                // Separately built consumers can instantiate the same generic. Let the
+                // native linker coalesce these definitions while retaining ordinary symbols.
+                let defined = gene.module.funcs.iter().filter(|func| !func.blocks.is_empty()).map(|func| &func.name).collect::<HashSet<_>>();
+                let weak = gene.specialization_signatures.iter().map(|s| s.symbol_name(0)).filter(|s| defined.contains(s)).collect::<HashSet<_>>();
+                if !weak.is_empty() {
+                    use std::io::Write;
+                    let mut asm = std::fs::OpenOptions::new().append(true).open(&f).map_err(|_| CompilationError::AsmFault)?;
+                    for name in weak {
+                        let directive = if matches!(cflags.target, Target::Aarch64Apple) { format!("\n.weak_definition _{name}\n") }
+                            else { format!("\n.weak {name}\n") };
+                        asm.write_all(directive.as_bytes()).map_err(|_| CompilationError::AsmFault)?;
+                    }
+                }
+                Ok(f)
+            },
+            error => Err(error),
         }
 
         
     }).collect();
 
-    if !flags.check {
-        let strs = nat_fnames.iter()
-            .map(String::as_str)
-            .collect();
-        ldas(&strs, &out, &ldflags, &flags, &paths, &extfiles)?;
+    let nat_fnames = nat_results.into_iter().collect::<Result<Vec<_>, _>>()?;
+
+    let mut objects = Vec::new();
+    for (idx, path) in nat_fnames.iter().chain(&recipe.external).enumerate() {
+        let suffix = if path.ends_with(".a") { "a" } else { "o" };
+        let object = staging.join(format!("object_{idx}.{suffix}"));
+        if path.ends_with(".o") || path.ends_with(".a") {
+            std::fs::copy(path, &object).map_err(|_| CompilationError::AsmFault)?;
+        } else {
+            let mut args = vec!["-c".to_owned()];
+            if flags.shared { args.push("-fPIC".into()); }
+            args.extend([path.clone(), "-o".into(), object.to_string_lossy().into_owned()]);
+            run_command(&flags.ldas, &args.iter().map(String::as_str).collect::<Vec<_>>())
+                .map_err(|_| CompilationError::AsmFault)?;
+        }
+        objects.push(object);
     }
-
-    log_tx.send(fin_msg);
-
+    let specializations = global_gens.read().unwrap().iter()
+        .filter(|name| !initial_generics.contains(*name)).cloned().collect();
+    log_tx.send(fin_msg).ok();
     handle.join().unwrap();
-    Ok(())
+    let mut interface = own;
+    for (name, info) in &mut interface.structs.tab {
+        if let Some(computed) = struct_tab.tab.get(name) { *info = computed.clone(); }
+    }
+    for signature in signatures.lock().unwrap().iter() {
+        interface.functions.ft.entry(signature.name.path_to_string()).or_insert_with(|| vec![signature.clone()]);
+    }
+    Ok(artifact::Product { interface, objects, specializations })
 }
 
-fn build_ast(input: &str, _log_tx: Sender<LogMessage>)
+fn build_ast(input: &str, log_tx: Sender<LogMessage>)
     -> (Vec<AstRoot>, FuncTable, FcParser) {
-    let toks = lex::tokenize(&input);
-
-    let mut parser = fparser::FcParser::new(toks);
-    let parsing_res = parser.parse_everything();
-    let ast = parsing_res.0;
-    let func_tab = parsing_res.1;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let toks = lex::tokenize(&input);
+        let mut parser = fparser::FcParser::new(toks);
+        let parsing_res = parser.parse_everything();
+        (parsing_res.0, parsing_res.1, parser)
+    }));
+    let (ast, func_tab, parser) = match result {
+        Ok(value) => value,
+        Err(_) => {
+            log_tx.send(LogMessage::new(
+                logger::logger::LogLevel::Error(logger::logger::ErrKind::Internal(
+                    "parser panicked while reading input".into())),
+                0, input.to_owned())).ok();
+            let parser = fparser::FcParser::new(Vec::new());
+            (vec![AstRoot::new(fparser::AstNode::Invalid(
+                logger::logger::LogLevel::Error(logger::logger::ErrKind::Internal(
+                    "parser panicked while reading input".into()))), 0)],
+                FuncTable::new(), parser)
+        }
+    };
+    for root in &ast {
+        if let fparser::AstNode::Invalid(level) = &root.node {
+            log_tx.send(LogMessage::new(level.clone(), root.line, input.to_owned())).ok();
+        }
+    }
     
     (ast, func_tab, parser)
 }
@@ -389,100 +469,20 @@ fn genasm_llvm(input_name: &str, tgt: Target)
     CompilationError::OkFile(obj_name)
 }
 
-fn ldas(asm_fnames: &Vec<&str>, output_name: &str, ldflags: &Vec<String>, 
-    flags: &InputFlags, fcy_paths: &Vec<PathBuf>, extfiles: &Vec<String>)
-    -> Result<(), CompilationError> {
-
-    let mut obj_files: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let mut input_files = asm_fnames.clone();
-    input_files.extend(extfiles.iter().map(|s| {s.as_str()}));
-
-    let counter = Arc::new(AtomicUsize::new(0));
-    let total = input_files.len();
-    
-    let errs_count: usize = input_files.par_iter()
-        .enumerate()
-        .map(|(i, v)| {
-        
-        if v.ends_with(".o") {
-            let mut vec = obj_files.lock().unwrap();
-            vec.push(format!("{}", v)); // for some reason, to_owned didnt work
-
-            return 0;
-        }
-        let obj_filename = format!("{}.o", v);
-        {
-            let mut vec = obj_files.lock().unwrap();
-            vec.push(obj_filename.clone());
-        }
-
-        let progress = counter.fetch_add(1, Ordering::SeqCst); // atomic increment
-        if flags.verbose {
-            println!("[{}/{}] {} object file {}",
-                progress + 1, total, "Assembling".cyan(), obj_filename);
-        }
-
-        let args = match flags.shared {
-            true  => vec!["-c", "-fPIC", &v, "-o", &obj_filename],
-            false => vec!["-c", &v, "-o", &obj_filename],
-        };
-        match run_command(&flags.ldas, &args) {
-            Ok(vs) => {
-                for s in vs {
-                    if !s.is_empty() {
-                        println!("asm: {}", s);
-                    }
-                }
-            },
-            Err(_) => {
-                return 1;
-            }
-        }
-        0
-    }).sum();
-    if errs_count > 0 {
-        return Err(CompilationError::AsmFault);
-    }
-
-    let mut fin_args: Vec<String> = Vec::new();
-    let shared_flag = String::from("-shared");
-    if flags.shared {
-        fin_args.push(shared_flag);
-    }
-    {
-        let vec = obj_files.lock().unwrap();
-        fin_args.extend(vec.iter().cloned());
-    }
-    fin_args.push("-o".to_owned());
-    fin_args.push(output_name.to_owned());
-    fin_args.extend(fcy_paths.iter().map(|p| {
-        format!("-L{}", p.display())
-    }));
-    fin_args.extend(ldflags.iter().map(|s| {
-        format!("-{}", s)
-    }));
-
-    if flags.verbose {
-        println!("{} program {}...", "Linking".bright_green(), output_name);
-    }
-    let args_strs: Vec<&str> = fin_args.iter().map(|s| {s.as_str()})
-        .collect();
-    match run_command(&flags.ldas, &args_strs) {
-        Ok(vs) => {
-            print_stds(vs); 
-        }
-        Err(_) => {
-            return Err(CompilationError::LinkError())
-        }
-    }
-
-    release_cleanup(asm_fnames);
-    {
-        let vec = obj_files.lock().unwrap();
-        let obj_files_refs = vec.iter().map(|s| {s.as_str()}).collect();
-        cleanup(&obj_files_refs);
-    }
-
+fn link_objects(objects: &[PathBuf], output: &Path, flags: &InputFlags,
+    paths: &[PathBuf], ldflags: &[String]) -> Result<(), CompilationError> {
+    if let Some(parent) = output.parent() { std::fs::create_dir_all(parent).map_err(|_| CompilationError::LinkError())?; }
+    let mut args = Vec::new();
+    if flags.shared { args.push("-shared".to_owned()); }
+    args.extend(objects.iter().map(|p| p.to_string_lossy().into_owned()));
+    let temporary = output.with_file_name(format!("{}.{}.tmp", output.file_name().unwrap().to_string_lossy(), std::process::id()));
+    args.extend(["-o".into(), temporary.to_string_lossy().into_owned()]);
+    args.extend(paths.iter().map(|p| format!("-L{}", p.display())));
+    args.extend(ldflags.iter().map(|s| format!("-{s}")));
+    if flags.verbose { println!("Linking {}", output.display()); }
+    run_command(&flags.ldas, &args.iter().map(String::as_str).collect::<Vec<_>>())
+        .map_err(|_| CompilationError::LinkError())?;
+    std::fs::rename(temporary, output).map_err(|_| CompilationError::LinkError())?;
     Ok(())
 }
 

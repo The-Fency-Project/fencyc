@@ -1,0 +1,36 @@
+pub extern func printf(format: str, ...) -> i32;
+
+func increment(value: int) -> int { return value + 1; }
+func twice(value: int) -> int { return value * 2; }
+
+func apply(callback: func(int) -> int, value: int) -> int {
+    return callback(value);
+}
+
+func choose() -> func(int) -> int { return increment; }
+
+extern func abs(value: i32) -> i32;
+
+struct Handler { pub callback: func(int) -> int }
+func notify(value: int) { main::printf("%ld\n", value); return; }
+
+func main() {
+    let callback: func(int) -> int = increment;
+    main::printf("%ld\n", callback(4));
+    let copied = callback;
+    callback = twice;
+    main::printf("%ld\n", copied(9));
+    main::printf("%ld\n", apply(callback, 7));
+    let selected = choose();
+    main::printf("%ld\n", selected(20));
+    let c_abs = abs;
+    main::printf("%d\n", c_abs(-12i));
+    let handler = Handler { callback: increment; };
+    main::printf("%ld\n", handler.callback(40));
+    main::printf("%ld\n", choose()(30));
+    let callbacks = [increment, twice]func(int) -> int;
+    main::printf("%ld\n", callbacks[1u](6));
+    let event: func(int) = notify;
+    event(99);
+    return;
+}

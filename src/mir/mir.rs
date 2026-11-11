@@ -72,6 +72,7 @@ pub struct FFunction {
     pub blocks: Vec<FBlock>,
     pub kind: FFunctionKind,
     pub cur_blk: usize,
+    pub variadic: bool,
 }
 
 impl FFunction {
@@ -85,7 +86,8 @@ impl FFunction {
             ret_ft, 
             blocks: Vec::new(), 
             kind,
-            cur_blk: 0
+            cur_blk: 0,
+            variadic: false,
         }
     }
 
@@ -146,6 +148,7 @@ impl std::fmt::Display for FFunction {
 
 #[derive(Debug, Clone)]
 pub enum FTerm {
+    Unreachable,
     Return(Option<FValue>),
     Jump(String),
     Branch {
@@ -159,6 +162,7 @@ pub enum FTerm {
 impl std::fmt::Display for FTerm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            FTerm::Unreachable => writeln!(f, "unreachable"),
             FTerm::Return(ofv) => match ofv {
                 Some(fv) => writeln!(f, "ret {}", fv),
                 None => writeln!(f, "ret")
@@ -270,6 +274,8 @@ pub enum FInstr {
     Neg(FValue), // arithmetical negation
 
     Call(String, Vec<(FValue, FType)>), // name, args
+    // Typed indirect calls and C variadic calls carry their ABI boundary.
+    Invoke(FValue, Vec<(FValue, FType)>, Option<usize>),
 
     Alloca(u64, u64), // alignment, count 
 
@@ -305,6 +311,7 @@ impl std::fmt::Display for FInstr {
                 }
                 write!(f, ")")
             }
+            FInstr::Invoke(target, args, boundary) => write!(f, "invoke {target}({args:?}) variadic={boundary:?}"),
 
             FInstr::Alloca(align, ct) => write!(f, "alloca{align} {ct}"),
 

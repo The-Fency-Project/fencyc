@@ -1,0 +1,25 @@
+pub extern func printf(format: str, ...) -> i32;
+
+enum TriBool {
+    True,
+    False,
+    Idk(int)
+}
+
+func main(argc: uint, argv: [str]) {
+    for let i = 0u in i < argc; i += 1u {
+        main::printf("%s\n", argv[i]);
+    }
+
+    let a: float = 15.4f;
+
+    let c = TriBool::Idk(4);
+    let val = match c {
+        TriBool::True => {1;}
+        TriBool::False => {0;}
+        TriBool::Idk(v) => {v;}
+    };
+    main::printf("%ld\n", val);
+
+    return;
+}
