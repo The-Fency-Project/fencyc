@@ -355,7 +355,12 @@ impl FcParser {
                         Tok::Combined(tok1, tok2) => {
                             match (tok1.as_ref(), tok2.as_ref()) {
                                 (Tok::Colon, Tok::Colon) => {
-                                    let path = self.parse_path(idt.clone());
+                                    let parsed_path = self.parse_path(idt.clone());
+                                    let path = if self.peek_is(Tok::LPar) {
+                                        self.materialize_generic_variant(parsed_path)
+                                    } else {
+                                        parsed_path
+                                    };
                                     
                                     if self.peek_is(Tok::LPar) {
                                         return self.parse_call(&path);
@@ -430,10 +435,17 @@ impl FcParser {
                             buf.push(n);
                         }
                         Tok::LAngBr if self.looks_like_generic_path() => {
-                            let path = self.parse_path(idt_cl.clone());
+                            let parsed_path = self.parse_path(idt_cl.clone());
+                            let path = if self.peek_is(Tok::LPar) {
+                                self.materialize_generic_variant(parsed_path)
+                            } else {
+                                parsed_path
+                            };
                             if self.peek_is(Tok::LCurBr) {
                                 let n = self.parse_struct_create(&path);
                                 buf.push(n);
+                            } else if self.peek_is(Tok::LPar) {
+                                return self.parse_call(&path);
                             } else {
                                 buf.push(AstNode::Variable(path.path_to_string()));
                             }
@@ -857,6 +869,32 @@ impl FcParser {
         }
     }
 
+    /// Materialize an explicitly parameterized aggregate variant path such as
+    /// `Option<int>::Some` into the concrete name used by semantic analysis.
+    /// Generic function paths have no variant segment and are left untouched.
+    fn materialize_generic_variant(&mut self, path: AstNode) -> AstNode {
+        let generic_names = path.get_generic_names();
+        let segments = path.path_to_segs();
+        if generic_names.is_empty() || segments.len() < 2 {
+            return path;
+        }
+
+        let raw_base = segments[..segments.len() - 1].join("::");
+        let base = if raw_base.contains("::") {
+            raw_base
+        } else {
+            format!("{}::{}", self.curmod, raw_base)
+        };
+        let args = generic_names
+            .iter()
+            .map(|arg| self.generic_arg_type(arg))
+            .collect::<Vec<_>>();
+        self.generic_structs.push((base.clone(), args.clone()));
+
+        let concrete = generic_instance_name(&base, &args);
+        AstNode::string_to_path(&format!("{}::{}", concrete, segments.last().unwrap()))
+    }
+
 
 
     fn parse_call(&mut self, idt: &AstNode) -> AstNode {
@@ -966,7 +1004,19 @@ impl FcParser {
                 Tok::RAngBr if depth > 0 => {
                     depth -= 1;
                     if depth == 0 {
-                        return matches!(self.tokens.get(idx + 1).map(|t| &t.tok),
+                        let mut next = idx + 1;
+                        // Generic aggregate variants may continue with a
+                        // qualified segment: `Option<int>::Some(...)`.
+                        while matches!(
+                            (self.tokens.get(next).map(|t| &t.tok),
+                             self.tokens.get(next + 1).map(|t| &t.tok)),
+                            (Some(Tok::Combined(a, b)), Some(Tok::Identifier(_)))
+                                if matches!((a.as_ref(), b.as_ref()),
+                                    (Tok::Colon, Tok::Colon))
+                        ) {
+                            next += 2;
+                        }
+                        return matches!(self.tokens.get(next).map(|t| &t.tok),
                             Some(Tok::LCurBr) | Some(Tok::LPar));
                     }
                 }
@@ -1448,7 +1498,12 @@ impl FcParser {
     fn parse_union(&mut self) -> AstNode {
         let name_start = self.expect_idt().expect("Expected union name");
         let name = self.parse_path(format!("{}::{}", self.curmod, name_start));
+        let old_generic_params = std::mem::replace(
+            &mut self.generic_params,
+            name.get_generic_names(),
+        );
         let mut fields = self.parse_struct_fields();
+        self.generic_params = old_generic_params;
         let attrs = vec![Attr::Custom("union".into())];
         AstNode::Structure {
             name: Box::new(name),
@@ -1461,6 +1516,10 @@ impl FcParser {
     fn parse_enum(&mut self) -> AstNode {
         let name_start = self.expect_idt().expect("Expected enum name");
         let name = self.parse_path(format!("{}::{}", self.curmod, name_start));
+        let old_generic_params = std::mem::replace(
+            &mut self.generic_params,
+            name.get_generic_names(),
+        );
         self.expect(Tok::LCurBr);
         let mut fields = Vec::new();
         loop {
@@ -1482,6 +1541,7 @@ impl FcParser {
                 self.consume();
             }
         }
+        self.generic_params = old_generic_params;
         AstNode::Structure {
             name: Box::new(name),
             fields,
@@ -1504,7 +1564,12 @@ impl FcParser {
                 Tok::Keyword(Kword::False) => MatchPattern::Bool(false),
                 Tok::Identifier(name) if name == "_" => MatchPattern::Wildcard,
                 Tok::Identifier(name) => {
-                    let path = self.parse_path(name);
+                    let parsed_path = self.parse_path(name);
+                    let path = if !parsed_path.get_generic_names().is_empty() {
+                        self.materialize_generic_variant(parsed_path)
+                    } else {
+                        parsed_path
+                    };
                     if self.peek_is(Tok::LPar) {
                         self.consume();
                         let binding = self.expect_idt().expect("Expected match payload binding");

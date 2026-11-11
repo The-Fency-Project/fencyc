@@ -1,0 +1,17 @@
+// Allocation boundary. Implementations can later move behind a target-aware
+// runtime while keeping these names stable for collections.
+
+module std {
+    module alloc {
+        pub extern func malloc(size: uint) -> ptr;
+        pub extern func realloc(buffer: ptr, size: uint) -> ptr;
+        pub extern func free(buffer: ptr);
+        pub extern func memcpy(destination: ptr, source: ptr, size: uint) -> ptr;
+
+        pub trait Allocator<T> {
+            pub func allocate(self: *T, size: uint) -> ptr;
+            pub func deallocate(self: *T, buffer: ptr);
+            pub func grow(self: *T, buffer: ptr, size: uint) -> ptr;
+        }
+    }
+}

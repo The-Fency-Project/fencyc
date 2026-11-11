@@ -1,0 +1,24 @@
+// Generic unions and enums use explicit type arguments, like generic structs.
+
+pub extern func printf(format: str, ...) -> i32;
+
+union Slot<T> {
+    pub value: T
+}
+
+enum Maybe<T> {
+    Some(T),
+    None,
+}
+
+func main() {
+    let slot = Slot<int> { value: 4; };
+    let value = Maybe<int>::Some(8);
+    let result = match value {
+        Maybe<int>::Some(v) => { v; }
+        Maybe<int>::None => { 0; }
+    };
+
+    main::printf("%ld %ld\n", slot.value, result);
+    return;
+}

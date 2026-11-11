@@ -1,0 +1,14 @@
+// Names intended for convenient explicit imports by applications. The
+// compiler does not inject this module automatically yet.
+
+module std {
+    module prelude {
+        pub trait Iterator<T> {
+            pub func next(self: *T) -> int;
+        }
+
+        pub func version() -> uint {
+            return 0u;
+        }
+    }
+}

@@ -199,6 +199,29 @@ fn independent_consumers_share_generic_specializations() {
 }
 
 #[test]
+fn generic_unions_and_enums_cross_library_boundary() {
+    let p = Project::new("generic_aggregates");
+    p.write("base.fcy", r#"module base {
+        pub union Slot<T> { pub value: T }
+        pub enum Maybe<T> { Some(T), None }
+    }"#);
+    p.write("main.fcy", r#"extern func printf(f: str, ...) -> i32;
+        func main() {
+            let slot = base::Slot<int> { value: 4; };
+            let value = base::Maybe<int>::Some(8);
+            let result = match value {
+                base::Maybe<int>::Some(v) => { v; }
+                base::Maybe<int>::None => { 0; }
+            };
+            printf("%ld %ld\n", slot.value, result);
+            return;
+        }"#);
+    p.command(&["base.fcy", "--library", "-o", "base.fmeta"], true);
+    p.command(&["main.fcy", "--dep", "base.fmeta", "-o", "program"], true);
+    assert_eq!(p.run(), "4 8");
+}
+
+#[test]
 fn concurrent_builds_publish_complete_objects() {
     let p = Project::new("concurrent");
     p.write("lib.fcy", "module lib { pub func value() -> int { return 8; } }");

@@ -1,0 +1,42 @@
+// Core language-level contracts and value types.
+// This file deliberately has no allocator or operating-system dependency.
+
+module std {
+    module core {
+        pub enum Ordering {
+            Less,
+            Equal,
+            Greater,
+        }
+
+        pub enum Option<T> {
+            Some(T),
+            None,
+        }
+
+        pub enum Result<T, E> {
+            Ok(T),
+            Err(E),
+        }
+
+        pub trait Eq<T> {
+            pub func eq(self: *T, other: *T) -> bool;
+        }
+
+        pub trait Ord<T> {
+            pub func cmp(self: *T, other: *T) -> int;
+        }
+
+        pub trait Clone<T> {
+            pub func clone(self: *T) -> *T;
+        }
+
+        pub trait Drop<T> {
+            pub func drop(self: *T);
+        }
+
+        pub trait Default<T> {
+            pub func default() -> *T;
+        }
+    }
+}

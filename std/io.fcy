@@ -1,0 +1,22 @@
+// Hosted I/O contracts. Concrete streams and formatting are future layers.
+
+module std {
+    module io {
+        pub enum ErrorKind {
+            Unknown,
+            InvalidInput,
+            UnexpectedEof,
+        }
+
+        pub trait Read<T> {
+            pub func read(self: *T, buffer: [ubyte]) -> uint;
+        }
+
+        pub trait Write<T> {
+            pub func write(self: *T, buffer: [ubyte]) -> uint;
+            pub func flush(self: *T);
+        }
+
+        pub extern func printf(format: str, ...) -> i32;
+    }
+}

@@ -365,3 +365,9 @@ fn test_ranges_and_slices_example() {
     compile(&["examples/10_ranges_slices.fcy"], "testbins/10_ranges_slices");
     assert_eq!(run_bin("testbins/10_ranges_slices"), "3\n30\n99\n2\n2\n50");
 }
+
+#[test]
+fn test_generic_unions_and_enums_example() {
+    compile(&["examples/17_generic_aggregates.fcy"], "testbins/17_generic_aggregates");
+    assert_eq!(run_bin("testbins/17_generic_aggregates"), "4 8");
+}
