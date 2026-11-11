@@ -332,7 +332,7 @@ fn compile_unit(recipe: &artifact::Recipe, imports: &[artifact::Metadata], stagi
     Ok(artifact::Product { interface, objects, specializations })
 }
 
-fn build_ast(input: &str, _log_tx: Sender<LogMessage>)
+fn build_ast(input: &str, log_tx: Sender<LogMessage>)
     -> (Vec<AstRoot>, FuncTable, FcParser) {
     let toks = lex::tokenize(&input);
 
@@ -340,6 +340,11 @@ fn build_ast(input: &str, _log_tx: Sender<LogMessage>)
     let parsing_res = parser.parse_everything();
     let ast = parsing_res.0;
     let func_tab = parsing_res.1;
+    for root in &ast {
+        if let fparser::AstNode::Invalid(level) = &root.node {
+            log_tx.send(LogMessage::new(level.clone(), root.line, input.to_owned())).ok();
+        }
+    }
     
     (ast, func_tab, parser)
 }

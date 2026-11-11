@@ -75,9 +75,9 @@ mod alias_tests {
     use super::*;
     #[test]
     fn parses_module_aliases() {
-        let mut parser = FcParser::new(crate::lexer::lexer::tokenize_source("use long::module as short;"));
+        let mut parser = FcParser::new(crate::lexer::lexer::tokenize_source("use vendor::graphics as gfx;"));
         let ast = parser.parse_everything().0;
-        assert!(matches!(&ast[0].node, AstNode::Usemod { alias: Some(alias), .. } if alias == "short"));
+        assert!(matches!(&ast[0].node, AstNode::Usemod { alias: Some(alias), .. } if alias == "gfx"));
     }
     #[test]
     fn rejects_overload_without_base_function() {
