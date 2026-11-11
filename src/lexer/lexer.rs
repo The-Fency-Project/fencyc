@@ -85,8 +85,15 @@ pub fn tokenize_source(contents: &str) -> Vec<Token> {
             '0'..='9' => {
                 let mut num_st = String::new();
                 let mut ftyp = FType::int;
-                while let Some('0'..='9' | '.' | 'u' | 'i' | 'f' | 'w' | 'h' | 'b') 
+                while let Some('0'..='9' | '.' | 'u' | 'i' | 'f' | 'w' | 'h' | 'b')
                     = chars.peek() {
+                    // `..` starts a range, it is not the fractional part of
+                    // a numeric literal. Leave both dots for the tokenizer.
+                    if chars.peek() == Some(&'.')
+                        && chars.clone().nth(1) == Some('.')
+                    {
+                        break;
+                    }
                     let chn = chars.next().unwrap();
                     let peek = chars.peek();
 

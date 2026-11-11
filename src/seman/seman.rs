@@ -54,6 +54,10 @@ pub enum FType {
     none,                       // No ftype!
     nil,                        // real voxvm thing! (good old times, now deprecated)
     Array(Box<FType>, usize), // type, count 
+    /// A runtime range value. It is lowered as a pointer to `{ start, end }`.
+    Range,
+    /// A zero-copy array view, lowered as a pointer to `{ data, len }`.
+    Slice(Box<FType>),
                                                           
     Struct(String),       // owning by-value aggregate; destructive move
     StructPtr(String),    // non-owning safe raw pointer; trivial copy
@@ -88,7 +92,7 @@ impl Into<qbe::Type> for FType {
                 Into::<qbe::Type>::into(*el)
             },
             FType::strconst | FType::StructPtr(_) | FType::StructHeapPtr(_) 
-                => qbe::Type::Long, // ptr
+                | FType::Range | FType::Slice(_) => qbe::Type::Long, // ptr
             ref _other => todo!("Match ft qbf for {:?}", self)
         }
     }
@@ -112,6 +116,8 @@ impl fmt::Display for FType {
             FType::Array(el, count) => {
                 write!(f, "Array[{};{}]", el, count)
             }
+            FType::Range => write!(f, "range"),
+            FType::Slice(el) => write!(f, "Slice[{}]", el),
             FType::Struct(name)        => write!(f, "s_{}", name),
             FType::StructPtr(name)     => write!(f, "ptr_{}", name),
             FType::StructHeapPtr(name) => write!(f, "h_{}", name),
@@ -178,6 +184,9 @@ impl FType {
     pub fn is_compatible_with(&self, other: &FType) -> bool {
         match (self, other) {
             (_, FType::any) | (FType::any, _) => true,
+            (FType::Slice(a), FType::Slice(b)) => a.is_compatible_with(b),
+            (FType::Slice(a), FType::Array(b, 0))
+            | (FType::Array(b, 0), FType::Slice(a)) => a.is_compatible_with(b),
             (FType::Array(a, n), FType::Array(b, m)) =>
                 a.is_compatible_with(b) && (n == m || *n == 0 || *m == 0),
             _ => self == other,
@@ -590,6 +599,25 @@ impl SemAn {
             AstNode::Ibyte(_) => {
                 exprdat.ftype = FType::ibyte;
             }
+            AstNode::Range { start, end } => {
+                for bound in [start.as_ref(), end.as_ref()].into_iter().flatten() {
+                    let bound_dat = self.analyze_expr(
+                        &AstRoot::new((**bound).clone(), self.line),
+                        logger,
+                    );
+                    if !bound_dat.ftype.is_numerical() || bound_dat.ftype.is_float() {
+                        logger.send(LogMessage::new(
+                            LogLevel::Error(ErrKind::ArrIdxType(
+                                "range".to_owned(),
+                                bound_dat.ftype,
+                            )),
+                            self.line,
+                            self.fname.clone(),
+                        ));
+                    }
+                }
+                exprdat.ftype = FType::Range;
+            }
             AstNode::BinaryOp { op, left, right } => {
                 let leftd = self.analyze_expr(&AstRoot::new(*left.clone(), self.line), logger);
                 let rightd = self.analyze_expr(&AstRoot::new(*right.clone(), self.line), logger);
@@ -745,6 +773,7 @@ impl SemAn {
                     FType::Array(el, count) if idx.is_some() => {
                         *el.clone()
                     }
+                    FType::Slice(el) if idx.is_some() => *el.clone(),
                     other => other
                 };
                 if res_type != newval_data.ftype {
@@ -801,7 +830,7 @@ impl SemAn {
                 match intr {
                     Intrinsic::Len => {
                         match rdat.ftype {
-                            FType::Array(el, count) => {},
+                            FType::Array(_, _) | FType::Slice(_) => {},
                             FType::strconst => {},
                             other => {
                                 logger.send(LogMessage::new(
@@ -1467,8 +1496,9 @@ impl SemAn {
                     &mut logger.clone()
                 );
 
-                let elem_type = match val_dat.ftype {
+                let elem_type = match val_dat.ftype.clone() {
                     FType::Array(ft, count)  => Some(*ft.clone()),
+                    FType::Slice(ft)          => Some(*ft.clone()),
                     FType::strconst          => Some(FType::ubyte),
                     _other => {
                         logger.send(LogMessage::new(
@@ -1481,7 +1511,22 @@ impl SemAn {
                 };
 
                 let idx_exprdat = self.analyze_expr(&idx, logger);
-                if idx_exprdat.ftype != FType::uint {
+                if idx_exprdat.ftype == FType::Range {
+                    exprdat.ftype = match val_dat.ftype {
+                        FType::Array(el, _) | FType::Slice(el) => FType::Slice(el),
+                        FType::strconst => FType::Slice(Box::new(FType::ubyte)),
+                        other => {
+                            logger.send(LogMessage::new(
+                                LogLevel::Error(ErrKind::NonArrIndex(other)),
+                                self.line,
+                                self.fname.clone(),
+                            ));
+                            return exprdat;
+                        }
+                    };
+                    return exprdat;
+                }
+                if !idx_exprdat.ftype.is_numerical() || idx_exprdat.ftype.is_float() {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::ArrIdxType(
                             format!("{}", arr_nm), 
@@ -1505,6 +1550,38 @@ impl SemAn {
                 };
 
                 exprdat.ftype = el_type_u;
+            }
+            AstNode::ArraySlice(arr, range) => {
+                let arr_dat = self.analyze_expr(
+                    &AstRoot::new(*arr.clone(), self.line),
+                    &mut logger.clone(),
+                );
+                let range_dat = self.analyze_expr(range, logger);
+                if range_dat.ftype != FType::Range {
+                    logger.send(LogMessage::new(
+                        LogLevel::Error(ErrKind::IncompatTypes(
+                            FType::Range,
+                            range_dat.ftype,
+                        )),
+                        self.line,
+                        self.fname.clone(),
+                    ));
+                }
+                match arr_dat.ftype {
+                    FType::Array(el, _) | FType::Slice(el) => {
+                        exprdat.ftype = FType::Slice(el);
+                    }
+                    FType::strconst => {
+                        exprdat.ftype = FType::Slice(Box::new(FType::ubyte));
+                    }
+                    other => {
+                        logger.send(LogMessage::new(
+                            LogLevel::Error(ErrKind::NonArrIndex(other)),
+                            self.line,
+                            self.fname.clone(),
+                        ));
+                    }
+                }
             }
             AstNode::Module { name, node } => {
                 let old_mod = self.module.clone();
@@ -2277,7 +2354,8 @@ impl StructInfo {
         match ft {
             FType::none => 1,
             FType::strconst | FType::int | FType::uint | FType::double 
-                | FType::StructPtr(_) | FType::StructHeapPtr(_) | FType::Ptr => {
+                | FType::StructPtr(_) | FType::StructHeapPtr(_) | FType::Ptr
+                | FType::Range | FType::Slice(_) => {
                 8
             }
             FType::i32 | FType::u32 | FType::single => 4,
@@ -2313,6 +2391,7 @@ pub fn substitute_ftype(ft: &FType, substitutions: &HashMap<String, FType>) -> F
         FType::Array(el, count) => FType::Array(
             Box::new(substitute_ftype(el, substitutions)), *count
         ),
+        FType::Slice(el) => FType::Slice(Box::new(substitute_ftype(el, substitutions))),
         FType::Variadic(el) => FType::Variadic(Box::new(substitute_ftype(el, substitutions))),
         FType::Function(args, ret) => FType::Function(args.iter().map(|t| substitute_ftype(t, substitutions)).collect(), Box::new(substitute_ftype(ret, substitutions))),
         other => other.clone(),
@@ -2573,7 +2652,9 @@ impl StructTable {
     ) -> Result<(usize, usize), String> {
         match ft {
             FType::strconst | FType::int | FType::uint | FType::double
-            | FType::StructPtr(_) | FType::StructHeapPtr(_) | FType::Ptr | FType::Function(..) => Ok((8, 8)),
+            | FType::StructPtr(_) | FType::StructHeapPtr(_) | FType::Ptr
+            | FType::Range | FType::Slice(_) => Ok((8, 8)),
+            | FType::Function(..) => Ok((8, 8)),
 
             FType::i32 | FType::u32 | FType::single => Ok((4, 4)),
             FType::bool | FType::ubyte | FType::ibyte => Ok((1, 1)),
@@ -2633,6 +2714,7 @@ fn type_from_key(raw: &str) -> Option<FType> {
         "ubyte" => Some(FType::ubyte),
         "ibyte" => Some(FType::ibyte),
         "ptr" => Some(FType::Ptr),
+        "range" => Some(FType::Range),
         raw if raw.starts_with("s_") => Some(FType::Struct(raw[2..].to_owned())),
         raw if raw.starts_with("ptr_") => Some(FType::StructPtr(raw[4..].to_owned())),
         raw if raw.starts_with("h_") => Some(FType::StructHeapPtr(raw[2..].to_owned())),

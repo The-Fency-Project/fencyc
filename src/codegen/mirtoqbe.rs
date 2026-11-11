@@ -512,6 +512,7 @@ impl QBEBackend {
             FType::Array(_, _) => QType::Long,
             FType::strconst | FType::StructPtr(_)
                 | FType::StructHeapPtr(_) | FType::Ptr | FType::Function(..) => QType::Long, // ptr
+                | FType::Range | FType::Slice(_) => QType::Long, // ptr
             FType::bool | FType::ubyte if straight 
                 => QType::UnsignedByte,
             FType::ibyte if straight => QType::SignedByte,
