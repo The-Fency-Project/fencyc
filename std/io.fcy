@@ -2,6 +2,8 @@
 
 module std {
     module io {
+        use std::libc;
+
         pub enum ErrorKind {
             Unknown,
             InvalidInput,
@@ -16,7 +18,5 @@ module std {
             pub func write(self: *T, buffer: [ubyte]) -> uint;
             pub func flush(self: *T);
         }
-
-        pub extern func printf(format: str, ...) -> i32;
     }
 }

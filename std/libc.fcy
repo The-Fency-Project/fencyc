@@ -1,0 +1,11 @@
+// Stable C ABI boundary shared by hosted std modules.
+
+module std {
+    module libc {
+        pub extern func printf(format: str, ...) -> i32;
+        pub extern func malloc(size: uint) -> ptr;
+        pub extern func realloc(buffer: ptr, size: uint) -> ptr;
+        pub extern func free(buffer: ptr);
+        pub extern func memcpy(destination: ptr, source: ptr, size: uint) -> ptr;
+    }
+}

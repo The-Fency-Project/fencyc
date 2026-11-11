@@ -3,10 +3,7 @@
 
 module std {
     module alloc {
-        pub extern func malloc(size: uint) -> ptr;
-        pub extern func realloc(buffer: ptr, size: uint) -> ptr;
-        pub extern func free(buffer: ptr);
-        pub extern func memcpy(destination: ptr, source: ptr, size: uint) -> ptr;
+        use std::libc;
 
         pub trait Allocator<T> {
             pub func allocate(self: *T, size: uint) -> ptr;

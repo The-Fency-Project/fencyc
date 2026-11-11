@@ -10,17 +10,21 @@ repository root, build the skeleton with:
 
 ```sh
 fencyc input \
-  std/core.fcy std/alloc.fcy std/io.fcy std/prelude.fcy \
+  std/core.fcy std/libc.fcy std/alloc.fcy std/io.fcy std/prelude.fcy \
   --library -o build/std.fmeta --nostd
 ```
 
 An application can consume the resulting metadata with `--dep build/std.fmeta`
 and refer to declarations under `std::core`, `std::alloc`, `std::io`, and
-`std::prelude`. Automatic sysroot discovery and implicit std imports remain
+`std::prelude` and `std::libc`. Automatic sysroot discovery and implicit std imports remain
 future work, so applications should opt in explicitly for now.
 
 The source files are split by layer so the tree can grow without forcing the
 compiler runtime, allocator, and hosted APIs into one monolithic module.
+
+All C ABI declarations live in `std::libc`. Other modules should depend on
+that namespace instead of redeclaring `printf`, allocation, or memory-copy
+symbols, which keeps the platform boundary in one place.
 
 `Option<T>` and `Result<T, E>` are usable with explicit type arguments, for
 example `std::core::Option<int>::Some(7)`. Type inference for an unparameterized
