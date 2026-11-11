@@ -7,5 +7,6 @@ module std {
         pub extern func realloc(buffer: ptr, size: uint) -> ptr;
         pub extern func free(buffer: ptr);
         pub extern func memcpy(destination: ptr, source: ptr, size: uint) -> ptr;
+        pub extern func system(command: str) -> i32;
     }
 }

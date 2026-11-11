@@ -3,6 +3,18 @@
 
 module std {
     module core {
+        module cmp {
+            pub func max(a: int, b: int) -> int {
+                if a > b { return a; }
+                return b;
+            }
+
+            pub func min(a: int, b: int) -> int {
+                if a < b { return a; }
+                return b;
+            }
+        }
+
         pub enum Ordering {
             Less,
             Equal,

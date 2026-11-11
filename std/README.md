@@ -14,6 +14,9 @@ fencyc input \
   --library -o build/std.fmeta --nostd
 ```
 
+The same build can be bootstrapped from inside this directory with
+`fencyc build`; `build.fcy` currently shells out through `std::libc::system`.
+
 An application can consume the resulting metadata with `--dep build/std.fmeta`
 and refer to declarations under `std::core`, `std::alloc`, `std::io`, and
 `std::prelude` and `std::libc`. Automatic sysroot discovery and implicit std imports remain

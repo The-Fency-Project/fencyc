@@ -1,0 +1,18 @@
+// Bootstrap build script for the in-repository standard library.
+// The declaration is kept here because `fencyc build` compiles this script as
+// a standalone host program; the canonical libc surface lives in libc.fcy.
+module std {
+    module libc {
+        pub extern func system(command: str) -> i32;
+    }
+}
+
+func main() -> int {
+    // TODO: replace this shell escape with Fency's native command execution
+    // interface once that API is available.
+    let status = std::libc::system(
+        "fencyc input core.fcy libc.fcy alloc.fcy io.fcy prelude.fcy --library -o std.fmeta --nostd"
+    );
+    if status != 0i { return 1; }
+    return 0;
+}
