@@ -367,6 +367,12 @@ fn test_ranges_and_slices_example() {
 }
 
 #[test]
+fn test_native_atomics_example() {
+    compile(&["examples/18_atomics.fcy"], "testbins/18_atomics");
+    assert_eq!(run_bin("testbins/18_atomics"), "1 3");
+}
+
+#[test]
 fn test_generic_unions_and_enums_example() {
     compile(&["examples/17_generic_aggregates.fcy"], "testbins/17_generic_aggregates");
     assert_eq!(run_bin("testbins/17_generic_aggregates"), "4 8");

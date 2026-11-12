@@ -1,7 +1,7 @@
 use std::{backtrace::Backtrace, collections::{HashMap, HashSet}, ptr::hash, sync::{Arc, Mutex, RwLock}};
 
 use crate::{
-    cli::{CompBackend, InputFlags, Target}, fcparse::fcparse::{self as fparse, AstRoot, Attr, BinaryOp, CmpOp, FuncArg, FuncTable, UnaryOp}, lexer::lexer::Intrinsic, mir::mir::{FBlock, FDataDef, FDataItem, FFunction, FFunctionKind, FInstr, FModule, FTerm, FTypeDef, FVal, FValue, IRBinOp, IRCmpOp, MIRTranslator}, seman::seman::{substitute_ftype, FSymbol, FType, OverloadTable, StructTable, SymbolTable, VarPosition}
+    cli::{CompBackend, InputFlags, Target}, fcparse::fcparse::{self as fparse, AstRoot, Attr, BinaryOp, CmpOp, FuncArg, FuncTable, UnaryOp}, lexer::lexer::Intrinsic, mir::mir::{AtomicOp, AtomicOrdering, FBlock, FDataDef, FDataItem, FFunction, FFunctionKind, FInstr, FModule, FTerm, FTypeDef, FVal, FValue, IRBinOp, IRCmpOp, MIRTranslator}, seman::seman::{substitute_ftype, FSymbol, FType, OverloadTable, StructTable, SymbolTable, VarPosition}
 }; // AstNode;
 use fparse::AstNode;
 use indexmap::IndexSet;
@@ -536,7 +536,26 @@ impl CodeGen {
                     _other => format!("{}", mname)
                 };
 
-                let instr = if boundary.is_some() {
+                let atomic_ordering = |value: &FValue| match value.val {
+                    FVal::UConst(0) => Some(AtomicOrdering::Relaxed),
+                    FVal::UConst(1) => Some(AtomicOrdering::Acquire),
+                    FVal::UConst(2) => Some(AtomicOrdering::Release),
+                    FVal::UConst(3) => Some(AtomicOrdering::AcqRel),
+                    FVal::UConst(4) => Some(AtomicOrdering::SeqCst),
+                    _ => None,
+                };
+                let builtin_atomic = match (requested_name.as_str(), fargs.as_slice()) {
+                    ("std::core::atomic_add", [(address, _), (value, _), (order, _)]) =>
+                        atomic_ordering(order).map(|ordering| FInstr::AtomicRmw(AtomicOp::Add, ordering, address.clone(), value.clone(), FType::uint)),
+                    ("std::core::atomic_sub", [(address, _), (value, _), (order, _)]) =>
+                        atomic_ordering(order).map(|ordering| FInstr::AtomicRmw(AtomicOp::Sub, ordering, address.clone(), value.clone(), FType::uint)),
+                    ("std::core::atomic_exchange", [(address, _), (value, _), (order, _)]) =>
+                        atomic_ordering(order).map(|ordering| FInstr::AtomicRmw(AtomicOp::Exchange, ordering, address.clone(), value.clone(), FType::uint)),
+                    _ => None,
+                };
+                let instr = if let Some(atomic) = builtin_atomic {
+                    atomic
+                } else if boundary.is_some() {
                     FInstr::Invoke(FValue::new(FVal::VarGlb(name), func_dat.function_type()), fargs, boundary)
                 } else { FInstr::Call(name, fargs) };
                 let tmpvar = self.new_temp(&ret_type);

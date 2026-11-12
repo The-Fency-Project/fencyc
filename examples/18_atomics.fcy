@@ -1,0 +1,15 @@
+pub extern func printf(format: str, ...) -> i32;
+
+module std {
+    module core {
+        pub struct AtomicU64 { pub value: uint }
+        pub extern func atomic_add(address: *AtomicU64, value: uint, ordering: uint) -> uint;
+    }
+}
+
+func main() {
+    let counter = std::core::AtomicU64 { value: 1u; };
+    let previous = std::core::atomic_add(&counter, 2u, 4u);
+    printf("%lu %lu\n", previous, counter.value);
+    return;
+}

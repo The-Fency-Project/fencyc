@@ -28,6 +28,18 @@ module std {
             }
         }
 
+        // Builtin atomic RMW operations. The final argument is an explicit
+        // ordering: 0 relaxed, 1 acquire, 2 release, 3 acquire-release, 4
+        // sequentially consistent. The compiler lowers these declarations to
+        // MIR atomics instead of external calls.
+        pub struct AtomicU64 {
+            pub value: uint
+        }
+
+        pub extern func atomic_add(address: *AtomicU64, value: uint, ordering: uint) -> uint;
+        pub extern func atomic_sub(address: *AtomicU64, value: uint, ordering: uint) -> uint;
+        pub extern func atomic_exchange(address: *AtomicU64, value: uint, ordering: uint) -> uint;
+
         pub enum Ordering {
             Less,
             Equal,
