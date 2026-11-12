@@ -4,7 +4,7 @@ This chapter proposes the next ecosystem steps. It does not implement the standa
 
 ## Starting point
 
-The compiler compiles an explicit list of source files together and accepts compiled dependencies through `--dep`. `use` changes name lookup; it does not discover or load source files. Binary metadata supplies declarations, layouts, traits, and generic definitions from dependencies. `--nostd` disables automatic runtime linking. The default driver otherwise searches `~/.fency/runtime` and `~/.fency/libs` and links `libfcyrt`. `build.fcy` is compiled as a host executable and then run.
+The compiler compiles an explicit list of source files together and accepts compiled dependencies through `--dep`. `use` changes name lookup; it does not discover or load source files. Binary metadata supplies declarations, layouts, traits, and generic definitions from dependencies. A normal compilation discovers `~/.fency/libs/std/std.fmeta` and the target runtime archive automatically. `--nostd` disables both automatic standard-library loading and runtime linking. `build.fcy` is compiled as a host executable and then run without the installed standard library so it can bootstrap setup work.
 
 Linking `libstd.a` alone would not make generic types, traits, or source signatures visible to semantic analysis. The initial `.fmeta` format provides this information alongside objects. It is tied to the compiler build, so stdlib packaging should install matching compiler and library artifacts together.
 

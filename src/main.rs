@@ -23,36 +23,31 @@ use crate::{cli::{Commands, CompBackend, InputFlags, Target, def_ldas}, codegen:
 const FENCY_DIR: &str = ".fency";
 
 fn main() {
-    let fency_root = get_homedpath(FENCY_DIR);
-    let fail_fcypath = fency_root.is_err();
-    
-    let mut runtime_dir = PathBuf::new();
-    let mut libs_dir = PathBuf::new();
-
-    if let Ok(r) = fency_root {
-        runtime_dir = r.join("runtime");
-        libs_dir = r.join("libs");
-
-        if !runtime_dir.exists() {
-            std::fs::create_dir_all(&libs_dir)
-                .expect("Failed to create libs directory");
-            std::fs::create_dir_all(&runtime_dir)
-                .expect("Failed to create runtime directory");
-    }
-    } else {
-        println!("Can't get HOME path. Some functions may be unavailable");
-    }
-
+    let fency_root = installation_root();
     let cli = cli::CliArgs::parse();
-    let paths = vec![runtime_dir, libs_dir];
+    let mut paths = fency_root.as_ref()
+        .map(|root| vec![root.join("runtime"), root.join("libs")])
+        .unwrap_or_default();
     
     match cli.command {
         Some(Commands::Input { files, output, mut flags, mut ldflags, extfiles } ) => {
-            if !(flags.nostd || fail_fcypath) {
-                ldflags.push("lfcyrt".to_owned());
-            }
             flags.verbose |= cli.verbose;
-            let flags = flags.finalize();
+            let mut flags = flags.finalize();
+
+            if !flags.nostd {
+                let installation = match discover_installation(flags.target) {
+                    Ok(installation) => installation,
+                    Err(message) => {
+                        eprintln!("{message}");
+                        exit(1);
+                    }
+                };
+                flags.dependencies.push(installation.std_metadata);
+                paths.extend(installation.search_paths);
+                if !flags.library && !flags.check && !flags.onlyobjs {
+                    ldflags.push(installation.runtime_link_flag);
+                }
+            }
 
             match compile(files, output, flags, ldflags, paths, extfiles) {
                 Ok(_) => {return;}
@@ -77,6 +72,9 @@ fn main() {
             iflags.ldas = def_ldas();
             iflags.target = Target::get_def();
             iflags.verbose = cli.verbose;
+            // Build scripts are the bootstrap path for stdlib and native setup.
+            // They declare their own externs and are compiled without the installed std.
+            iflags.nostd = true;
 
             match compile(
                 vec![build_scr_spath], Some(build_o_name.clone()), 
@@ -478,7 +476,14 @@ fn link_objects(objects: &[PathBuf], output: &Path, flags: &InputFlags,
     let temporary = output.with_file_name(format!("{}.{}.tmp", output.file_name().unwrap().to_string_lossy(), std::process::id()));
     args.extend(["-o".into(), temporary.to_string_lossy().into_owned()]);
     args.extend(paths.iter().map(|p| format!("-L{}", p.display())));
-    args.extend(ldflags.iter().map(|s| format!("-{s}")));
+    for flag in ldflags {
+        if let Some(argument) = flag.strip_prefix('@') {
+            // Internal raw linker argument (used for an absolute runtime path).
+            args.push(argument.to_owned());
+        } else {
+            args.push(format!("-{flag}"));
+        }
+    }
     if flags.verbose { println!("Linking {}", output.display()); }
     run_command(&flags.ldas, &args.iter().map(String::as_str).collect::<Vec<_>>())
         .map_err(|_| CompilationError::LinkError())?;
@@ -559,6 +564,72 @@ pub fn get_homedpath(append: &str) -> Result<PathBuf, ()> {
     } else {
         Err(())
     }
+}
+
+struct FencyInstallation {
+    std_metadata: PathBuf,
+    runtime_link_flag: String,
+    search_paths: Vec<PathBuf>,
+}
+
+/// Locate the installed compiler support files. `FENCY_HOME` is useful for
+/// isolated toolchains and tests; the normal installation remains `~/.fency`.
+fn installation_root() -> Option<PathBuf> {
+    std::env::var_os("FENCY_HOME")
+        .map(PathBuf::from)
+        .or_else(|| get_homedpath(FENCY_DIR).ok())
+}
+
+fn target_runtime_names(target: Target) -> (&'static str, &'static str, &'static [&'static str]) {
+    match target {
+        Target::Amd64Sysv => ("linux-x86_64", "libfcyrt.a", &["amd64_sysv"]),
+        Target::Amd64Win => ("windows-x86_64", "libfcyrt.lib", &["amd64_win"]),
+        Target::Aarch64Apple => ("macos-aarch64", "libfcyrt.a", &["aarch64_apple"]),
+        Target::Aarch64Sysv => ("linux-aarch64", "libfcyrt.a", &["aarch64_sysv"]),
+        Target::Riscv64Sysv => ("linux-riscv64", "libfcyrt.a", &["riscv64_sysv"]),
+    }
+}
+
+fn discover_installation(target: Target) -> Result<FencyInstallation, String> {
+    let root = installation_root().ok_or_else(|| {
+        "fency setup not found; compilation is only possible with --nostd".to_owned()
+    })?;
+    let std_metadata = root.join("libs").join("std").join("std.fmeta");
+    if !std_metadata.is_file() {
+        return Err(format!(
+            "fency setup not found: standard library metadata is missing at {}; compilation is only possible with --nostd",
+            std_metadata.display()
+        ));
+    }
+
+    let (target_dir_name, runtime_name, legacy_names) = target_runtime_names(target);
+    let runtime_root = root.join("runtime");
+    let target_dir = runtime_root.join(target_dir_name);
+    let mut runtime_path = [target_dir.join(runtime_name), runtime_root.join(runtime_name)]
+        .into_iter()
+        .find(|path| path.is_file());
+    if runtime_path.is_none() {
+        runtime_path = legacy_names.iter()
+            .map(|name| runtime_root.join(name).join(runtime_name))
+            .find(|path| path.is_file());
+    }
+    let runtime_path = runtime_path.ok_or_else(|| format!(
+        "fency setup not found: runtime library is missing (expected {}/{}); compilation is only possible with --nostd",
+        target_dir.display(), runtime_name
+    ))?;
+
+    let runtime_dir = runtime_path.parent().unwrap_or(&runtime_root).to_owned();
+    let mut search_paths = vec![runtime_dir, root.join("libs")];
+    if !search_paths.iter().any(|path| path == &runtime_root) {
+        search_paths.push(runtime_root);
+    }
+    Ok(FencyInstallation {
+        std_metadata,
+        // `link_objects` accepts an `@`-prefixed raw argument so this works
+        // with GNU and Darwin linkers without relying on `-l:` support.
+        runtime_link_flag: format!("@{}", runtime_path.display()),
+        search_paths,
+    })
 }
 
 fn target_machine_from_cli(flags: &InputFlags) -> TargetMachine {

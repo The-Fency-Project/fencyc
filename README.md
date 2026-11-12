@@ -43,8 +43,17 @@ to actually use llvm in compiler. Install from your package manager or from
 3. `gcc`/`clang` - to assemble and link native assemblies. gcc is Preinstalled on most linux 
 distributions, but for others cases you may install gcc or clang. It also has to be in the PATH. 
 See [GNU website](https://gcc.gnu.org/install/)/[Clang website](https://clang.llvm.org/) or get the binaries.
-4. Fency runtime lib - you would have fencyc runtime C library precompiled and installed 
-as `$HOME/.fency/runtime/libfcyrt.a` (or not `.a`, depends on your OS). 
+4. Fency setup - `fcyup` installs the matching standard-library metadata and objects,
+plus the precompiled runtime C library, under `$HOME/.fency`:
+   ```text
+   .fency/
+     bin/fencyc
+     libs/std/std.fmeta
+     libs/std/std.fmeta.objects/
+     runtime/linux-x86_64/libfcyrt.a
+   ```
+   The compiler discovers this setup automatically. Use `--nostd` for a standalone
+   compiler bootstrap or when no installation is available.
 See [runtime lib repo](https://github.com/The-Fency-Project/runtime).    
 
 > [!NOTE]
