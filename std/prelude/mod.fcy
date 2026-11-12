@@ -3,6 +3,9 @@
 
 module std {
     module prelude {
+        use std::rc::Arc;
+        use std::rc::Weak;
+
         pub trait Iterator<T> {
             pub func next(self: *T) -> int;
         }

@@ -1,0 +1,77 @@
+// Reference-counted shared ownership. Atomic operations are provided by fcyrt.
+module std {
+    module rc {
+        pub extern func fcyarcctr_new() -> ptr;
+        pub extern func fcyarcctr_strong_inc(ctr: ptr) -> uint;
+        pub extern func fcyarcctr_strong_dec(ctr: ptr) -> uint;
+        pub extern func fcyarcctr_weak_inc(ctr: ptr) -> uint;
+        pub extern func fcyarcctr_weak_dec(ctr: ptr) -> uint;
+        pub extern func fcyarcctr_try_upgrade(ctr: ptr) -> bool;
+
+        pub struct Arc<T> {
+            ctr: ptr
+            value: ptr
+        }
+
+        pub struct Weak<T> {
+            ctr: ptr
+            value: ptr
+        }
+
+        impl Arc<T> {
+            pub func new(value: ptr) -> std::rc::Arc {
+                let result = std::rc::Arc {
+                    ctr: std::rc::fcyarcctr_new();
+                    value: value;
+                };
+                return result;
+            }
+
+            pub func clone(self: *Arc) -> std::rc::Arc {
+                std::rc::fcyarcctr_strong_inc(self.ctr);
+                let result = std::rc::Arc {
+                    ctr: self.ctr;
+                    value: self.value;
+                };
+                return result;
+            }
+
+            pub func get(self: *Arc) -> ptr {
+                return self.value;
+            }
+
+            pub func downgrade(self: *Arc) -> std::rc::Weak {
+                std::rc::fcyarcctr_weak_inc(self.ctr);
+                let result = std::rc::Weak {
+                    ctr: self.ctr;
+                    value: self.value;
+                };
+                return result;
+            }
+        }
+
+        impl std::core::Drop for Arc<T> {
+            pub func drop(self: *Arc) {
+                let previous = std::rc::fcyarcctr_strong_dec(self.ctr);
+                if previous == 1u {
+                    std::libc::free(self.value);
+                    let weak_previous = std::rc::fcyarcctr_weak_dec(self.ctr);
+                    if weak_previous == 1u {
+                        std::libc::free(self.ctr);
+                    }
+                }
+                return;
+            }
+        }
+
+        impl std::core::Drop for Weak<T> {
+            pub func drop(self: *Weak) {
+                let previous = std::rc::fcyarcctr_weak_dec(self.ctr);
+                if previous == 1u {
+                    std::libc::free(self.ctr);
+                }
+                return;
+            }
+        }
+    }
+}

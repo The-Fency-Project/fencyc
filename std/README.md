@@ -10,11 +10,11 @@ metadata/object bundle per backend:
 
 ```sh
 fencyc input \
-  std/core.fcy std/libc.fcy std/alloc.fcy std/io.fcy std/prelude.fcy \
+  std/core/mod.fcy std/libc/mod.fcy std/alloc/mod.fcy std/io/mod.fcy std/prelude/mod.fcy std/rc/mod.fcy \
   --library -o build/std-qbe.fmeta --nostd --backend qbe -O0
 
 fencyc input \
-  std/core.fcy std/libc.fcy std/alloc.fcy std/io.fcy std/prelude.fcy \
+  std/core/mod.fcy std/libc/mod.fcy std/alloc/mod.fcy std/io/mod.fcy std/prelude/mod.fcy std/rc/mod.fcy \
   --library -o build/std-llvm.fmeta --nostd --backend llvm -O3
 ```
 
