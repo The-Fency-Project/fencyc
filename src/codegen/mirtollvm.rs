@@ -1,9 +1,9 @@
-use crate::{codegen::codegen::CodeGen, mir::mir::{FBlock, FDataDef, FDataItem, FFunction, FFunctionKind, FInstr, FModule, FTerm, FTypeDef, FVal, FValue, IRBinOp, IRCmpOp, MIRTranslator}, seman::seman::FType};
+use crate::{codegen::codegen::CodeGen, mir::mir::{AtomicOp, AtomicOrdering, FBlock, FDataDef, FDataItem, FFunction, FFunctionKind, FInstr, FModule, FTerm, FTypeDef, FVal, FValue, IRBinOp, IRCmpOp, MIRTranslator}, seman::seman::FType};
 
 use std::collections::HashMap;
 
 use inkwell::{
-    AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel, builder::Builder, context::Context, module::{Linkage, Module}, passes::PassBuilderOptions, targets::{FileType, InitializationConfig, Target as LTarget, TargetMachine}, types::{
+    AddressSpace, AtomicOrdering as LLVMOrdering, AtomicRMWBinOp, FloatPredicate, IntPredicate, OptimizationLevel, builder::Builder, context::Context, module::{Linkage, Module}, passes::PassBuilderOptions, targets::{FileType, InitializationConfig, Target as LTarget, TargetMachine}, types::{
         AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FloatType, IntType, PointerType, StructType
     }, values::{
         AnyValue, BasicMetadataValueEnum, BasicValueEnum, FloatValue, FunctionValue, GlobalValue, IntValue, PointerValue, ValueKind
@@ -897,6 +897,29 @@ impl<'ctx> LLVMBackend<'ctx> {
             FInstr::ReinterpretBits(fv, ft_from, ft_to) => {
                 let (v, _) = self.operand_value(fv);
                 self.reinterpret_bits(v, ft_from, ft_to, "reinterp")
+            }
+            FInstr::AtomicRmw(op, ordering, addr, value, ft) => {
+                let (address, _) = self.operand_value(addr);
+                let (value, value_ft) = self.operand_value(value);
+                let value = self.cast_value(value, &value_ft, ft, "atomic.value").into_int_value();
+                let op = match op {
+                    AtomicOp::Add => AtomicRMWBinOp::Add,
+                    AtomicOp::Sub => AtomicRMWBinOp::Sub,
+                    AtomicOp::And => AtomicRMWBinOp::And,
+                    AtomicOp::Or => AtomicRMWBinOp::Or,
+                    AtomicOp::Xor => AtomicRMWBinOp::Xor,
+                    AtomicOp::Exchange => AtomicRMWBinOp::Xchg,
+                };
+                let ordering = match ordering {
+                    AtomicOrdering::Relaxed => LLVMOrdering::Monotonic,
+                    AtomicOrdering::Acquire => LLVMOrdering::Acquire,
+                    AtomicOrdering::Release => LLVMOrdering::Release,
+                    AtomicOrdering::AcqRel => LLVMOrdering::AcquireRelease,
+                    AtomicOrdering::SeqCst => LLVMOrdering::SequentiallyConsistent,
+                };
+                self.builder.build_atomicrmw(op, address.into_pointer_value(), value, ordering)
+                    .expect("atomicrmw")
+                    .into()
             }
             other => unimplemented!("Lower instr {}", other)
         }

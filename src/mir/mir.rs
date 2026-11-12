@@ -287,6 +287,7 @@ pub enum FInstr {
 
     Cast(FValue, FType, FType), // val, from, to
     ReinterpretBits(FValue, FType, FType), // val, from, to 
+    AtomicRmw(AtomicOp, AtomicOrdering, FValue, FValue, FType), // op, ordering, address, value, integer type
 }
 
 // for debug 
@@ -326,9 +327,17 @@ impl std::fmt::Display for FInstr {
                 write!(f, "cast {ft_src} {fv} into {ft_dst}"),
             FInstr::ReinterpretBits(fv, ft_src, ft_dst) => 
                 write!(f, "reinterpret {ft_src} {fv} as {ft_dst}"),
+            FInstr::AtomicRmw(op, ordering, addr, value, ft) =>
+                write!(f, "atomic_{op:?}_{ordering:?} {ft} {addr}, {value}"),
         }    
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum AtomicOp { Add, Sub, And, Or, Xor, Exchange }
+
+#[derive(Debug, Clone, Copy)]
+pub enum AtomicOrdering { Relaxed, Acquire, Release, AcqRel, SeqCst }
 
 #[derive(Debug, Clone, Copy)]
 pub enum IRCmpOp {
