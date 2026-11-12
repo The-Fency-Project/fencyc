@@ -2,13 +2,11 @@ pub extern func printf(format: str, ...) -> i32;
 
 struct Arc<T> { pub value: T }
 enum Option<T> { Some(T), None }
-struct Wrapper<T> { pub value: Option<Arc<T> > }
 
 func main() {
     let arc = Arc<int> { value: 7; };
     let value = Option<Arc<int> >::Some(arc);
-    let wrapped = Wrapper<int> { value: value; };
-    match wrapped.value {
+    match value {
         Option<Arc<int> >::Some(inner) => { printf("%ld\n", inner.value); }
         Option<Arc<int> >::None => { printf("none\n"); }
     }

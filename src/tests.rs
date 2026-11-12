@@ -375,6 +375,7 @@ fn test_native_atomics_example() {
 #[test]
 fn test_nested_generic_paths_example() {
     compile(&["examples/19_nested_generics.fcy"], "testbins/19_nested_generics");
+    assert_eq!(run_bin("testbins/19_nested_generics"), "7");
 }
 
 #[test]
