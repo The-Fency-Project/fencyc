@@ -28,17 +28,44 @@ module std {
             }
         }
 
-        // Builtin atomic RMW operations. The final argument is an explicit
-        // ordering: 0 relaxed, 1 acquire, 2 release, 3 acquire-release, 4
-        // sequentially consistent. The compiler lowers these declarations to
-        // MIR atomics instead of external calls.
-        pub struct AtomicU64 {
-            pub value: uint
-        }
+        module atomic {
+            // Builtin atomic RMW operations. The final argument is explicit:
+            // 0 relaxed, 1 acquire, 2 release, 3 acquire-release, 4 seq-cst.
+            // These declarations lower to MIR atomics instead of external calls.
+            pub struct Ubyte { pub value: ubyte }
+            pub struct Ibyte { pub value: ibyte }
+            pub struct Ushort { pub value: ushort }
+            pub struct Ishort { pub value: ishort }
+            pub struct U32 { pub value: u32 }
+            pub struct Uint { pub value: uint }
+            pub struct I32 { pub value: i32 }
+            pub struct Int { pub value: int }
 
-        pub extern func atomic_add(address: *AtomicU64, value: uint, ordering: uint) -> uint;
-        pub extern func atomic_sub(address: *AtomicU64, value: uint, ordering: uint) -> uint;
-        pub extern func atomic_exchange(address: *AtomicU64, value: uint, ordering: uint) -> uint;
+            pub extern func add_ubyte(address: *Ubyte, value: ubyte, ordering: uint) -> ubyte;
+            pub extern func sub_ubyte(address: *Ubyte, value: ubyte, ordering: uint) -> ubyte;
+            pub extern func exchange_ubyte(address: *Ubyte, value: ubyte, ordering: uint) -> ubyte;
+            pub extern func add_ibyte(address: *Ibyte, value: ibyte, ordering: uint) -> ibyte;
+            pub extern func sub_ibyte(address: *Ibyte, value: ibyte, ordering: uint) -> ibyte;
+            pub extern func exchange_ibyte(address: *Ibyte, value: ibyte, ordering: uint) -> ibyte;
+            pub extern func add_ushort(address: *Ushort, value: ushort, ordering: uint) -> ushort;
+            pub extern func sub_ushort(address: *Ushort, value: ushort, ordering: uint) -> ushort;
+            pub extern func exchange_ushort(address: *Ushort, value: ushort, ordering: uint) -> ushort;
+            pub extern func add_ishort(address: *Ishort, value: ishort, ordering: uint) -> ishort;
+            pub extern func sub_ishort(address: *Ishort, value: ishort, ordering: uint) -> ishort;
+            pub extern func exchange_ishort(address: *Ishort, value: ishort, ordering: uint) -> ishort;
+            pub extern func add_u32(address: *U32, value: u32, ordering: uint) -> u32;
+            pub extern func sub_u32(address: *U32, value: u32, ordering: uint) -> u32;
+            pub extern func exchange_u32(address: *U32, value: u32, ordering: uint) -> u32;
+            pub extern func add_uint(address: *Uint, value: uint, ordering: uint) -> uint;
+            pub extern func sub_uint(address: *Uint, value: uint, ordering: uint) -> uint;
+            pub extern func exchange_uint(address: *Uint, value: uint, ordering: uint) -> uint;
+            pub extern func add_i32(address: *I32, value: i32, ordering: uint) -> i32;
+            pub extern func sub_i32(address: *I32, value: i32, ordering: uint) -> i32;
+            pub extern func exchange_i32(address: *I32, value: i32, ordering: uint) -> i32;
+            pub extern func add_int(address: *Int, value: int, ordering: uint) -> int;
+            pub extern func sub_int(address: *Int, value: int, ordering: uint) -> int;
+            pub extern func exchange_int(address: *Int, value: int, ordering: uint) -> int;
+        }
 
         pub enum Ordering {
             Less,

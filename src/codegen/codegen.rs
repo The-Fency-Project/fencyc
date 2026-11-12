@@ -544,13 +544,16 @@ impl CodeGen {
                     FVal::UConst(4) => Some(AtomicOrdering::SeqCst),
                     _ => None,
                 };
-                let builtin_atomic = match (requested_name.as_str(), fargs.as_slice()) {
-                    ("std::core::atomic_add", [(address, _), (value, _), (order, _)]) =>
-                        atomic_ordering(order).map(|ordering| FInstr::AtomicRmw(AtomicOp::Add, ordering, address.clone(), value.clone(), FType::uint)),
-                    ("std::core::atomic_sub", [(address, _), (value, _), (order, _)]) =>
-                        atomic_ordering(order).map(|ordering| FInstr::AtomicRmw(AtomicOp::Sub, ordering, address.clone(), value.clone(), FType::uint)),
-                    ("std::core::atomic_exchange", [(address, _), (value, _), (order, _)]) =>
-                        atomic_ordering(order).map(|ordering| FInstr::AtomicRmw(AtomicOp::Exchange, ordering, address.clone(), value.clone(), FType::uint)),
+                let atomic_kind = requested_name.strip_prefix("std::core::atomic::");
+                let builtin_atomic = match (atomic_kind, fargs.as_slice()) {
+                    (Some(kind), [(address, _), (value, value_ft), (order, _)]) => {
+                        let op = if kind.starts_with("add_") { Some(AtomicOp::Add) }
+                            else if kind.starts_with("sub_") { Some(AtomicOp::Sub) }
+                            else if kind.starts_with("exchange_") { Some(AtomicOp::Exchange) }
+                            else { None };
+                        op.zip(atomic_ordering(order)).map(|(op, ordering)|
+                            FInstr::AtomicRmw(op, ordering, address.clone(), value.clone(), value_ft.clone()))
+                    }
                     _ => None,
                 };
                 let instr = if let Some(atomic) = builtin_atomic {
