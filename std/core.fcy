@@ -3,6 +3,19 @@
 
 module std {
     module core {
+        module num {
+            pub func abs(value: int) -> int {
+                if value < 0 { return -value; }
+                return value;
+            }
+
+            pub func clamp(value: int, lower: int, upper: int) -> int {
+                if value < lower { return lower; }
+                if value > upper { return upper; }
+                return value;
+            }
+        }
+
         module cmp {
             pub func max(a: int, b: int) -> int {
                 if a > b { return a; }

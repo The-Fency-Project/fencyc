@@ -25,6 +25,9 @@ future work, so applications should opt in explicitly for now.
 The source files are split by layer so the tree can grow without forcing the
 compiler runtime, allocator, and hosted APIs into one monolithic module.
 
+The dependency-free core currently includes small numeric and comparison
+helpers under `std::core::num` and `std::core::cmp`.
+
 All C ABI declarations live in `std::libc`. Other modules should depend on
 that namespace instead of redeclaring `printf`, allocation, or memory-copy
 symbols, which keeps the platform boundary in one place.
