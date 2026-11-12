@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.15.0
 
-- LLVM is now the only supported backend. QBE remains in the source tree as a dormant MIR translator while the backend boundary is preserved for future FCBE work.
-- The default backend is LLVM for all optimization levels.
-- Standard library installation now targets LLVM metadata and object bundles.
-- Added the initial `std::rc` module with generic `Arc<T>` and `Weak<T>` handles backed by fcyrt reference counters.
-- Split stdlib sources into module directories.
-- Added fcyrt strong/weak counter APIs for future Arc and Weak support.
-- Planned next: backend-independent MIR atomic operations and LLVM lowering.
+- LLVM is now the only supported backend; QBE is retained only as dormant MIR infrastructure.
+- Added backend-independent MIR atomic RMW operations and LLVM lowering.
+- Added typed `std::core::atomic` builtins with explicit memory ordering.
+- Added initial `std::rc` Arc/Weak support and strong/weak fcyrt counters.
+- Added split stdlib module layout and LLVM stdlib packaging.
+- Added Rust-like ranges, array slices, generic unions/enums, trait-backed comparisons, and improved separate compilation.
+- Added generic `sizeof @T` handling for concrete specializations.
+
+## 0.14.2
+
+- Previous stable baseline before the stdlib, backend, atomic, and generic aggregate work.

@@ -853,6 +853,12 @@ impl SemAn {
                 exprdat.ftype = target_type.clone();
             }
             AstNode::Intrinsic { intr, val } => {
+                if matches!(intr, Intrinsic::Sizeof)
+                    && matches!(val.as_ref(), AstNode::Variable(name) if self.in_generic.contains_key(name) || name.starts_with("T"))
+                {
+                    exprdat.ftype = FType::uint;
+                    return exprdat;
+                }
                 let rdat = self.analyze_expr(&AstRoot::new(*val.clone(), self.line), logger);
                 match intr {
                     Intrinsic::Len => {

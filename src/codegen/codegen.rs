@@ -1395,7 +1395,11 @@ impl CodeGen {
             AstNode::Intrinsic { intr, val } => {
                 let need_addr_old = self.need_addr;
                 self.need_addr = false;
-                let gend = self.gen_expr(*val);
+                let gend = if matches!(intr, Intrinsic::Sizeof) {
+                    if let AstNode::Variable(name) = val.as_ref() {
+                        GenData { var: Some(name.clone()), ftype: FType::Generic(name.clone()), val: None, qtype: None, instrs: Vec::new(), returned: false, by_addr: false }
+                    } else { self.gen_expr(*val) }
+                } else { self.gen_expr(*val) };
                 self.need_addr = need_addr_old;
                 
                 let ind = self.gen_intrinsic(intr, gend);
@@ -2730,6 +2734,17 @@ impl CodeGen {
                                     st)
                             );
                         struct_info.size as u64 
+                    }
+                    FType::Generic(ref name) => {
+                        let func_name = self.fbuild.func.as_ref().map(|f| f.name.clone()).unwrap_or_default();
+                        let suffix = func_name.strip_suffix("_0").unwrap_or(&func_name);
+                        let concrete = suffix.rsplit('_').next().unwrap_or(name);
+                        match concrete {
+                            "ubyte" | "ibyte" => 1,
+                            "u32" | "i32" | "single" => 4,
+                            "uint" | "int" | "double" => 8,
+                            _ => 0,
+                        }
                     }
                     ref _other => rightdat.ftype.size(Some(self.flags.target))
                 };
