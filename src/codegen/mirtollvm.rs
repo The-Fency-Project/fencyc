@@ -3,7 +3,7 @@ use crate::{codegen::codegen::CodeGen, mir::mir::{FBlock, FDataDef, FDataItem, F
 use std::collections::HashMap;
 
 use inkwell::{
-    AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel, builder::Builder, context::Context, module::Module, passes::PassBuilderOptions, targets::{FileType, InitializationConfig, Target as LTarget, TargetMachine}, types::{
+    AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel, builder::Builder, context::Context, module::{Linkage, Module}, passes::PassBuilderOptions, targets::{FileType, InitializationConfig, Target as LTarget, TargetMachine}, types::{
         AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FloatType, IntType, PointerType, StructType
     }, values::{
         AnyValue, BasicMetadataValueEnum, BasicValueEnum, FloatValue, FunctionValue, GlobalValue, IntValue, PointerValue, ValueKind
@@ -65,6 +65,24 @@ impl<'ctx> LLVMBackend<'ctx> {
             .map_err(|e| format!("Failed to write assembly file: {:?}", e))?;
 
         Ok(())
+    }
+
+    pub fn emit_object_file(&self, path: &str) -> Result<(), String> {
+        LTarget::initialize_all(&InitializationConfig::default());
+
+        self.target_machine
+            .write_to_file(&self.module, FileType::Object, path.as_ref())
+            .map_err(|e| format!("Failed to write object file: {:?}", e))?;
+
+        Ok(())
+    }
+
+    pub fn mark_weak(&self, names: &std::collections::HashSet<String>) {
+        for name in names {
+            if let Some(function) = self.module.get_function(name) {
+                function.set_linkage(Linkage::WeakAny);
+            }
+        }
     }
 
     pub fn module(&self) -> &Module<'ctx> {

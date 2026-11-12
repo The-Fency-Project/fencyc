@@ -32,16 +32,27 @@ fn main() {
     match cli.command {
         Some(Commands::Input { files, output, mut flags, mut ldflags, extfiles } ) => {
             flags.verbose |= cli.verbose;
-            let mut flags = flags.finalize();
-
-            if !flags.nostd {
-                let installation = match discover_installation(flags.target) {
+            let installation = if !flags.nostd {
+                Some(match discover_installation(flags.target) {
                     Ok(installation) => installation,
                     Err(message) => {
                         eprintln!("{message}");
                         exit(1);
                     }
-                };
+                })
+            } else { None };
+            // Keep the default backend compatible with an installed stdlib.
+            // Otherwise -O0 defaults to QBE while an optimized LLVM stdlib
+            // would be rejected even though optimization levels are independent.
+            if flags.backend.is_none() {
+                if let Some(installation) = &installation {
+                    flags.backend = artifact::read(&installation.std_metadata)
+                        .ok().and_then(|meta| meta.recipe.flags.backend);
+                }
+            }
+            let mut flags = flags.finalize();
+
+            if let Some(installation) = installation {
                 flags.dependencies.push(installation.std_metadata);
                 paths.extend(installation.search_paths);
                 if !flags.library && !flags.check && !flags.onlyobjs {
@@ -398,12 +409,16 @@ fn lower_mir(gene: &CodeGen, flags: &InputFlags, temp_fname: &str)
         }
         CompBackend::LLVM => {
             let context   = inkwell::context::Context::create();
-            let asm_fname = temp_fname.replace(".ssa", ".s");
+            let object_fname = temp_fname.replace(".ssa", ".o");
             let mod_name  = temp_fname.split(".").next().unwrap_or(temp_fname);
             let tgt_mchn  = target_machine_from_cli(flags); 
             let mut llvm  = LLVMBackend::new(&context, mod_name, tgt_mchn);
 
             let _module = gene.translate(&mut llvm);
+
+            let defined = gene.module.funcs.iter().filter(|func| !func.blocks.is_empty()).map(|func| &func.name).collect::<HashSet<_>>();
+            let weak = gene.specialization_signatures.iter().map(|s| s.symbol_name(0)).filter(|name| defined.contains(name)).collect::<HashSet<_>>();
+            llvm.mark_weak(&weak);
 
             if let Some(parent) = std::path::Path::new(temp_fname).parent() {
                 if let Err(e) = std::fs::create_dir_all(parent) {
@@ -413,8 +428,8 @@ fn lower_mir(gene: &CodeGen, flags: &InputFlags, temp_fname: &str)
 
 
             // llvm.run_mem2reg(); // running in translate() now
-            match llvm.emit_assembly_file(&asm_fname) {
-                Ok(_) => CompilationError::OkFile(asm_fname),
+            match llvm.emit_object_file(&object_fname) {
+                Ok(_) => CompilationError::OkFile(object_fname),
                 _ => CompilationError::AsmFault
             }
         }
