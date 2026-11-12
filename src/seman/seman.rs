@@ -10,7 +10,7 @@ use crate::cli::Target;
 use crate::codegen::codegen::CodeGen;
 use crate::codegen::mirtoqbe;
  use crate::fcparse::fcparse::{self as fparse, AstNode, Attr, FuncDat, GenericType, MatchPattern, TraitInfo, TraitTable};
-use crate::fcparse::fcparse::{AstRoot, BinaryOp, FuncArg, 
+use crate::fcparse::fcparse::{AstRoot, BinaryOp, CmpOp, FuncArg,
     FuncTable, UnaryOp};
 use crate::lex::Intrinsic;
 use crate::logger::logger::{self as log, LogMessage};
