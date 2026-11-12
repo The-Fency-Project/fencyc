@@ -622,6 +622,33 @@ impl SemAn {
                 let leftd = self.analyze_expr(&AstRoot::new(*left.clone(), self.line), logger);
                 let rightd = self.analyze_expr(&AstRoot::new(*right.clone(), self.line), logger);
 
+                if let BinaryOp::Compare(cmp) = op {
+                    if let Some(struct_name) = leftd.ftype.if_struct() {
+                        let trait_name = match cmp {
+                            CmpOp::Eq | CmpOp::Ne => "std::core::Eq",
+                            CmpOp::Ge => "std::core::Ge",
+                            CmpOp::G => "std::core::Gt",
+                            CmpOp::Le => "std::core::Le",
+                            CmpOp::L => "std::core::Lt",
+                        };
+                        let implemented = self.traits.impls
+                            .get(&struct_name)
+                            .map(|traits| traits.contains(trait_name))
+                            .unwrap_or(false);
+                        if !implemented {
+                            self.signature_error(
+                                logger,
+                                &format!(
+                                    "type {} must implement {} for comparison",
+                                    struct_name, trait_name
+                                ),
+                            );
+                        }
+                        exprdat.ftype = FType::bool;
+                        return exprdat;
+                    }
+                }
+
                 let is_shift_op =
                     (*op == BinaryOp::BitShiftLeft) || (*op == BinaryOp::BitShiftRight);
 

@@ -1331,6 +1331,47 @@ impl CodeGen {
                 }
             }
             AstNode::BinaryOp { op, left, right } => {
+                if let fparse::BinaryOp::Compare(cmp_op) = op {
+                    let method = match cmp_op {
+                        CmpOp::Eq | CmpOp::Ne => "eq",
+                        CmpOp::Ge => "ge",
+                        CmpOp::G => "gt",
+                        CmpOp::Le => "le",
+                        CmpOp::L => "lt",
+                    };
+                    let custom_lhs = match left.as_ref() {
+                        AstNode::Variable(name) => self.symb_table.get(name)
+                            .map(|(_, symbol)| symbol.ftype.if_struct().is_some())
+                            .unwrap_or(false),
+                        _ => false,
+                    };
+                    if custom_lhs {
+                        let call = AstNode::MethodCall {
+                            name: Box::new(AstNode::string_to_path(method)),
+                            args: vec![
+                                AstRoot::new(*left.clone(), 0),
+                                AstRoot::new(*right.clone(), 0),
+                            ],
+                            idx: usize::MAX,
+                        };
+                        let mut compared = self.gen_expr(call);
+                        if matches!(cmp_op, CmpOp::Ne) {
+                            let tmp = self.new_temp(&FType::bool);
+                            self.fbuild.assign_instr(
+                                tmp.clone(),
+                                FType::bool,
+                                FInstr::Cmp(
+                                    IRCmpOp::Eq,
+                                    FType::bool,
+                                    compared.val.take().unwrap(),
+                                    FValue::new(FVal::UConst(0), FType::bool),
+                                ),
+                            );
+                            compared.val = Some(tmp);
+                        }
+                        return compared;
+                    }
+                }
                 let old_needaddr = self.need_addr;
                 self.need_addr = false;
                 let leftd = self.gen_expr(*left);
@@ -2360,6 +2401,40 @@ impl CodeGen {
             -> FValue {
         let val1 = op1.val.unwrap();
         let val2 = op2.val.unwrap();
+
+        if let Some(struct_name) = op1.ftype.if_struct() {
+            let method = match cmp_op {
+                CmpOp::Eq | CmpOp::Ne => "eq",
+                CmpOp::Ge => "ge",
+                CmpOp::G => "gt",
+                CmpOp::Le => "le",
+                CmpOp::L => "lt",
+            };
+            let called = self.new_temp(&FType::bool);
+            self.fbuild.assign_instr(
+                called.clone(),
+                FType::bool,
+                FInstr::Call(
+                    format!("{}_{}_0", struct_name.replace("::", "_"), method),
+                    vec![(val1, FType::Ptr), (val2, FType::Ptr)],
+                ),
+            );
+            if matches!(cmp_op, CmpOp::Ne) {
+                let negated = self.new_temp(&FType::bool);
+                self.fbuild.assign_instr(
+                    negated.clone(),
+                    FType::bool,
+                    FInstr::Cmp(
+                        IRCmpOp::Eq,
+                        FType::bool,
+                        called,
+                        FValue::new(FVal::UConst(0), FType::bool),
+                    ),
+                );
+                return negated;
+            }
+            return called;
+        }
 
         if op1.ftype == FType::strconst {
             let func_tmp = self.new_temp(&FType::i32);

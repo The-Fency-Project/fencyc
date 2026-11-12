@@ -48,6 +48,22 @@ module std {
             pub func eq(self: *T, other: *T) -> bool;
         }
 
+        pub trait Ge<T> {
+            pub func ge(self: *T, other: *T) -> bool;
+        }
+
+        pub trait Gt<T> {
+            pub func gt(self: *T, other: *T) -> bool;
+        }
+
+        pub trait Le<T> {
+            pub func le(self: *T, other: *T) -> bool;
+        }
+
+        pub trait Lt<T> {
+            pub func lt(self: *T, other: *T) -> bool;
+        }
+
         pub trait Ord<T> {
             pub func cmp(self: *T, other: *T) -> int;
         }
