@@ -373,6 +373,11 @@ fn test_native_atomics_example() {
 }
 
 #[test]
+fn test_nested_generic_paths_example() {
+    compile(&["examples/19_nested_generics.fcy"], "testbins/19_nested_generics");
+}
+
+#[test]
 fn test_generic_unions_and_enums_example() {
     compile(&["examples/17_generic_aggregates.fcy"], "testbins/17_generic_aggregates");
     assert_eq!(run_bin("testbins/17_generic_aggregates"), "4 8");

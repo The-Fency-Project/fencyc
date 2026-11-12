@@ -73,7 +73,7 @@ pub enum FType {
     ishort,
     TypePtr(Box<FType>),
 
-    Generic(String),
+    Generic(String, Vec<FType>),
     Function(Vec<FType>, Box<FType>),
     // Declaration-only tail. `none` denotes an untyped C variadic tail.
     Variadic(Box<FType>),
@@ -131,7 +131,7 @@ impl fmt::Display for FType {
             FType::ushort     => write!(f, "ushort"),
             FType::ishort     => write!(f, "ishort"),
             FType::TypePtr(t) => write!(f, "*{}", t),
-            FType::Generic(t) => write!(f, "generic type {}", t),
+            FType::Generic(t, args) => write!(f, "generic type {}<{:?}>", t, args),
             FType::Variadic(t) => write!(f, "...{t}"),
             FType::Function(args, ret) => {
                 write!(f, "func(")?;
@@ -1321,7 +1321,7 @@ impl SemAn {
                             continue;
                         }
 
-                        if let FType::Generic(name) = &overload.args[idx].ftype {
+                        if let FType::Generic(name, _) = &overload.args[idx].ftype {
                             substitutions.insert(name.clone(), argdat.ftype.clone());
                             continue;
                         }
@@ -1412,7 +1412,7 @@ impl SemAn {
                             if let Some(var) = var {
                                 let expected = &overload.args[arg_idx].ftype;
                                 if Self::is_move_type(expected)
-                                    || matches!(expected, FType::Generic(_))
+                                    || matches!(expected, FType::Generic(_, _))
                                         && self.symb_table.get(var)
                                             .map(|(_, sym)| Self::is_move_type(&sym.ftype))
                                             .unwrap_or(false) {
@@ -2416,8 +2416,17 @@ pub struct StructField {
 
 pub fn substitute_ftype(ft: &FType, substitutions: &HashMap<String, FType>) -> FType {
     match ft {
-        FType::Generic(name) => substitutions.get(name).cloned()
-            .unwrap_or_else(|| ft.clone()),
+        FType::Generic(name, args) => {
+            if args.is_empty() { substitutions.get(name).cloned().unwrap_or_else(|| ft.clone()) }
+            else {
+                let resolved = args.iter().map(|arg| substitute_ftype(arg, substitutions)).collect::<Vec<_>>();
+                if resolved.iter().any(contains_generic_type) {
+                    FType::Generic(name.clone(), resolved)
+                } else {
+                    FType::Struct(crate::fcparse::fcparse::generic_instance_name(name, &resolved))
+                }
+            }
+        }
         FType::Struct(name) => substitute_named_struct(FType::Struct, name, substitutions),
         FType::StructPtr(name) => substitute_named_struct(FType::StructPtr, name, substitutions),
         FType::StructHeapPtr(name) => substitute_named_struct(FType::StructHeapPtr, name, substitutions),
@@ -2532,7 +2541,7 @@ impl StructTable {
             let (base, args) = pending[cursor].clone();
             cursor += 1;
 
-            if args.iter().any(|arg| matches!(arg, FType::Generic(_))) {
+            if args.iter().any(|arg| contains_generic_type(arg)) {
                 continue;
             }
             let template = match self.tab.get(&base).cloned() {
@@ -2707,7 +2716,7 @@ impl StructTable {
             }
 
             FType::none => Ok((0, 1)),
-            FType::Generic(_) => Err("generic field reached concrete layout".to_owned()),
+            FType::Generic(_, _) => Err("generic field reached concrete layout".to_owned()),
             other => Err(format!("layout not implemented for {:?}", other)),
         }
     }
@@ -2731,6 +2740,15 @@ fn generic_use_from_ftype(ft: &FType, table: &StructTable) -> Option<(String, Ve
         }
     }
     None
+}
+
+fn contains_generic_type(ft: &FType) -> bool {
+    match ft {
+        FType::Generic(_, args) => args.is_empty() || args.iter().any(contains_generic_type),
+        FType::Array(el, _) | FType::Slice(el) | FType::Variadic(el) => contains_generic_type(el),
+        FType::Function(args, ret) => args.iter().any(contains_generic_type) || contains_generic_type(ret),
+        _ => false,
+    }
 }
 
 fn type_from_key(raw: &str) -> Option<FType> {

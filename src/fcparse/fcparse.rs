@@ -822,7 +822,7 @@ impl FcParser {
                             self.consume();
                         }
 
-                        let name = unwrap_or_invalid!(self.expect_idt(), self); 
+                        let name = unwrap_or_invalid!(self.parse_generic_arg_name(), self);
                         let mut bounds = Vec::new();
                         if self.peek_is(Tok::Colon) {
                             self.consume();
@@ -857,6 +857,7 @@ impl FcParser {
                         generics.insert(g);
                     }
                 }  
+                Tok::DRAngBr => { self.consume(); break; }
                 _ => break,
             }
         }
@@ -867,6 +868,33 @@ impl FcParser {
             generic: generics,
             generic_order,
         }
+    }
+
+    /// Preserve nested generic spelling in the AST path until semantic type
+    /// construction can turn it into a structured generic type.
+    fn parse_generic_arg_name(&mut self) -> Option<String> {
+        let mut text = self.expect_idt()?;
+        if !self.peek_is(Tok::LAngBr) { return Some(text); }
+        self.consume();
+        text.push('<');
+        let mut depth: usize = 1;
+        while depth > 0 {
+            if depth == 1 && self.peek_is(Tok::DRAngBr) {
+                text.push_str(">>");
+                break;
+            }
+            let token = self.consume()?.tok.clone();
+            match token {
+                Tok::LAngBr => { depth += 1; text.push('<'); }
+                Tok::RAngBr => { depth -= 1; text.push('>'); }
+                Tok::DRAngBr => { depth = depth.saturating_sub(2); text.push_str(">>"); }
+                Tok::Comma => text.push(','),
+                Tok::Combined(a, b) if *a == Tok::Colon && *b == Tok::Colon => text.push_str("::"),
+                Tok::Identifier(value) => text.push_str(&value),
+                other => text.push_str(&format!("{other:?}")),
+            }
+        }
+        Some(text)
     }
 
     /// Materialize an explicitly parameterized aggregate variant path such as
@@ -1001,8 +1029,9 @@ impl FcParser {
         for idx in self.pos..self.tokens.len() {
             match &self.tokens[idx].tok {
                 Tok::LAngBr => depth += 1,
-                Tok::RAngBr if depth > 0 => {
-                    depth -= 1;
+                Tok::RAngBr | Tok::DRAngBr if depth > 0 => {
+                    if matches!(self.tokens[idx].tok, Tok::DRAngBr) && depth < 2 { return false; }
+                    depth -= if matches!(self.tokens[idx].tok, Tok::DRAngBr) { 2 } else { 1 };
                     if depth == 0 {
                         let mut next = idx + 1;
                         // Generic aggregate variants may continue with a
@@ -1231,7 +1260,7 @@ impl FcParser {
                     let el_ft = match_ftype(&arg_typename)
                         .or_else(|| self.generic_params.iter()
                             .find(|g| *g == &arg_typename)
-                            .map(|g| FType::Generic(g.clone())))
+                            .map(|g| FType::Generic(g.clone(), Vec::new())))
                         .unwrap_or_else(|| {
                         panic!("{}: unknown type {}", self.line, arg_typename)}
                     );
@@ -1320,6 +1349,9 @@ impl FcParser {
                     .map(|arg| self.generic_arg_type(arg))
                     .collect();
                 self.generic_structs.push((base.clone(), args.clone()));
+                if args.iter().any(|arg| matches!(arg, FType::Generic(_, _))) {
+                    return FType::Generic(base, args);
+                }
                 let concrete = generic_instance_name(&base, &args);
                 if is_ptr {
                     FType::StructPtr(concrete)
@@ -1344,7 +1376,7 @@ impl FcParser {
             match_ftype(&arg_typename_start)
                 .or_else(|| self.generic_params.iter()
                     .find(|g| *g == &arg_typename_start)
-                    .map(|g| FType::Generic(g.clone())))
+                    .map(|g| FType::Generic(g.clone(), Vec::new())))
                 .or_else(|| {
                     let path = self.parse_path(arg_typename_start.clone());
                     let base = self.qualify_generic_struct(&path.path_to_string());
@@ -1352,7 +1384,11 @@ impl FcParser {
                     if params.is_empty() { Some(FType::Struct(base)) } else {
                         let args = params.iter().map(|arg| self.generic_arg_type(arg)).collect::<Vec<_>>();
                         self.generic_structs.push((base.clone(), args.clone()));
-                        Some(FType::Struct(generic_instance_name(&base, &args)))
+                        if args.iter().any(|arg| matches!(arg, FType::Generic(_, _))) {
+                            Some(FType::Generic(base, args))
+                        } else {
+                            Some(FType::Struct(generic_instance_name(&base, &args)))
+                        }
                     }
                 })
             .unwrap_or_else(|| {
@@ -1382,6 +1418,17 @@ impl FcParser {
     }
 
     fn generic_arg_type(&self, arg: &str) -> FType {
+        if let Some(open) = arg.find('<') {
+            if arg.ends_with('>') {
+                let base = self.qualify_generic_struct(&arg[..open]);
+                let args = arg[open + 1..arg.len() - 1]
+                    .split(',').map(|part| self.generic_arg_type(part.trim())).collect::<Vec<_>>();
+                if args.iter().any(|arg| matches!(arg, FType::Generic(_, _))) {
+                    return FType::Generic(base, args);
+                }
+                return FType::Struct(generic_instance_name(&base, &args));
+            }
+        }
         if let Some(ft) = match_ftype(arg) {
             return match ft {
                 FType::Struct(st) => FType::Struct(self.qualify_generic_struct(&st)),
@@ -1391,7 +1438,7 @@ impl FcParser {
             };
         }
         if self.generic_params.iter().any(|g| g == arg) {
-            return FType::Generic(arg.to_owned());
+            return FType::Generic(arg.to_owned(), Vec::new());
         }
         FType::Struct(self.qualify_generic_struct(arg))
     }
@@ -2105,7 +2152,10 @@ pub fn type_key(ft: &FType) -> String {
         FType::StructHeapPtr(name) => format!("h_{}", name),
         FType::Array(el, count) => format!("arr_{}_{}", type_key(el), count),
         FType::Slice(el) => format!("slice_{}", type_key(el)),
-        FType::Generic(name) => name.clone(),
+        FType::Generic(name, args) => {
+            if args.is_empty() { format!("g_{}", name.replace("::", "_")) }
+            else { format!("g_{}_{}", name.replace("::", "_"), args.iter().map(type_key).collect::<Vec<_>>().join("_")) }
+        }
         other => format!("{}", other),
     }
 }

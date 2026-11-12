@@ -1397,7 +1397,7 @@ impl CodeGen {
                 self.need_addr = false;
                 let gend = if matches!(intr, Intrinsic::Sizeof) {
                     if let AstNode::Variable(name) = val.as_ref() {
-                        GenData { var: Some(name.clone()), ftype: FType::Generic(name.clone()), val: None, qtype: None, instrs: Vec::new(), returned: false, by_addr: false }
+                        GenData { var: Some(name.clone()), ftype: FType::Generic(name.clone(), Vec::new()), val: None, qtype: None, instrs: Vec::new(), returned: false, by_addr: false }
                     } else { self.gen_expr(*val) }
                 } else { self.gen_expr(*val) };
                 self.need_addr = need_addr_old;
@@ -2003,7 +2003,7 @@ impl CodeGen {
             let gd = self.gen_expr(arg.node.clone());
             self.need_addr = old_addr;
             self.expected_type = FType::none;
-            if is_move_type(expected) || matches!(expected, FType::Generic(_)) && is_move_type(&gd.ftype) {
+            if is_move_type(expected) || matches!(expected, FType::Generic(_, _)) && is_move_type(&gd.ftype) {
                 if let Some(var) = &gd.var {
                     if let Some((_, symbol)) = self.symb_table.get_mut(var) { symbol.moved = Some(0); }
                 }
@@ -2735,7 +2735,7 @@ impl CodeGen {
                             );
                         struct_info.size as u64 
                     }
-                    FType::Generic(ref name) => {
+                    FType::Generic(ref name, _) => {
                         let func_name = self.fbuild.func.as_ref().map(|f| f.name.clone()).unwrap_or_default();
                         let suffix = func_name.strip_suffix("_0").unwrap_or(&func_name);
                         let concrete = suffix.rsplit('_').next().unwrap_or(name);
@@ -2895,7 +2895,7 @@ fn specialize_method_ftype(ft: &FType, template_name: &str, concrete_name: &str)
 
 fn contains_generic_ftype(ft: &FType) -> bool {
     match ft {
-        FType::Generic(_) => true,
+        FType::Generic(_, args) => args.is_empty() || args.iter().any(contains_generic_ftype),
         FType::Array(el, _) => contains_generic_ftype(el),
         _ => false,
     }
