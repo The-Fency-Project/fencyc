@@ -11,7 +11,7 @@ func main() -> int {
     // TODO: replace this shell escape with Fency's native command execution
     // interface once that API is available.
     let status = std::libc::system(
-        "fencyc input core/mod.fcy libc/mod.fcy alloc/mod.fcy io/mod.fcy prelude/mod.fcy rc/mod.fcy --library -o std.fmeta --nostd"
+        "fencyc input core/mod.fcy libc/mod.fcy alloc/mod.fcy io/mod.fcy prelude/mod.fcy rc/mod.fcy --library -o std-llvm.fmeta --nostd --backend llvm -O3"
     );
     if status != 0i { return 1; }
     return 0;

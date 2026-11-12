@@ -54,4 +54,4 @@ Use `build.fcy` for native integration and code generation. Build scripts run fo
 5. Add hosted facilities one platform at a time, keeping platform calls behind a narrow internal interface.
 6. Add package resolution and compiled-library metadata when explicit-source builds become a measurable bottleneck.
 
-For each layer, run the same behavior suite through QBE and LLVM and add C interoperability tests for exported callbacks and native calls. This keeps ABI and runtime changes visible while the language is still evolving.
+For each layer, run the same behavior suite through LLVM and add C interoperability tests for exported callbacks and native calls. This keeps ABI and runtime changes visible while the language is still evolving.

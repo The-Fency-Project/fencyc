@@ -105,10 +105,7 @@ impl InputFlags {
     pub fn finalize(mut self) -> Self {
         self.backend = match self.backend {
             Some(b) => Some(b), // user explicitly set it
-            None => Some(match self.opt_level {
-                0 => CompBackend::QBE,
-                _ => CompBackend::LLVM,
-            }),
+            None => Some(CompBackend::LLVM),
         };
 
         self

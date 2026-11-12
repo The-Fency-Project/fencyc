@@ -33,6 +33,10 @@ fn main() {
         Some(Commands::Input { files, output, mut flags, mut ldflags, extfiles } ) => {
             flags.verbose |= cli.verbose;
             let mut flags = flags.finalize();
+            if flags.backend == Some(CompBackend::QBE) {
+                eprintln!("QBE backend is temporarily deprecated; use LLVM (the only supported backend)");
+                exit(1);
+            }
             let installation = if !flags.nostd {
                 Some(match discover_installation(flags.target, flags.backend.unwrap()) {
                     Ok(installation) => installation,

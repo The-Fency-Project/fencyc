@@ -7,7 +7,7 @@ use std::process::Command;
 
 fn backend_flag() -> &'static str {
     std::env::var("FCY_BACKEND")
-        .unwrap_or_else(|_| "qbe".to_string())
+        .unwrap_or_else(|_| "llvm".to_string())
         .leak()
 }
 

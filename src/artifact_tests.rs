@@ -4,7 +4,7 @@ use crate::artifact::{self, Metadata};
 struct Project { dir: PathBuf, backend: String }
 impl Project {
     fn new(name: &str) -> Self {
-        let backend = std::env::var("FCY_BACKEND").unwrap_or_else(|_| "qbe".into());
+        let backend = std::env::var("FCY_BACKEND").unwrap_or_else(|_| "llvm".into());
         let dir = std::env::current_dir().unwrap().join(format!("testbins/artifacts_{name}_{backend}"));
         if dir.exists() { fs::remove_dir_all(&dir).unwrap(); }
         fs::create_dir_all(&dir).unwrap();

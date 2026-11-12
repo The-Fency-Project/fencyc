@@ -5,25 +5,19 @@ layers. It is intentionally small and declaration-focused: the modules define
 the names that future collections, allocators, and hosted APIs can build on,
 without pretending that those facilities are implemented yet.
 
-The compiler currently builds libraries from an explicit source list. Install one
-metadata/object bundle per backend:
+The compiler currently builds libraries from an explicit source list. LLVM is the
+active backend, so install its metadata/object bundle:
 
 ```sh
-fencyc input \
-  std/core/mod.fcy std/libc/mod.fcy std/alloc/mod.fcy std/io/mod.fcy std/prelude/mod.fcy std/rc/mod.fcy \
-  --library -o build/std-qbe.fmeta --nostd --backend qbe -O0
-
 fencyc input \
   std/core/mod.fcy std/libc/mod.fcy std/alloc/mod.fcy std/io/mod.fcy std/prelude/mod.fcy std/rc/mod.fcy \
   --library -o build/std-llvm.fmeta --nostd --backend llvm -O3
 ```
 
-The same build can be bootstrapped from inside this directory with
-`fencyc build`; `build.fcy` currently shells out through `std::libc::system` and
-produces the default QBE bundle.
-
-An application can consume the matching metadata with `--dep build/std-qbe.fmeta`
-or `--dep build/std-llvm.fmeta` and refer to declarations under `std::core`,
+The same build can be bootstrapped inside this directory with `fencyc build`.
+The build script shells out through `std::libc::system` for now.
+An application can consume the metadata with `--dep build/std-llvm.fmeta` and
+refer to declarations under `std::core`,
 `std::alloc`, `std::io`, `std::prelude`, and `std::libc`. Installed toolchains
 discover the backend-matching bundle automatically.
 

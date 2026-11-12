@@ -31,31 +31,8 @@ Then just:
 
 ## External dependencies
 To actually compile something with fencyc, you would also need:
-1. `qbe` - QBE (quick backend) binary to generate native assemblies from SSA.
-It's highly recommended to use qbe build from `winabi` branch (build like this for linux 
-is in `ci-bin/` directory of repo, you may grab one for yourself). This branch adds windows 
-target support without removing other arches. 
-For info about qbe and building it, visit [QBE website](https://c9x.me/compile/).    
-Without win target you may get QBE from your package manager (apt/pacman/homebrew/etc) 
-2. `llvm` (version 21!) - LLVM compiler backend. Needed if you want to build form source or 
-to actually use llvm in compiler. Install from your package manager or from 
-[LLVM website](https://llvm.org)
-3. `gcc`/`clang` - to assemble and link native assemblies. gcc is Preinstalled on most linux 
-distributions, but for others cases you may install gcc or clang. It also has to be in the PATH. 
-See [GNU website](https://gcc.gnu.org/install/)/[Clang website](https://clang.llvm.org/) or get the binaries.
-4. Fency setup - `fcyup` installs the matching standard-library metadata and objects,
-plus the precompiled runtime C library, under `$HOME/.fency`:
-   ```text
-   .fency/
-     bin/fencyc
-     libs/std/std.fmeta
-     libs/std/std.fmeta.objects/
-     runtime/linux-x86_64/libfcyrt.a
-   ```
-   The compiler discovers this setup automatically. Use `--nostd` for a standalone
-   compiler bootstrap or when no installation is available.
-See [runtime lib repo](https://github.com/The-Fency-Project/runtime).    
-
+1. `llvm` (version 21!) - the currently supported compiler backend.
+   LLVM emits native object files directly for the linker.
 > [!NOTE]
 > All the external dependencies binaries (except libs) must be in your PATH.
 

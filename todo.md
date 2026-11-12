@@ -1,30 +1,19 @@
-## Next planned steps (likely)
-### Stdlib
-- stdlib
-# Future
-## Small/medium (unsorted)
-- further diagnostics (trait incompl func signature)
-- move in loops
-- Finer incremental compilation, interface hashes, and cache garbage collection
-- maybe move keyword
-- glob for input
-- unsafe stuff
-- iterators for `for`
-- default args values in funcs (maybe)
-- block return
-- stack strs
-- slices
-- ptrs for primitives
-## Long-term
-- stdlib 
-- wiki
-- macros 
-- other features
-- maybe rewrite fencyc in fency itself, which may achieve cleaning code and better integration
-## General vision
-1. MIR, QBE and LLVM stuff 
-2. Finish generics (structs)
-3. Implement unions and limited VA args. They will be crucial, e.g. unions for error type in std.
-4. Implement enums (no adt yet) and basic pattern matching
-5. Stdlib and fixes in compiler (likely to be)
-6. fencyc v1.0.0 release 
+## Short term
+
+### Compiler
+- Add MIR atomic operations and lower them through LLVM.
+- Finish generic method specialization across metadata-only libraries.
+- Improve diagnostics for ownership, traits, and generic type inference.
+- Keep the MIR backend-independent while LLVM is the only active backend.
+
+### Standard library
+- Finish `std::rc::Arc<T>` and `std::rc::Weak<T>` on top of fcyrt.
+- Add allocation, string, collection, and I/O essentials.
+- Make `fency build` the standard stdlib build path.
+
+## Later
+
+- Add `ref T` and `weak T` syntax with compiler cycle checks.
+- Revisit FCBE or another lightweight backend after the language and MIR stabilize.
+- Add package and sysroot tooling.
+- Macros and self-hosting experiments.
