@@ -5,22 +5,27 @@ layers. It is intentionally small and declaration-focused: the modules define
 the names that future collections, allocators, and hosted APIs can build on,
 without pretending that those facilities are implemented yet.
 
-The compiler currently builds libraries from an explicit source list. From the
-repository root, build the skeleton with:
+The compiler currently builds libraries from an explicit source list. Install one
+metadata/object bundle per backend:
 
 ```sh
 fencyc input \
   std/core.fcy std/libc.fcy std/alloc.fcy std/io.fcy std/prelude.fcy \
-  --library -o build/std.fmeta --nostd
+  --library -o build/std-qbe.fmeta --nostd --backend qbe -O0
+
+fencyc input \
+  std/core.fcy std/libc.fcy std/alloc.fcy std/io.fcy std/prelude.fcy \
+  --library -o build/std-llvm.fmeta --nostd --backend llvm -O3
 ```
 
 The same build can be bootstrapped from inside this directory with
-`fencyc build`; `build.fcy` currently shells out through `std::libc::system`.
+`fencyc build`; `build.fcy` currently shells out through `std::libc::system` and
+produces the default QBE bundle.
 
-An application can consume the resulting metadata with `--dep build/std.fmeta`
-and refer to declarations under `std::core`, `std::alloc`, `std::io`, and
-`std::prelude` and `std::libc`. Automatic sysroot discovery and implicit std imports remain
-future work, so applications should opt in explicitly for now.
+An application can consume the matching metadata with `--dep build/std-qbe.fmeta`
+or `--dep build/std-llvm.fmeta` and refer to declarations under `std::core`,
+`std::alloc`, `std::io`, `std::prelude`, and `std::libc`. Installed toolchains
+discover the backend-matching bundle automatically.
 
 The source files are split by layer so the tree can grow without forcing the
 compiler runtime, allocator, and hosted APIs into one monolithic module.

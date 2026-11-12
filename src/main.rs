@@ -32,8 +32,9 @@ fn main() {
     match cli.command {
         Some(Commands::Input { files, output, mut flags, mut ldflags, extfiles } ) => {
             flags.verbose |= cli.verbose;
+            let mut flags = flags.finalize();
             let installation = if !flags.nostd {
-                Some(match discover_installation(flags.target) {
+                Some(match discover_installation(flags.target, flags.backend.unwrap()) {
                     Ok(installation) => installation,
                     Err(message) => {
                         eprintln!("{message}");
@@ -41,17 +42,6 @@ fn main() {
                     }
                 })
             } else { None };
-            // Keep the default backend compatible with an installed stdlib.
-            // Otherwise -O0 defaults to QBE while an optimized LLVM stdlib
-            // would be rejected even though optimization levels are independent.
-            if flags.backend.is_none() {
-                if let Some(installation) = &installation {
-                    flags.backend = artifact::read(&installation.std_metadata)
-                        .ok().and_then(|meta| meta.recipe.flags.backend);
-                }
-            }
-            let mut flags = flags.finalize();
-
             if let Some(installation) = installation {
                 flags.dependencies.push(installation.std_metadata);
                 paths.extend(installation.search_paths);
@@ -605,17 +595,22 @@ fn target_runtime_names(target: Target) -> (&'static str, &'static str, &'static
     }
 }
 
-fn discover_installation(target: Target) -> Result<FencyInstallation, String> {
+fn discover_installation(target: Target, backend: CompBackend) -> Result<FencyInstallation, String> {
     let root = installation_root().ok_or_else(|| {
         "fency setup not found; compilation is only possible with --nostd".to_owned()
     })?;
-    let std_metadata = root.join("libs").join("std").join("std.fmeta");
-    if !std_metadata.is_file() {
+    let std_root = root.join("libs").join("std");
+    let backend_name = backend.to_string().to_lowercase();
+    let std_metadata = [
+        std_root.join(format!("std-{backend_name}.fmeta")),
+        std_root.join("std.fmeta"),
+    ].into_iter().find(|path| path.is_file());
+    let Some(std_metadata) = std_metadata else {
         return Err(format!(
-            "fency setup not found: standard library metadata is missing at {}; compilation is only possible with --nostd",
-            std_metadata.display()
+            "fency setup not found: standard library metadata for {backend_name} is missing under {}; compilation is only possible with --nostd",
+            std_root.display()
         ));
-    }
+    };
 
     let (target_dir_name, runtime_name, legacy_names) = target_runtime_names(target);
     let runtime_root = root.join("runtime");
