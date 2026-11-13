@@ -2383,17 +2383,22 @@ impl FuncTable {
             return Some(v);
         };
 
+        let mut candidate = None;
         for modnm in usemods {
             let (alias, module) = modnm.split_once('=').unwrap_or(("", modnm.as_str()));
-            let prefix = if alias == name.split("::").next().unwrap_or("") && !alias.is_empty() {
+            let head = name.split("::").next().unwrap_or(name);
+            let prefix = if !alias.is_empty() && (name == alias || name.starts_with(&format!("{}::", alias))) {
                 name.replacen(alias, module, 1)
+            } else if module.rsplit("::").next() == Some(head) {
+                name.replacen(head, module, 1)
             } else { format!("{}::{}", module, name) };
             if let Some(v) = self.ft.get(&prefix) {
-                return Some(v);
+                if candidate.is_some() { return None; }
+                candidate = Some(v);
             };
         }
 
-        return None;
+        candidate
     }
 
 }

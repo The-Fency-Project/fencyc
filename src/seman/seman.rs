@@ -1631,13 +1631,14 @@ impl SemAn {
                     name.path_to_string()
                 );
 
-                let struct_data = match self.struct_tab.tab
-                    .get(&name.path_to_string()) {
-                    Some(v) => v.clone(),
+                let struct_name = name.path_to_string();
+                let paths = self.get_use_paths();
+                let struct_data = match self.struct_tab.get(&struct_name, &paths) {
+                    Some(v) => v,
                     None => {
                         logger.send(LogMessage::new(
                                 LogLevel::Error(ErrKind::UnknownStruct(
-                                    name.path_to_string()
+                                    struct_name
                                 )), 
                                 self.line, 
                                 self.fname.clone()
@@ -2516,16 +2517,20 @@ impl StructTable {
         if let Some(v) = self.tab.get(name) {
             return Some(v.clone())
         }; 
+        let mut candidates = Vec::new();
         for modnm in usemods {
             let (alias, module) = modnm.split_once('=').unwrap_or(("", modnm.as_str()));
-            let nm = if !alias.is_empty() && name.starts_with(&format!("{}::", alias)) {
+            let head = name.split("::").next().unwrap_or(name);
+            let nm = if !alias.is_empty() && (name == alias || name.starts_with(&format!("{}::", alias))) {
                 name.replacen(alias, module, 1)
+            } else if module.rsplit("::").next() == Some(head) {
+                name.replacen(head, module, 1)
             } else { format!("{}::{}", module, name) };
             if let Some(v) = self.tab.get(&nm) {
-                return Some(v.clone());
+                candidates.push(v.clone());
             };
         }
-        return None;
+        if candidates.len() == 1 { candidates.pop() } else { None }
     }
 
     pub fn template_name(&self, name: &str) -> String {
