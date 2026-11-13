@@ -1734,9 +1734,7 @@ impl CodeGen {
                
                 let res_tmp = self.new_temp(&FType::Ptr);
                 res.val = Some(res_tmp.clone());
-                res.ftype = FType::Struct(
-                    name_st
-                );
+                res.ftype = FType::Struct(struct_dat.name.clone());
 
                 self.fbuild.assign_instr(
                     res_tmp.clone(),
