@@ -181,6 +181,15 @@ fn installed_artifact_without_sources_and_configuration_checks() {
 }
 
 #[test]
+fn source_dependencies_build_on_demand() {
+    let p = Project::new("source_dependency");
+    p.write("lib.fcy", "module lib { pub func value() -> int { return 9; } }");
+    p.write("main.fcy", "extern func printf(f: str, ...) -> i32; func main() { printf(\"%ld\\n\", lib::value()); return; }");
+    p.command(&["main.fcy", "--dep", "lib.fcy", "-o", "program"], true);
+    assert_eq!(p.run(), "9");
+}
+
+#[test]
 fn independent_consumers_share_generic_specializations() {
     let p = Project::new("coalesce");
     p.write("base.fcy", "module base { func helper(x: int) -> int { return x + 1; } pub func generic<T>(x: T) -> int { return helper(4); } }");

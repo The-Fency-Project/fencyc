@@ -178,6 +178,31 @@ impl Builder {
     fn dependency(&mut self, path: &Path, consumer: &Recipe) -> Result<Metadata> {
         if let Some(meta) = self.done.get(path) { return Ok(meta.clone()); }
         if !self.active.insert(path.to_owned()) { return Err(format!("dependency cycle at {}", path.display())); }
+        if path.extension().and_then(|ext| ext.to_str()) == Some("fcy") {
+            println!("warning: no compiled artifact for {}; building dependency from source", path.display());
+            let crate_name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("dependency");
+            let output = consumer.flags.cache_dir.as_ref().unwrap()
+                .join(crate_name).join(format!("{crate_name}.fmeta"));
+            let mut flags = consumer.flags.clone();
+            flags.library = true;
+            flags.no_incremental = false;
+            // Source dependencies may themselves use compiled dependencies;
+            // source entries are resolved recursively by this same path.
+            flags.dependencies.retain(|dep| dep.extension().and_then(|ext| ext.to_str()) != Some("fcy"));
+            let recipe = Recipe::new(
+                vec![path.to_string_lossy().into_owned()],
+                Some(output.to_string_lossy().into_owned()),
+                flags,
+                consumer.ldflags.clone(),
+                consumer.search_paths.clone(),
+                Vec::new(),
+            )?;
+            let built = self.build(recipe);
+            self.active.remove(path);
+            let built = built?;
+            self.done.insert(path.to_owned(), built.clone());
+            return Ok(built);
+        }
         let mut old = read(path)?;
         if !old.recipe.flags.library { return Err(format!("{} is not a library", path.display())); }
         if old.recipe.flags.target != consumer.flags.target || old.recipe.flags.backend != consumer.flags.backend
