@@ -166,6 +166,33 @@ pub fn run(recipe: Recipe) -> Result<()> {
         .map_err(|e| format!("link failed: {e:?}"))
 }
 
+pub fn package(metadata: &Path, output: &Path, shared: bool, ldas: &str) -> Result<()> {
+    let installed = read(metadata)?;
+    if !installed.recipe.flags.library {
+        return Err(format!("{} is not a library", metadata.display()));
+    }
+    let mut builder = Builder::new()?;
+    let resolved = builder.dependency(metadata, &installed.recipe)?;
+    let mut objects = Vec::new();
+    builder.collect_objects(&resolved, &mut objects, &mut HashSet::new())?;
+    let mut link_flags = Vec::new();
+    builder.collect_link_flags(&resolved, &mut link_flags, &mut HashSet::new())?;
+    if shared {
+        let mut flags = resolved.recipe.flags.clone();
+        flags.shared = true;
+        flags.ldas = ldas.to_owned();
+        crate::link_objects(&objects, output, &flags, &resolved.recipe.search_paths, &link_flags)
+            .map_err(|err| format!("shared library link failed: {err:?}"))
+    } else {
+        if let Some(parent) = output.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+        let mut args = vec!["rcs".to_owned(), output.to_string_lossy().into_owned()];
+        args.extend(objects.iter().map(|object| object.to_string_lossy().into_owned()));
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        crate::run_command("ar", &refs).map_err(|_| format!("static archive creation failed: {}", output.display()))?;
+        Ok(())
+    }
+}
+
 struct Builder {
     compiler: String,
     active: HashSet<PathBuf>,

@@ -74,6 +74,12 @@ fn main() {
                 println!("No incremental cache found");
             }
         }
+        Some(Commands::Package { metadata, output, shared, ldas }) => {
+            if let Err(message) = artifact::package(&metadata, &output, shared, &ldas) {
+                eprintln!("{message}");
+                exit(1);
+            }
+        }
         Some(Commands::Build { args }) => {
             let build_scr_spath = "build.fcy".to_owned();
             let build_scr_path = Path::new(&build_scr_spath);

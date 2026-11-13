@@ -40,6 +40,18 @@ pub enum Commands {
     /// Remove the current project's incremental compilation cache
     Clean,
 
+    /// Package a compiled .fmeta library as a native static or shared library
+    Package {
+        #[arg(help = "Compiled library .fmeta metadata")]
+        metadata: std::path::PathBuf,
+        #[arg(short, long, help = "Output native library path")]
+        output: std::path::PathBuf,
+        #[arg(long, help = "Build a shared library instead of a static archive")]
+        shared: bool,
+        #[arg(long, default_value_t = def_ldas())]
+        ldas: String,
+    },
+
     /// Build project using build.fcy
     Build {
         #[arg(short, long, help = "Flags that will be passed into build (optional)",
