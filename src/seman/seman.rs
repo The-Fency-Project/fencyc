@@ -2520,7 +2520,9 @@ impl StructTable {
 
     pub fn get(&self, name: &str, usemods: &Vec<String>) -> Option<StructInfo> {
         if let Some(v) = self.tab.get(name) {
-            return Some(v.clone())
+            let mut resolved = v.clone();
+            resolved.name = name.to_owned();
+            return Some(resolved)
         }; 
         let mut candidates = Vec::new();
         for modnm in usemods {
@@ -2532,7 +2534,9 @@ impl StructTable {
                 name.replacen(head, module, 1)
             } else { format!("{}::{}", module, name) };
             if let Some(v) = self.tab.get(&nm) {
-                candidates.push(v.clone());
+                let mut resolved = v.clone();
+                resolved.name = nm;
+                candidates.push(resolved);
             };
         }
         if candidates.len() == 1 { candidates.pop() } else { None }

@@ -1179,6 +1179,9 @@ impl<'ctx> LLVMBackend<'ctx> {
             FType::Struct(sn) => {
                 let lname = sn.replace("::", "_");
                 let st = self.context.get_struct_type(&lname)
+                    .or_else(|| self.struct_types.iter()
+                        .find(|(key, _)| key.ends_with(&format!("_{lname}")))
+                        .map(|(_, ty)| *ty))
                     .expect(&format!("Expected struct {}", lname));
                 let s  = td.get_store_size(&st);
                 let al = td.get_preferred_alignment(&st.as_any_type_enum());
