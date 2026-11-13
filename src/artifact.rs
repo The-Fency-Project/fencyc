@@ -143,9 +143,11 @@ impl Recipe {
         Ok(Self { files, output, flags, ldflags, search_paths, external })
     }
     fn cache(&self) -> PathBuf {
-        // Unit identity is separate from its build key, so latest.fmeta has a stable location.
+        // Keep each crate's incremental artifacts in its own project-local namespace.
         let identity = hash(self.output.to_string_lossy().as_bytes());
-        self.flags.cache_dir.as_ref().unwrap().join(self.flags.target.to_string())
+        let crate_name = self.output.file_stem().and_then(|name| name.to_str()).unwrap_or("crate");
+        self.flags.cache_dir.as_ref().unwrap().join(crate_name)
+            .join(self.flags.target.to_string())
             .join(self.flags.backend.unwrap().to_string()).join(format!("O{}", self.flags.opt_level))
             .join(&identity[..16])
     }

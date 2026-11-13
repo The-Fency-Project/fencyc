@@ -37,6 +37,9 @@ pub enum Commands {
     /// List available targets
     ListTargets,
 
+    /// Remove the current project's incremental compilation cache
+    Clean,
+
     /// Build project using build.fcy
     Build {
         #[arg(short, long, help = "Flags that will be passed into build (optional)",

@@ -62,6 +62,18 @@ fn main() {
         Some(Commands::ListTargets) => {
             Target::list(); 
         }
+        Some(Commands::Clean) => {
+            let cache = Path::new(".fency").join("incr");
+            if cache.exists() {
+                std::fs::remove_dir_all(&cache).unwrap_or_else(|err| {
+                    eprintln!("failed to clean {}: {err}", cache.display());
+                    exit(1);
+                });
+                println!("Removed {}", cache.display());
+            } else {
+                println!("No incremental cache found");
+            }
+        }
         Some(Commands::Build { args }) => {
             let build_scr_spath = "build.fcy".to_owned();
             let build_scr_path = Path::new(&build_scr_spath);
