@@ -1231,7 +1231,7 @@ impl SemAn {
                             if let Some(field) = info.fields.get(variant) {
                                 if args.len() != if matches!(field.ftype, FType::none) { 0 } else { 1 } {
                                     logger.send(LogMessage::new(
-                                        LogLevel::Error(ErrKind::FuncArgsTypeIncompat(f_name_s.clone())),
+                                        LogLevel::Error(ErrKind::FuncArgsTypeIncompat(f_name_s.clone(), Vec::new())),
                                         self.line, self.fname.clone()));
                                     return exprdat;
                                 }
@@ -1425,8 +1425,15 @@ impl SemAn {
                     }
                 }
 
+                let paths = self.get_use_paths();
+                let candidates = self.func_table.get_func(&func_name.path_to_string(), &paths)
+                    .map(|overloads| overloads.iter().take(3).map(|overload| {
+                        let args = overload.args.iter().map(|arg| format!("{}", arg.ftype)).collect::<Vec<_>>().join(", ");
+                        format!("{}({}) -> {}", overload.name.path_to_string(), args, overload.ret_type)
+                    }).collect())
+                    .unwrap_or_default();
                 logger.send(LogMessage::new(
-                    LogLevel::Error(ErrKind::FuncArgsTypeIncompat(func_name.path_to_string())),
+                    LogLevel::Error(ErrKind::FuncArgsTypeIncompat(func_name.path_to_string(), candidates)),
                     self.line,
                     self.fname.clone()
                 ));
@@ -1627,9 +1634,6 @@ impl SemAn {
 
             }
             AstNode::StructCreate { name, field_vals } => {
-                exprdat.ftype = FType::Struct(
-                    name.path_to_string()
-                );
 
                 let struct_name = name.path_to_string();
                 let paths = self.get_use_paths();
@@ -1646,6 +1650,7 @@ impl SemAn {
                         return exprdat;
                     }
                 };
+                exprdat.ftype = FType::Struct(struct_data.name.clone());
                 if struct_data.attrs.contains(&Attr::Heap) {
                     logger.send(LogMessage::new(
                         LogLevel::Error(ErrKind::HeapOnlyStack(exprdat.ftype.clone())),

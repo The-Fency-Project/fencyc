@@ -275,11 +275,12 @@ impl Logger {
                             {}: none of this function overloads takes {} arguments",
                         func_name, expected, got, help, got)
                     }
-                    ErrKind::FuncArgsTypeIncompat(name) => {
-                        // TODO: list overloads for help
+                    ErrKind::FuncArgsTypeIncompat(name, candidates) => {
+                        let suggestion = if candidates.is_empty() { String::new() }
+                            else { format!("\n{}: possible overloads: {}", help, candidates.join(", ")) };
                         format!("None of `{}` function overloads are compatible with given arguments\n\
-                            {}: try converting explicitly, e.g. var$int",
-                        name, help)
+                            {}: try converting explicitly, e.g. var$int{}",
+                        name, help, suggestion)
                     }
                     ErrKind::OverrideUndeclared(name) => {
                         format!("Function `{name}` is marked `overload`, but no base declaration exists")
@@ -610,7 +611,7 @@ pub enum ErrKind {
     MuchDeclArgs(String, usize), // name, got count
     UndeclaredFunc(String), // name
     MuchArgsPassed(String, usize, usize), // name, expected, got 
-    FuncArgsTypeIncompat(String), // func name
+    FuncArgsTypeIncompat(String, Vec<String>), // func name, candidate signatures
     OverrideUndeclared(String),
     InvalidSignature(String),
     IncompatReturn(String, FType, FType), // func name, expected, got
