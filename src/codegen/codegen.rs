@@ -544,7 +544,10 @@ impl CodeGen {
                     FVal::UConst(4) => Some(AtomicOrdering::SeqCst),
                     _ => None,
                 };
-                let atomic_kind = requested_name.strip_prefix("std::core::atomic::");
+                let atomic_kind = requested_name
+                    .strip_prefix("std::core::atomic::")
+                    .or_else(|| requested_name.strip_prefix("atomic::"))
+                    .or_else(|| requested_name.split_once("::atomic::").map(|(_, kind)| kind));
                 let builtin_atomic = match (atomic_kind, fargs.as_slice()) {
                     (Some(kind), [(address, _), (value, value_ft), (order, _)]) => {
                         let op = if kind.starts_with("add_") { Some(AtomicOp::Add) }
